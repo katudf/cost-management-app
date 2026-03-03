@@ -281,7 +281,7 @@ const WorkerApp = () => {
                                                 min="0"
                                                 value={t.today_hours || 0}
                                                 onChange={(e) => updateTaskField(t.id, 'today_hours', Math.max(0, Number(e.target.value)))}
-                                                className="flex-1 h-14 text-center text-3xl font-black text-blue-600 bg-blue-50 border-2 border-blue-100 rounded-xl outline-none focus:border-blue-400"
+                                                className="flex-1 w-full min-w-0 h-14 text-center text-3xl font-black text-blue-600 bg-blue-50 border-2 border-blue-100 rounded-xl outline-none focus:border-blue-400"
                                             />
                                             <button
                                                 onClick={() => adjustHours(t.id, 0.5)}
