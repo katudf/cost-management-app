@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Layout, Table, Clipboard, AlertCircle, Plus, Trash2, CheckCircle2, BarChart3, Settings, Edit3, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Trash, Upload, Loader2 } from 'lucide-react';
+import { Layout, Table, Clipboard, AlertCircle, Plus, Trash2, CheckCircle2, BarChart3, Settings, Edit3, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Trash, Upload, Loader2, User } from 'lucide-react';
 import * as xlsx from 'xlsx';
 import { supabase } from './lib/supabase';
 
@@ -553,6 +553,14 @@ const App = () => {
                                                 <h3 className="font-bold text-lg text-slate-800 line-clamp-2 leading-tight flex items-start group-hover:text-blue-700 transition-colors">
                                                     {proj.siteName}
                                                 </h3>
+                                                <div className="mt-2 flex items-center gap-1 text-sm text-slate-500 font-medium">
+                                                    <User size={14} className="text-slate-400" />
+                                                    職長: {
+                                                        proj.foreman_worker_id
+                                                            ? (workers.find(w => w.id === proj.foreman_worker_id)?.name || '未設定')
+                                                            : '未設定'
+                                                    }
+                                                </div>
                                             </div>
                                             <div className="p-5 flex flex-col gap-4 bg-slate-50">
                                                 <div>
