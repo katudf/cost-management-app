@@ -15,7 +15,7 @@ const App = () => {
     const [aliasName, setAliasName] = useState("");
     const [workers, setWorkers] = useState([]);
     const [focusedWorkerRow, setFocusedWorkerRow] = useState(null);
-    
+
     // DB連携ステート
     const [projects, setProjects] = useState([]);
     const [activeProjectId, setActiveProjectId] = useState(null);
@@ -128,7 +128,7 @@ const App = () => {
         const { data, error } = await supabase.from('Projects').insert([{ name: '新規の現場' }]).select();
         if (error) { console.error(error); return; }
         const newProj = data[0];
-        
+
         setProjects(prev => [...prev, {
             id: newProj.id, siteName: newProj.name, masterData: [], records: [], progressData: {}
         }]);
@@ -144,7 +144,7 @@ const App = () => {
             // DB削除
             const { error } = await supabase.from('Projects').delete().eq('id', id);
             if (error) { console.error(error); alert("削除失敗"); return; }
-            
+
             setProjects(prev => prev.filter(p => p.id !== id));
             if (activeProjectId === id) {
                 setActiveProjectId(projects.find(p => p.id !== id).id);
@@ -178,7 +178,7 @@ const App = () => {
             alert("先に工事設定で作業項目を登録してください");
             return;
         }
-        
+
         const newDbRecord = {
             project_id: activeProjectId,
             project_task_id: defaultTaskId,
@@ -187,10 +187,10 @@ const App = () => {
             worker_name: '',
             note: ''
         };
-        
+
         const { data, error } = await supabase.from('TaskRecords').insert([newDbRecord]).select();
         if (error) { console.error(error); return; }
-        
+
         const dbRec = data[0];
         const newLocalRecord = {
             id: dbRec.id,
@@ -200,7 +200,7 @@ const App = () => {
             hours: dbRec.hours || 0,
             note: dbRec.note || ''
         };
-        
+
         updateLayer(p => ({ records: [newLocalRecord, ...p.records] }));
     };
 
@@ -233,8 +233,8 @@ const App = () => {
         const reader = new FileReader();
         reader.onload = (event) => {
             try {
-                const data = new Uint8Array(event.target.result);
-                const workbook = xlsx.read(data, { type: 'array' });
+                const data = event.target.result;
+                const workbook = xlsx.read(data, { type: 'binary' });
 
                 let newMasterData = [];
                 let extractedProjectName = null;
@@ -305,7 +305,7 @@ const App = () => {
                 if (fileInputRef.current) fileInputRef.current.value = '';
             }
         };
-        reader.readAsArrayBuffer(file);
+        reader.readAsBinaryString(file);
     };
 
     const handleImportChoice = async (choice, directParams = null) => {
@@ -348,7 +348,7 @@ const App = () => {
             // DBから最新を再フェッチ
             await fetchAllData(targetProjectId);
 
-        } catch(e) {
+        } catch (e) {
             console.error(e);
             alert("DB保存中にエラーが発生しました");
         } finally {
@@ -382,7 +382,7 @@ const App = () => {
     }, [activeProject.masterData, activeProject.records, activeProject.progressData]);
 
     if (isLoading && projects.length === 0) {
-        return <div className="min-h-screen flex items-center justify-center bg-slate-50"><Loader2 className="w-8 h-8 animate-spin text-blue-500"/></div>;
+        return <div className="min-h-screen flex items-center justify-center bg-slate-50"><Loader2 className="w-8 h-8 animate-spin text-blue-500" /></div>;
     }
 
     return (
@@ -427,7 +427,7 @@ const App = () => {
 
                 <main className="bg-white rounded-xl shadow-md border border-slate-200 overflow-hidden min-h-[500px]">
                     {isLoading && <div className="h-1 bg-blue-100 overflow-hidden"><div className="w-1/2 h-full bg-blue-500 animate-pulse"></div></div>}
-                    
+
                     {activeTab === 'summary' && (
                         <div className={`p-6 ${isLoading ? 'opacity-50 pointer-events-none' : ''}`}>
                             {/* 全体の予測損益サマリーを表示 */}
@@ -480,16 +480,16 @@ const App = () => {
                                                 </td>
                                                 <td className="p-4">
                                                     <div className="flex items-center gap-2">
-                                                        <input 
-                                                            type="range" min="0" max="100" step="5" 
-                                                            value={item.progress} 
+                                                        <input
+                                                            type="range" min="0" max="100" step="5"
+                                                            value={item.progress}
                                                             onChange={(e) => {
                                                                 const val = Number(e.target.value);
                                                                 updateLayer(p => ({ progressData: { ...p.progressData, [item.id]: val } }));
-                                                            }} 
+                                                            }}
                                                             onMouseUp={(e) => saveProgressDB(item.id, Number(e.target.value))}
                                                             onTouchEnd={(e) => saveProgressDB(item.id, Number(e.target.value))}
-                                                            className="flex-1 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600" 
+                                                            className="flex-1 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
                                                         />
                                                         <span className="text-xs font-black text-blue-700 w-8">{item.progress}%</span>
                                                     </div>
@@ -618,7 +618,7 @@ const App = () => {
                                         htmlFor="excel-upload"
                                         className="cursor-pointer text-blue-600 bg-blue-50 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-blue-100 transition border border-blue-200"
                                     >
-                                        {isLoading ? <Loader2 className="animate-spin w-4 h-4"/> : <Upload size={16} />} Excelからインポート
+                                        {isLoading ? <Loader2 className="animate-spin w-4 h-4" /> : <Upload size={16} />} Excelからインポート
                                     </label>
                                     <button onClick={() => removeProject(activeProjectId)} className="text-red-500 bg-red-50 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-red-100 transition border border-red-200">
                                         <Trash size={16} /> 現場を削除
@@ -627,12 +627,12 @@ const App = () => {
                             </div>
                             <div className="mb-6 bg-blue-50 p-6 rounded-xl border-2 border-blue-100 shadow-inner">
                                 <label className="text-xs font-bold text-blue-600 block mb-2 uppercase">管理現場名</label>
-                                <input 
-                                    type="text" 
-                                    value={activeProject.siteName} 
+                                <input
+                                    type="text"
+                                    value={activeProject.siteName}
                                     onChange={(e) => updateLayer(p => ({ siteName: e.target.value }))}
                                     onBlur={(e) => handleSiteNameBlur(activeProject.id, e.target.value)}
-                                    className="w-full bg-white p-3 rounded-lg border-2 border-blue-200 font-bold text-xl outline-none focus:border-blue-500" 
+                                    className="w-full bg-white p-3 rounded-lg border-2 border-blue-200 font-bold text-xl outline-none focus:border-blue-500"
                                 />
                             </div>
                             <div className="grid lg:grid-cols-3 gap-8">
@@ -642,20 +642,20 @@ const App = () => {
                                         <div key={m.id} className="flex items-center gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:border-blue-300 transition">
                                             <div className="flex-1">
                                                 <label className="text-[9px] font-bold text-slate-400 block mb-1 uppercase tracking-tighter">作業項目 (仕様)</label>
-                                                <input 
-                                                    type="text" value={m.task} 
-                                                    className="w-full font-bold text-sm outline-none border-b border-transparent focus:border-blue-300" 
-                                                    onChange={(e) => updateMasterItemLocal(m.id, 'task', e.target.value)} 
+                                                <input
+                                                    type="text" value={m.task}
+                                                    className="w-full font-bold text-sm outline-none border-b border-transparent focus:border-blue-300"
+                                                    onChange={(e) => updateMasterItemLocal(m.id, 'task', e.target.value)}
                                                     onBlur={() => saveMasterItemDB(m.id, { name: m.task })}
                                                 />
                                             </div>
                                             <div className="w-24 text-right">
                                                 <label className="text-[9px] font-bold text-slate-400 block mb-1 uppercase text-right tracking-tighter">目標時間</label>
                                                 <div className="flex items-center gap-1 justify-end font-mono font-bold">
-                                                    <input 
-                                                        type="number" value={m.target} 
-                                                        className="w-full text-right outline-none bg-slate-50 rounded px-1" 
-                                                        onChange={(e) => updateMasterItemLocal(m.id, 'target', Number(e.target.value))} 
+                                                    <input
+                                                        type="number" value={m.target}
+                                                        className="w-full text-right outline-none bg-slate-50 rounded px-1"
+                                                        onChange={(e) => updateMasterItemLocal(m.id, 'target', Number(e.target.value))}
                                                         onBlur={() => saveMasterItemDB(m.id, { target_hours: m.target })}
                                                     /><span>h</span>
                                                 </div>
