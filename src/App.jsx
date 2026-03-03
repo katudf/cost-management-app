@@ -125,8 +125,12 @@ const App = () => {
     // --- DB連動アクション ---
 
     const addNewProject = async () => {
-        const { data, error } = await supabase.from('Projects').insert([{ name: '新規の現場' }]).select();
-        if (error) { console.error(error); return; }
+        const { data, error } = await supabase.from('Projects').insert([{ name: '新規の現場', order: projects.length }]).select();
+        if (error) {
+            console.error(error);
+            alert('現場の作成に失敗しました: ' + error.message);
+            return;
+        }
         const newProj = data[0];
 
         setProjects(prev => [...prev, {
@@ -318,15 +322,18 @@ const App = () => {
             let siteNameToUse = info.fileName || info.finalSiteName || 'エクセル取込現場';
 
             if (choice === 'create_new') {
-                const { data } = await supabase.from('Projects').insert([{ name: siteNameToUse }]).select();
+                const { data, error } = await supabase.from('Projects').insert([{ name: siteNameToUse, order: projects.length }]).select();
+                if (error) throw error;
                 targetProjectId = data[0].id;
             } else if (choice === 'create_alias') {
-                const { data } = await supabase.from('Projects').insert([{ name: aliasName || 'エクセル取込現場' }]).select();
+                const { data, error } = await supabase.from('Projects').insert([{ name: aliasName || 'エクセル取込現場', order: projects.length }]).select();
+                if (error) throw error;
                 targetProjectId = data[0].id;
             } else if (choice === 'overwrite' || choice === 'overwrite_empty') {
                 targetProjectId = directParams ? directParams.projId : activeProjectId;
                 if (!targetProjectId) {
-                    const { data } = await supabase.from('Projects').insert([{ name: siteNameToUse }]).select();
+                    const { data, error } = await supabase.from('Projects').insert([{ name: siteNameToUse, order: projects.length }]).select();
+                    if (error) throw error;
                     targetProjectId = data[0].id;
                 } else {
                     await supabase.from('ProjectTasks').delete().eq('projectId', targetProjectId);
