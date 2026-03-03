@@ -325,9 +325,14 @@ const App = () => {
                 targetProjectId = data[0].id;
             } else if (choice === 'overwrite' || choice === 'overwrite_empty') {
                 targetProjectId = directParams ? directParams.projId : activeProjectId;
-                await supabase.from('ProjectTasks').delete().eq('projectId', targetProjectId);
-                if (choice === 'overwrite_empty' || siteNameToUse !== "エクセル取込現場") {
-                    await supabase.from('Projects').update({ name: siteNameToUse }).eq('id', targetProjectId);
+                if (!targetProjectId) {
+                    const { data } = await supabase.from('Projects').insert([{ name: siteNameToUse }]).select();
+                    targetProjectId = data[0].id;
+                } else {
+                    await supabase.from('ProjectTasks').delete().eq('projectId', targetProjectId);
+                    if (choice === 'overwrite_empty' || siteNameToUse !== "エクセル取込現場") {
+                        await supabase.from('Projects').update({ name: siteNameToUse }).eq('id', targetProjectId);
+                    }
                 }
             } else if (choice === 'overwrite_duplicate') {
                 targetProjectId = info.duplicateId;
