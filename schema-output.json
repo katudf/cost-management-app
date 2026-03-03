@@ -1,0 +1,26 @@
+Projects Error: null
+Projects Data Keys: [
+  'id',              'created_at',
+  'name',            'order',
+  'startDate',       'endDate',
+  'estimatedAmount', 'finalAmount',
+  'taxAmount',       'isPaid',
+  'estimatePdfUrl',  'contractPdfUrl',
+  'status',          'customerId',
+  'display_order',   'bar_color'
+]
+ProjectTasks Error: null
+ProjectTasks Data Keys: [
+  'id',
+  'created_at',
+  'startDate',
+  'endDate',
+  'order',
+  'status',
+  'projectId',
+  'serviceMasterId',
+  'target_hours',
+  'progress_percentage'
+]
+TaskRecords Error: null
+TaskRecords Data Keys: []
