@@ -10,7 +10,7 @@ const DEFAULT_MASTER_DATA = [
 ];
 
 const App = () => {
-    const [activeTab, setActiveTab] = useState('summary');
+    const [activeTab, setActiveTab] = useState('dashboard');
     const [importModalInfo, setImportModalInfo] = useState(null);
     const [aliasName, setAliasName] = useState("");
     const [workers, setWorkers] = useState([]);
@@ -369,7 +369,39 @@ const App = () => {
             setAliasName("");
         }
     };
+    // --- 全体ダッシュボード集計ロジック ---
+    const allProjectsSummary = useMemo(() => {
+        return projects.map(proj => {
+            const masterData = proj.masterData || [];
+            const records = proj.records || [];
+            const progressData = proj.progressData || {};
 
+            let totalActual = 0;
+            let totalTarget = 0;
+            let totalPredictedLoss = 0;
+
+            masterData.forEach(m => {
+                const actual = records.filter(r => r.taskId === m.id).reduce((sum, r) => sum + Number(r.hours), 0);
+                const progress = progressData[m.id] || 0;
+                const predictedFinal = progress > 0 ? (actual / (progress / 100)) : 0;
+                const predictedProfitLoss = progress > 0 ? (m.target - predictedFinal) * HOURLY_WAGE : 0;
+
+                totalActual += actual;
+                totalTarget += m.target;
+                totalPredictedLoss += predictedProfitLoss;
+            });
+
+            const overallProgressValue = totalTarget > 0 ? (masterData.reduce((sum, m) => sum + ((progressData[m.id] || 0) * m.target), 0) / totalTarget) : 0;
+
+            return {
+                ...proj,
+                totalActual,
+                totalTarget,
+                overallProgress: Math.round(overallProgressValue),
+                predictedProfitLoss: totalPredictedLoss
+            };
+        });
+    }, [projects]);
 
     // 個別・全体集計ロジック
     const summaryData = useMemo(() => {
@@ -403,7 +435,7 @@ const App = () => {
                 <header className="mb-6">
                     <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
                         <div className="flex-1">
-                            <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2 mb-3">
+                            <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2 mb-3 cursor-pointer hover:opacity-80 transition" onClick={() => setActiveTab('dashboard')}>
                                 <BarChart3 className="text-blue-600" /> 詳細工数管理システム
                             </h1>
                             <div className="flex flex-wrap items-center gap-2">
@@ -411,7 +443,10 @@ const App = () => {
                                     <FolderGit2 className="absolute left-3 text-slate-400 w-4 h-4" />
                                     <select
                                         value={activeProjectId || ''}
-                                        onChange={(e) => setActiveProjectId(Number(e.target.value))}
+                                        onChange={(e) => {
+                                            setActiveProjectId(Number(e.target.value));
+                                            if (activeTab === 'dashboard') setActiveTab('summary');
+                                        }}
                                         className="pl-9 pr-8 py-2 bg-white border border-slate-300 rounded-lg shadow-sm font-bold text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 appearance-none hover:border-slate-400 transition"
                                     >
                                         {projects.length === 0 && <option value="">現場なし</option>}
@@ -420,17 +455,17 @@ const App = () => {
                                         ))}
                                     </select>
                                 </div>
-                                {activeTab === 'master' && (
+                                {['dashboard', 'master'].includes(activeTab) && (
                                     <button onClick={addNewProject} title="新しい現場を追加" className="p-2 text-slate-500 hover:text-blue-600 hover:bg-white rounded-lg transition shadow-sm border border-transparent hover:border-blue-200">
                                         <PlusCircle size={20} />
                                     </button>
                                 )}
                             </div>
                         </div>
-                        <nav className="bg-white p-2 rounded-lg shadow-sm border flex gap-1 mt-2 md:mt-0">
-                            {['summary', 'input', 'master'].map((tab) => (
-                                <button key={tab} onClick={() => setActiveTab(tab)} className={`px-4 py-2 rounded-md transition font-bold ${activeTab === tab ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 text-slate-600'}`}>
-                                    {tab === 'summary' ? '管理シート' : tab === 'input' ? '実績入力' : '工事設定'}
+                        <nav className="bg-white p-2 rounded-lg shadow-sm border flex gap-1 mt-2 md:mt-0 overflow-x-auto">
+                            {['dashboard', 'summary', 'input', 'master'].map((tab) => (
+                                <button key={tab} onClick={() => setActiveTab(tab)} className={`px-4 py-2 rounded-md transition font-bold whitespace-nowrap ${activeTab === tab ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 text-slate-600'}`}>
+                                    {tab === 'dashboard' ? 'ホーム' : tab === 'summary' ? '管理シート' : tab === 'input' ? '実績入力' : '工事設定'}
                                 </button>
                             ))}
                         </nav>
@@ -439,6 +474,70 @@ const App = () => {
 
                 <main className="bg-white rounded-xl shadow-md border border-slate-200 overflow-hidden min-h-[500px]">
                     {isLoading && <div className="h-1 bg-blue-100 overflow-hidden"><div className="w-1/2 h-full bg-blue-500 animate-pulse"></div></div>}
+
+                    {activeTab === 'dashboard' && (
+                        <div className={`p-6 bg-slate-100 min-h-full ${isLoading ? 'opacity-50 pointer-events-none' : ''}`}>
+                            <div className="flex items-center justify-between mb-6">
+                                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Home className="text-blue-600" /> 登録済み工事一覧</h2>
+                            </div>
+
+                            {projects.length === 0 ? (
+                                <div className="text-center py-20 bg-white rounded-xl border border-dashed border-slate-300">
+                                    <FolderGit2 className="mx-auto w-16 h-16 text-slate-300 mb-4" />
+                                    <p className="text-slate-500 font-bold mb-4">まだ現場が登録されていません</p>
+                                    <button onClick={addNewProject} className="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold shadow-md hover:bg-blue-700 transition flex items-center gap-2 mx-auto">
+                                        <PlusCircle size={20} /> 新しい現場を作成
+                                    </button>
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                    {allProjectsSummary.map(proj => (
+                                        <div
+                                            key={proj.id}
+                                            onClick={() => {
+                                                setActiveProjectId(proj.id);
+                                                setActiveTab('summary');
+                                            }}
+                                            className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-xl hover:-translate-y-1 hover:border-blue-300 transition-all cursor-pointer overflow-hidden flex flex-col h-full group"
+                                        >
+                                            <div className="p-5 border-b border-slate-100 flex-1">
+                                                <h3 className="font-bold text-lg text-slate-800 line-clamp-2 leading-tight flex items-start group-hover:text-blue-700 transition-colors">
+                                                    {proj.siteName}
+                                                </h3>
+                                            </div>
+                                            <div className="p-5 flex flex-col gap-4 bg-slate-50">
+                                                <div>
+                                                    <div className="flex justify-between text-xs font-bold text-slate-500 mb-1">
+                                                        <span>全体進捗</span>
+                                                        <span className="text-blue-600">{proj.overallProgress}%</span>
+                                                    </div>
+                                                    <div className="h-2 w-full bg-slate-200 rounded-full overflow-hidden">
+                                                        <div className="h-full bg-blue-500 rounded-full" style={{ width: `${Math.min(100, Math.max(0, proj.overallProgress))}%` }}></div>
+                                                    </div>
+                                                </div>
+
+                                                <div className="flex items-end justify-between mt-auto">
+                                                    <div>
+                                                        <div className="text-[10px] font-bold text-slate-400 mb-1">消化工数 / 目標</div>
+                                                        <div className="font-mono text-lg font-bold text-slate-700">
+                                                            {proj.totalActual}<span className="text-xs font-normal">h</span> <span className="text-slate-300 mx-1">/</span> {proj.totalTarget}<span className="text-xs font-normal">h</span>
+                                                        </div>
+                                                    </div>
+                                                    <div className={`text-right ${proj.predictedProfitLoss >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                        <div className="text-[10px] font-bold opacity-70 mb-1">予測粗利</div>
+                                                        <div className="font-black flex items-center gap-1 justify-end">
+                                                            {proj.predictedProfitLoss >= 0 ? <TrendingUp size={16} /> : <TrendingDown size={16} />}
+                                                            ¥{Math.abs(Math.round(proj.predictedProfitLoss)).toLocaleString()}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
 
                     {activeTab === 'summary' && (
                         <div className={`p-6 ${isLoading ? 'opacity-50 pointer-events-none' : ''}`}>
