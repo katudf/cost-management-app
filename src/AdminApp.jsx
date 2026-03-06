@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Layout, Table, Clipboard, AlertCircle, Plus, Trash2, CheckCircle2, BarChart3, Settings, Edit3, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Trash, Upload, Loader2, User } from 'lucide-react';
+import { Layout, Table, Clipboard, AlertCircle, Plus, Trash2, CheckCircle2, BarChart3, Settings, Edit3, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Trash, Upload, Loader2, User, Users, ArrowUp, ArrowDown, FileText, Calendar } from 'lucide-react';
 import * as xlsx from 'xlsx-js-style';
 import { supabase } from './lib/supabase';
 
@@ -15,6 +15,13 @@ const App = () => {
     const [aliasName, setAliasName] = useState("");
     const [workers, setWorkers] = useState([]);
     const [focusedWorkerRow, setFocusedWorkerRow] = useState(null);
+    const [exportModalWorker, setExportModalWorker] = useState(null);
+    const [exportWeekStart, setExportWeekStart] = useState(() => {
+        const today = new Date();
+        const day = today.getDay();
+        const diff = today.getDate() - day + (day === 0 ? -6 : 1);
+        return new Date(today.setDate(diff)).toISOString().split('T')[0];
+    });
 
     // DB連携ステート
     const [projects, setProjects] = useState([]);
@@ -69,6 +76,7 @@ const App = () => {
                     taskId: r.project_task_id,
                     worker: r.worker_name || '',
                     hours: r.hours || 0,
+                    overtime_hours: r.overtime_hours || 0,
                     note: r.note || ''
                 }));
 
@@ -251,29 +259,95 @@ const App = () => {
             return;
         }
 
-        const newDbRecord = {
-            project_id: activeProjectId,
-            project_task_id: defaultTaskId,
-            date: new Date().toISOString().split('T')[0],
-            hours: 0,
-            worker_name: '',
-            note: ''
-        };
+        const date = new Date().toISOString().split('T')[0];
 
-        const { data, error } = await supabase.from('TaskRecords').insert([newDbRecord]).select();
-        if (error) { console.error(error); return; }
+        const { data, error } = await supabase.from('TaskRecords').insert([{
+            project_task_id: defaultTaskId,
+            project_id: activeProjectId,
+            date: date,
+            worker_name: workers.length > 0 ? workers[0].name : '',
+            hours: 0,
+            note: ''
+        }]).select();
+
+        if (error) {
+            console.error(error);
+            window.alert("日報の追加に失敗しました。");
+            return;
+        }
 
         const dbRec = data[0];
-        const newLocalRecord = {
-            id: dbRec.id,
-            date: dbRec.date,
-            taskId: dbRec.project_task_id,
-            worker: dbRec.worker_name || '',
-            hours: dbRec.hours || 0,
-            note: dbRec.note || ''
-        };
+        updateLayer(p => ({
+            records: [{ id: dbRec.id, date: dbRec.date, taskId: dbRec.project_task_id, worker: dbRec.worker_name, hours: dbRec.hours, note: dbRec.note }, ...p.records]
+        }));
+    };
 
-        updateLayer(p => ({ records: [newLocalRecord, ...p.records] }));
+    // --- 作業員マスター連携アクション ---
+    const addWorker = async () => {
+        const newWorkerName = window.prompt("追加する作業員の名前を入力してください");
+        if (!newWorkerName || newWorkerName.trim() === '') return;
+
+        const maxOrder = workers.length > 0 ? Math.max(...workers.map(w => w.display_order || 0)) : 0;
+
+        const { data, error } = await supabase.from('Workers').insert([{
+            name: newWorkerName.trim(),
+            display_order: maxOrder + 1
+        }]).select();
+
+        if (error) {
+            console.error(error);
+            window.alert("作業員の追加に失敗しました。");
+            return;
+        }
+
+        setWorkers(prev => [...prev, data[0]]);
+    };
+
+    const updateWorkerName = async (workerId, newName) => {
+        if (!newName || newName.trim() === '') return;
+        const { error } = await supabase.from('Workers').update({ name: newName.trim() }).eq('id', workerId);
+
+        if (error) {
+            console.error(error);
+            window.alert("作業員名の更新に失敗しました。");
+            return;
+        }
+
+        setWorkers(prev => prev.map(w => w.id === workerId ? { ...w, name: newName.trim() } : w));
+    };
+
+    const removeWorker = async (workerId, workerName) => {
+        if (!window.confirm(`「${workerName}」を削除しますか？\n（※過去の実績データから名前は消えませんが、ログイン画面等の選択肢からは消去されます）`)) return;
+
+        const { error } = await supabase.from('Workers').delete().eq('id', workerId);
+        if (error) {
+            console.error(error);
+            window.alert("作業員の削除に失敗しました。");
+            return;
+        }
+
+        setWorkers(prev => prev.filter(w => w.id !== workerId));
+    };
+
+    const moveWorkerOrder = async (index, direction) => {
+        if (
+            (direction === -1 && index === 0) ||
+            (direction === 1 && index === workers.length - 1)
+        ) return;
+
+        const newWorkers = [...workers];
+        const temp = newWorkers[index];
+        newWorkers[index] = newWorkers[index + direction];
+        newWorkers[index + direction] = temp;
+
+        // display_orderを振り直す
+        const updatedWorkers = newWorkers.map((w, i) => ({ ...w, display_order: i + 1 }));
+        setWorkers(updatedWorkers);
+
+        // DB更新 (複数件更新)
+        for (const w of updatedWorkers) {
+            await supabase.from('Workers').update({ display_order: w.display_order }).eq('id', w.id);
+        }
     };
 
     const removeRecord = async (recordId) => {
@@ -596,6 +670,229 @@ const App = () => {
         xlsx.writeFile(wb, `${activeProject.siteName}_工数管理レポート_${today}.xlsx`);
     };
 
+    const exportWorkerReport = async () => {
+        if (!exportModalWorker || !exportWeekStart) return;
+        setIsLoading(true);
+
+        try {
+            const startDate = new Date(exportWeekStart);
+            const days = Array.from({ length: 7 }, (_, i) => {
+                const d = new Date(startDate);
+                d.setDate(d.getDate() + i);
+                return d.toISOString().split('T')[0];
+            });
+
+            const workerName = exportModalWorker;
+            const weekPrefix = exportWeekStart.replace(/-/g, '').slice(0, 8); // e.g., 20260302
+
+            // Fetch records for this week
+            const { data: recordsData } = await supabase.from('TaskRecords')
+                .select('*, ProjectTasks(name, projectId)')
+                .eq('worker_name', workerName)
+                .gte('date', days[0])
+                .lte('date', days[6]);
+
+            // Check if foreman in any selected projects
+            const foremanProjects = projects.filter(p => p.foreman_worker_id === workers.find(w => w.name === workerName)?.id);
+            const foremanProjectIds = foremanProjects.map(p => p.id);
+            let subcontractorsData = [];
+            if (foremanProjectIds.length > 0) {
+                const { data: subData } = await supabase.from('SubcontractorRecords')
+                    .select('*')
+                    .in('project_id', foremanProjectIds)
+                    .gte('date', days[0])
+                    .lte('date', days[6]);
+                if (subData) subcontractorsData = subData;
+            }
+
+            const sheetData = [];
+            sheetData.push(["就労日報 (R8)", null, null, null, null, `作業者名: ${workerName}`, null, null]);
+
+            const dateRow = ["日付", "項目"];
+            const dayNames = ["(月)", "(火)", "(水)", "(木)", "(金)", "(土)", "(日)"];
+            days.forEach((d, i) => {
+                const parts = d.split('-');
+                dateRow.push(`${parseInt(parts[1])}/${parseInt(parts[2])}\n${dayNames[i]}`);
+            });
+            sheetData.push(dateRow);
+
+            const dateProjectMap = {};
+            days.forEach(d => {
+                const dayRecords = (recordsData || []).filter(r => r.date === d);
+                const projGroups = {};
+                dayRecords.forEach(r => {
+                    const pid = r.ProjectTasks?.projectId || r.project_id;
+                    if (!projGroups[pid]) {
+                        const proj = projects.find(p => p.id === pid);
+                        projGroups[pid] = { siteName: proj?.siteName || '不明な現場', items: [], sumHours: 0, sumOvertime: 0 };
+                    }
+                    projGroups[pid].items.push(r.ProjectTasks?.name || '不明な作業');
+                    projGroups[pid].sumHours += Number(r.hours || 0);
+                    projGroups[pid].sumOvertime += Number(r.overtime_hours || 0);
+                });
+                dateProjectMap[d] = Object.values(projGroups);
+            });
+
+            for (let g = 0; g < 3; g++) {
+                const genbaNameRow = [`現場${g + 1}`, "現場名"];
+                const timeRow = ["", "時間"];
+                const contentRow = ["", "作業内容"];
+
+                days.forEach(d => {
+                    const group = dateProjectMap[d][g];
+                    if (group) {
+                        genbaNameRow.push(group.siteName);
+                        // 時間外がある場合は併記する
+                        let otText = '';
+                        if (group.sumOvertime > 0) {
+                            otText = `\n(+外${group.sumOvertime}h)`;
+                        }
+                        timeRow.push(`${group.sumHours}h${otText}`);
+                        contentRow.push(group.items.join('\n'));
+                    } else {
+                        genbaNameRow.push("");
+                        timeRow.push("");
+                        contentRow.push("");
+                    }
+                });
+                sheetData.push(genbaNameRow);
+                sheetData.push(timeRow);
+                sheetData.push(contentRow);
+            }
+
+            for (let c = 0; c < 3; c++) {
+                const compRow = c === 0 ? ["協力会社", `会社名①`] : ["", `会社名${c === 1 ? '②' : '③'}`];
+                days.forEach(d => {
+                    const daySubs = subcontractorsData.filter(s => s.date === d);
+                    const sub = daySubs[c];
+                    if (sub) {
+                        compRow.push(`${sub.company_name} ( ${sub.worker_count}名 )`);
+                    } else {
+                        compRow.push("");
+                    }
+                });
+                sheetData.push(compRow);
+            }
+
+            const pRow1 = ["使用材料", "材料名"];
+            const pRow2 = ["", "数量"];
+            for (let i = 0; i < 7; i++) { pRow1.push(""); pRow2.push(""); }
+            sheetData.push(pRow1);
+            sheetData.push(pRow2);
+
+            const otRow = ["作業手当", "時間(H)"];
+            days.forEach(d => {
+                const dayRecords = (recordsData || []).filter(r => r.date === d);
+                const dayOt = dayRecords.reduce((sum, r) => sum + Number(r.overtime_hours || 0), 0);
+                otRow.push(dayOt > 0 ? `${dayOt}H` : "");
+            });
+            sheetData.push(otRow);
+
+            const sigRow = ["", "承認サイン"];
+            for (let i = 0; i < 7; i++) { sigRow.push(""); }
+            sheetData.push(sigRow);
+
+            sheetData.push(["備考", "※手当対象作業：...サンダーケレン、早出・残業（残業予定時間を事前に報告のこと）...", "", "", "", "", "", ""]);
+
+            const ws = xlsx.utils.aoa_to_sheet(sheetData);
+
+            ws['!merges'] = [
+                { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } },
+                { s: { r: 0, c: 5 }, e: { r: 0, c: 8 } },
+
+                { s: { r: 2, c: 0 }, e: { r: 4, c: 0 } },
+                { s: { r: 5, c: 0 }, e: { r: 7, c: 0 } },
+                { s: { r: 8, c: 0 }, e: { r: 10, c: 0 } },
+
+                { s: { r: 11, c: 0 }, e: { r: 13, c: 0 } },
+                { s: { r: 14, c: 0 }, e: { r: 15, c: 0 } },
+                { s: { r: 16, c: 0 }, e: { r: 17, c: 0 } },
+                { s: { r: 18, c: 1 }, e: { r: 18, c: 8 } }
+            ];
+
+            const range = xlsx.utils.decode_range(ws['!ref']);
+            for (let R = range.s.r; R <= range.e.r; ++R) {
+                for (let C = range.s.c; C <= range.e.c; ++C) {
+                    const cell = ws[xlsx.utils.encode_cell({ r: R, c: C })];
+                    if (!cell) ws[xlsx.utils.encode_cell({ r: R, c: C })] = { t: "s", v: "" };
+                    const cellRef = ws[xlsx.utils.encode_cell({ r: R, c: C })];
+
+                    if (R < 18) {
+                        cellRef.s = {
+                            border: {
+                                top: { style: "thin" },
+                                bottom: { style: "thin" },
+                                left: { style: "thin" },
+                                right: { style: "thin" }
+                            },
+                            alignment: { vertical: "center", horizontal: "center", wrapText: true }
+                        };
+                    } else if (R === 18) {
+                        cellRef.s = { font: { sz: 9 } };
+                    }
+
+                    if (R === 0) {
+                        cellRef.s.font = { bold: true, sz: 14 };
+                        cellRef.s.border = {};
+                        cellRef.s.alignment = { horizontal: C === 0 ? "center" : "right" };
+                    }
+                }
+            }
+
+            ws['!cols'] = [
+                { wch: 6 },
+                { wch: 10 },
+                { wch: 15 },
+                { wch: 15 },
+                { wch: 15 },
+                { wch: 15 },
+                { wch: 15 },
+                { wch: 15 },
+                { wch: 15 }
+            ];
+
+            const wb = xlsx.utils.book_new();
+            xlsx.utils.book_append_sheet(wb, ws, "就労日報");
+            xlsx.writeFile(wb, `${workerName}_就労日報_${weekPrefix}.xlsx`);
+
+            setExportModalWorker(null);
+
+        } catch (e) {
+            console.error(e);
+            window.alert("出力処理中にエラーが発生しました。");
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    // 作業員別の稼働実績集計
+    const workerSummaryData = useMemo(() => {
+        // すべてのプロジェクトの全レコードをフラット化
+        const allRecords = projects.flatMap(p =>
+            p.records.map(r => ({ ...r, siteName: p.siteName }))
+        );
+
+        // 作業員名でグループ化
+        const summary = {};
+        allRecords.forEach(r => {
+            if (!r.worker) return;
+            if (!summary[r.worker]) {
+                summary[r.worker] = { totalHours: 0, projects: new Set() };
+            }
+            summary[r.worker].totalHours += Number(r.hours) || 0;
+            if (r.siteName) {
+                summary[r.worker].projects.add(r.siteName);
+            }
+        });
+
+        // 配列に変換し、労働時間の多い順などにソート可能にする（今回は名前順）
+        return Object.entries(summary).map(([name, data]) => ({
+            name,
+            totalHours: data.totalHours,
+            projects: Array.from(data.projects).sort()
+        })).sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+    }, [projects]);
+
     // 個別・全体集計ロジック
     const summaryData = useMemo(() => {
         if (!activeProject || !activeProject.masterData) return { items: [], totalActual: 0, totalTarget: 0, totalPredictedProfitLoss: 0 };
@@ -663,9 +960,9 @@ const App = () => {
                             </div>
                         </div>
                         <nav className="bg-white p-2 rounded-lg shadow-sm border flex gap-1 mt-2 md:mt-0 overflow-x-auto">
-                            {['dashboard', 'summary', 'input', 'master'].map((tab) => (
+                            {['dashboard', 'summary', 'input', 'master', 'workers'].map((tab) => (
                                 <button key={tab} onClick={() => setActiveTab(tab)} className={`px-4 py-2 rounded-md transition font-bold whitespace-nowrap ${activeTab === tab ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 text-slate-600'}`}>
-                                    {tab === 'dashboard' ? 'ホーム' : tab === 'summary' ? '管理シート' : tab === 'input' ? '実績入力' : '工事設定'}
+                                    {tab === 'dashboard' ? 'ホーム' : tab === 'summary' ? '管理シート' : tab === 'input' ? '実績入力' : tab === 'master' ? '工事設定' : '作業員'}
                                 </button>
                             ))}
                         </nav>
@@ -1114,7 +1411,178 @@ const App = () => {
                             </div>
                         </div>
                     )}
+
+                    {activeTab === 'workers' && (
+                        <div className={`p-6 bg-slate-50 min-h-[500px] ${isLoading ? 'opacity-50 pointer-events-none' : ''}`}>
+                            <div className="flex items-center justify-between mb-6">
+                                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Users className="text-blue-600" /> 作業員管理・稼働確認</h2>
+                            </div>
+
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                {/* 左側：マスター管理（名簿・順番） */}
+                                <div className="bg-white rounded-xl border object-contain border-slate-200 shadow-sm p-4 h-fit">
+                                    <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-100">
+                                        <h3 className="font-bold text-slate-700 flex items-center gap-2">
+                                            <Settings size={18} className="text-slate-400" />
+                                            作業員マスター設定
+                                        </h3>
+                                        <button
+                                            onClick={addWorker}
+                                            className="text-white bg-blue-600 px-3 py-1.5 rounded text-sm font-bold flex items-center gap-1 hover:bg-blue-700 transition"
+                                        >
+                                            <Plus size={16} /> 追加する
+                                        </button>
+                                    </div>
+                                    <div className="space-y-2">
+                                        {workers.map((worker, idx) => (
+                                            <div key={worker.id} className="flex flex-col sm:flex-row items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-lg hover:border-blue-300 transition group">
+                                                <div className="flex items-center gap-3 w-full sm:w-auto mb-2 sm:mb-0">
+                                                    <div className="flex flex-col">
+                                                        <button
+                                                            disabled={idx === 0}
+                                                            onClick={() => moveWorkerOrder(idx, -1)}
+                                                            className="text-slate-300 hover:text-blue-600 disabled:opacity-30 disabled:hover:text-slate-300 p-0.5"
+                                                        >
+                                                            <ArrowUp size={16} />
+                                                        </button>
+                                                        <button
+                                                            disabled={idx === workers.length - 1}
+                                                            onClick={() => moveWorkerOrder(idx, 1)}
+                                                            className="text-slate-300 hover:text-blue-600 disabled:opacity-30 disabled:hover:text-slate-300 p-0.5"
+                                                        >
+                                                            <ArrowDown size={16} />
+                                                        </button>
+                                                    </div>
+                                                    <span className="text-xs text-slate-400 font-mono w-4">{idx + 1}</span>
+                                                    <input
+                                                        type="text"
+                                                        defaultValue={worker.name}
+                                                        onBlur={(e) => updateWorkerName(worker.id, e.target.value)}
+                                                        className="font-bold text-lg bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white outline-none px-1 py-0.5 transition w-full sm:w-48"
+                                                    />
+                                                </div>
+                                                <button
+                                                    onClick={() => removeWorker(worker.id, worker.name)}
+                                                    className="w-full sm:w-auto mt-2 sm:mt-0 opacity-100 sm:opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-500 hover:bg-red-50 p-2 rounded transition flex items-center justify-center gap-1"
+                                                >
+                                                    <Trash2 size={16} /> <span className="sm:hidden text-sm">削除</span>
+                                                </button>
+                                            </div>
+                                        ))}
+                                        {workers.length === 0 && (
+                                            <div className="text-center py-8 text-slate-400 font-bold text-sm">作業員が登録されていません</div>
+                                        )}
+                                    </div>
+                                    <p className="text-xs text-slate-500 mt-4 leading-relaxed">
+                                        ※ここでの表示順（上から順）が、作業員アプリ（スマホ側）のログイン画面や実績入力時のリストの順番になります。
+                                    </p>
+                                </div>
+
+                                {/* 右側：稼働実績の集計 */}
+                                <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 h-fit">
+                                    <h3 className="font-bold text-slate-700 flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
+                                        <BarChart3 size={18} className="text-slate-400" />
+                                        作業員別 稼働時間集計 (全期間)
+                                    </h3>
+
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-left">
+                                            <thead>
+                                                <tr className="bg-slate-100 text-slate-600 text-xs tracking-wider uppercase">
+                                                    <th className="p-3 font-bold rounded-l-lg">作業員名</th>
+                                                    <th className="p-3 font-bold">稼働した現場</th>
+                                                    <th className="p-3 font-bold text-right">総稼働時間</th>
+                                                    <th className="p-3 font-bold text-center rounded-r-lg">日報</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100">
+                                                {workerSummaryData.length === 0 ? (
+                                                    <tr>
+                                                        <td colSpan="3" className="p-8 text-center text-slate-400 font-bold">まだ作業実績がありません</td>
+                                                    </tr>
+                                                ) : (
+                                                    workerSummaryData.map((data, idx) => (
+                                                        <tr key={idx} className="hover:bg-slate-50 transition">
+                                                            <td className="p-3 font-bold text-slate-800 flex items-center gap-2 whitespace-nowrap">
+                                                                <User size={16} className="text-slate-400" /> {data.name}
+                                                            </td>
+                                                            <td className="p-3">
+                                                                <div className="flex flex-wrap gap-1">
+                                                                    {data.projects.map((site, sIdx) => (
+                                                                        <span key={sIdx} className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full border border-blue-100">
+                                                                            {site}
+                                                                        </span>
+                                                                    ))}
+                                                                    {data.projects.length === 0 && <span className="text-[10px] text-slate-400">-</span>}
+                                                                </div>
+                                                            </td>
+                                                            <td className="p-3 text-right">
+                                                                <div className="font-mono font-bold text-lg text-slate-700">
+                                                                    {data.totalHours.toFixed(1)} <span className="text-xs text-slate-500 font-sans">h</span>
+                                                                </div>
+                                                            </td>
+                                                            <td className="p-3 text-center">
+                                                                <button
+                                                                    onClick={() => setExportModalWorker(data.name)}
+                                                                    className="text-[11px] bg-slate-100 hover:bg-blue-50 text-slate-600 hover:text-blue-700 font-bold py-1.5 px-3 border border-slate-300 hover:border-blue-400 rounded-lg transition"
+                                                                >
+                                                                    出力
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    ))
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </main>
+
+                {/* 作業員別日報出力モーダル */}
+                {exportModalWorker && (
+                    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+                        <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full">
+                            <h3 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+                                <FileText className="text-blue-500" />
+                                就労日報の出力
+                            </h3>
+                            <p className="text-slate-600 mb-6 font-bold text-sm">
+                                対象作業員: <span className="text-blue-600 text-base">{exportModalWorker}</span> さん
+                            </p>
+
+                            <div className="mb-6">
+                                <label className="block text-xs font-bold text-slate-500 mb-2">出力する週（月曜始まり）</label>
+                                <input
+                                    type="date"
+                                    value={exportWeekStart}
+                                    onChange={(e) => {
+                                        const d = new Date(e.target.value);
+                                        const day = d.getDay();
+                                        const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+                                        setExportWeekStart(new Date(d.setDate(diff)).toISOString().split('T')[0]);
+                                    }}
+                                    className="w-full border-2 border-slate-200 p-3 rounded-lg font-bold text-slate-700 outline-none focus:border-blue-500 transition"
+                                />
+                            </div>
+
+                            <div className="flex gap-3 justify-end mt-4">
+                                <button
+                                    onClick={() => setExportModalWorker(null)}
+                                    className="px-4 py-2 rounded-lg font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition"
+                                >キャンセル</button>
+                                <button
+                                    onClick={exportWorkerReport}
+                                    className="px-4 py-2 rounded-lg font-bold text-white bg-blue-600 hover:bg-blue-700 transition"
+                                >
+                                    Excel出力
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {/* エクセルインポート時の選択モーダル */}
                 {importModalInfo && (

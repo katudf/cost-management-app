@@ -85,6 +85,7 @@ const WorkerApp = () => {
                         progress_percentage: t.progress_percentage || 0,
 
                         today_hours: todayRecord ? todayRecord.hours : 0,
+                        today_overtime_hours: todayRecord ? (todayRecord.overtime_hours || 0) : 0,
                         today_record_id: todayRecord ? todayRecord.id : null,
                         today_note: todayRecord ? todayRecord.note : ''
                     };
@@ -177,6 +178,7 @@ const WorkerApp = () => {
                     progress_percentage: inserted.progress_percentage,
                     order: inserted.order,
                     today_hours: 0,
+                    today_overtime_hours: 0,
                     today_record_id: null,
                     today_note: ''
                 }]);
@@ -201,20 +203,22 @@ const WorkerApp = () => {
 
             for (const t of tasks) {
                 // Upsert records
-                if (t.today_hours > 0 || t.today_record_id) {
+                if (t.today_hours > 0 || t.today_overtime_hours > 0 || t.today_record_id) {
                     if (t.today_record_id) {
                         // Update existing
                         await supabase.from('TaskRecords').update({
                             hours: t.today_hours || 0,
+                            overtime_hours: t.today_overtime_hours || 0,
                             note: t.today_note || ''
                         }).eq('id', t.today_record_id);
-                    } else if (t.today_hours > 0) {
+                    } else if (t.today_hours > 0 || t.today_overtime_hours > 0) {
                         // Insert new
                         const { data } = await supabase.from('TaskRecords').insert([{
                             project_id: selectedProjectId,
                             project_task_id: t.id,
                             date: today,
-                            hours: t.today_hours,
+                            hours: t.today_hours || 0,
+                            overtime_hours: t.today_overtime_hours || 0,
                             worker_name: loggedInWorker.name,
                             note: t.today_note || ''
                         }]).select();
@@ -384,6 +388,25 @@ const WorkerApp = () => {
                                                 onClick={() => adjustHours(t.id, 0.5)}
                                                 className="w-14 h-14 rounded-xl bg-blue-100 text-blue-600 font-black text-2xl active:bg-blue-200 transition shrink-0 flex items-center justify-center"
                                             >+</button>
+                                        </div>
+                                    </div>
+
+                                    {/* 時間外（早出・残業）入力 */}
+                                    <div>
+                                        <div className="flex items-center justify-between">
+                                            <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-tight">うち時間外稼働 (早出・残業)</label>
+                                            <div className="flex items-center gap-1">
+                                                <input
+                                                    type="number"
+                                                    step="0.5"
+                                                    min="0"
+                                                    value={t.today_overtime_hours || 0}
+                                                    onChange={(e) => updateTaskField(t.id, 'today_overtime_hours', Math.max(0, Number(e.target.value)))}
+                                                    className="w-20 h-10 text-center text-xl font-black text-orange-600 bg-orange-50 border-2 border-orange-200 rounded-lg outline-none focus:border-orange-500 transition"
+                                                    placeholder="0"
+                                                />
+                                                <span className="text-slate-400 font-bold text-sm">h</span>
+                                            </div>
                                         </div>
                                     </div>
 
