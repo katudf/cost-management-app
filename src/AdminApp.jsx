@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Layout, Table, Clipboard, AlertCircle, Plus, Trash2, CheckCircle2, BarChart3, Settings, Edit3, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Trash, Upload, Loader2, User } from 'lucide-react';
-import * as xlsx from 'xlsx';
+import * as xlsx from 'xlsx-js-style';
 import { supabase } from './lib/supabase';
 
 // 初期データのひな形 (DBが空の時のため)
@@ -43,6 +43,9 @@ const App = () => {
             const { data: rData, error: rError } = await supabase.from('TaskRecords').select('*').order('date', { ascending: false });
             if (rError) throw rError;
 
+            const { data: sData, error: sError } = await supabase.from('SubcontractorRecords').select('*');
+            if (sError) throw sError;
+
             // ローカルステート用の構造にマッピング
             const loadedProjects = pData.map(p => {
                 const myTasks = tData.filter(t => t.projectId === p.id);
@@ -51,7 +54,8 @@ const App = () => {
                 const masterData = myTasks.map(t => ({
                     id: t.id,
                     task: t.name || '',
-                    target: t.target_hours || 0
+                    target: t.target_hours || 0,
+                    estimatedAmount: t.estimated_amount || 0
                 }));
 
                 const progressData = {};
@@ -68,13 +72,16 @@ const App = () => {
                     note: r.note || ''
                 }));
 
+                const mySubcontractors = (sData || []).filter(s => s.project_id === p.id);
+
                 return {
                     id: p.id,
                     siteName: p.name || '無題',
                     foreman_worker_id: p.foreman_worker_id || null,
                     masterData,
                     records,
-                    progressData
+                    progressData,
+                    subcontractors: mySubcontractors
                 };
             });
 
@@ -146,9 +153,18 @@ const App = () => {
             return;
         }
         if (window.confirm("本当にこの現場のデータをすべて削除しますか？")) {
-            // DB削除
+            // DB関連データの削除 (外部キー制約エラー回避のため順次削除)
+            await supabase.from('SubcontractorRecords').delete().eq('project_id', id);
+            await supabase.from('TaskRecords').delete().eq('project_id', id);
+            await supabase.from('ProjectTasks').delete().eq('projectId', id);
+
+            // DBから現場を削除
             const { error } = await supabase.from('Projects').delete().eq('id', id);
-            if (error) { console.error(error); window.alert("削除失敗"); return; }
+            if (error) {
+                console.error(error);
+                window.alert("削除に失敗しました: " + error.message);
+                return;
+            }
 
             setProjects(prev => prev.filter(p => p.id !== id));
             if (activeProjectId === id) {
@@ -185,6 +201,7 @@ const App = () => {
             projectId: activeProjectId,
             name: '新規作業項目',
             target_hours: 0,
+            estimated_amount: 0,
             order: activeProject.masterData.length + 1,
             progress_percentage: 0
         };
@@ -198,7 +215,7 @@ const App = () => {
 
         const dbRec = data[0];
         updateLayer(p => ({
-            masterData: [...p.masterData, { id: dbRec.id, task: dbRec.name, target: dbRec.target_hours }],
+            masterData: [...p.masterData, { id: dbRec.id, task: dbRec.name, target: dbRec.target_hours, estimatedAmount: dbRec.estimated_amount || 0 }],
             progressData: { ...p.progressData, [dbRec.id]: 0 }
         }));
     };
@@ -276,6 +293,35 @@ const App = () => {
         }
     };
 
+    const addSubcontractorRecord = async () => {
+        const newDbRecord = {
+            project_id: activeProjectId,
+            date: new Date().toISOString().split('T')[0],
+            company_name: '',
+            worker_count: 1,
+            unit_price: 25000,
+            worker_name: ''
+        };
+
+        const { data, error } = await supabase.from('SubcontractorRecords').insert([newDbRecord]).select();
+        if (error) { console.error(error); return; }
+
+        updateLayer(p => ({ subcontractors: [data[0], ...(p.subcontractors || [])] }));
+    };
+
+    const removeSubcontractorRecord = async (recordId) => {
+        const { error } = await supabase.from('SubcontractorRecords').delete().eq('id', recordId);
+        if (error) { console.error(error); return; }
+        updateLayer(p => ({ subcontractors: (p.subcontractors || []).filter(r => r.id !== recordId) }));
+    };
+
+    const updateSubcontractorRecordField = async (recordId, field, value) => {
+        updateLayer(p => ({
+            subcontractors: (p.subcontractors || []).map(r => r.id === recordId ? { ...r, [field]: value } : r)
+        }));
+        await supabase.from('SubcontractorRecords').update({ [field]: value }).eq('id', recordId);
+    };
+
     // --- Excelインポート ---
     const fileInputRef = useRef(null);
 
@@ -326,11 +372,13 @@ const App = () => {
                         ) {
                             const taskName = `${name}${spec ? ` [${spec}]` : ''} (${quantity}${unit || ''})`;
                             let targetHours = 0;
+                            let estimatedAmount = 0;
                             if (typeof amount === 'number' && amount > 0) {
+                                estimatedAmount = amount;
                                 targetHours = Math.round(amount / HOURLY_WAGE);
                             }
 
-                            newMasterData.push({ task: taskName, target: targetHours }); // DB用なのでID持たせず
+                            newMasterData.push({ task: taskName, target: targetHours, estimatedAmount: estimatedAmount }); // DB用なのでID持たせず
                         }
                     });
                 });
@@ -400,6 +448,7 @@ const App = () => {
                 projectId: targetProjectId,
                 name: m.task,
                 target_hours: m.target,
+                estimated_amount: m.estimatedAmount || 0,
                 order: idx + 1,
                 progress_percentage: 0
             }));
@@ -441,16 +490,108 @@ const App = () => {
             });
 
             const overallProgressValue = totalTarget > 0 ? (masterData.reduce((sum, m) => sum + ((progressData[m.id] || 0) * m.target), 0) / totalTarget) : 0;
+            const subcontractorCost = (proj.subcontractors || []).reduce((sum, s) => sum + (Number(s.worker_count) * Number(s.unit_price || 25000)), 0);
 
             return {
                 ...proj,
                 totalActual,
                 totalTarget,
                 overallProgress: Math.round(overallProgressValue),
-                predictedProfitLoss: totalPredictedLoss
+                predictedProfitLoss: totalPredictedLoss - subcontractorCost
             };
         });
     }, [projects]);
+
+    const exportToExcel = () => {
+        if (!activeProject || !activeProject.masterData || activeProject.masterData.length === 0) {
+            window.alert('出力するデータがありません。');
+            return;
+        }
+
+        // --- シート1: 現場別サマリー (選択中現場) ---
+        // 算出済みの activeProject (allProjectsSummary 内の該当データに相当するもの) を用いる
+        const currentProjectSummary = allProjectsSummary.find(p => p.id === activeProject.id);
+        const ownWorkerHours = currentProjectSummary ? currentProjectSummary.totalActual : 0;
+        const ownWorkerCount = ownWorkerHours / 8; // 8時間 = 1人工
+        const subcontractorCount = (activeProject.subcontractors || []).reduce((sum, s) => sum + Number(s.worker_count), 0);
+        const totalWorkerCount = ownWorkerCount + subcontractorCount;
+        const profitLoss = currentProjectSummary ? currentProjectSummary.predictedProfitLoss : 0;
+        const progress = currentProjectSummary ? currentProjectSummary.overallProgress : 0;
+
+        const summarySheetData = [
+            {
+                '現場名': activeProject.siteName,
+                '予測粗利': profitLoss,
+                '自社稼働時間合計(h)': ownWorkerHours,
+                '自社延べ人数(人)': Number(ownWorkerCount.toFixed(2)),
+                '協力業者延べ人数(人)': subcontractorCount,
+                '総・延べ人数(人)': Number(totalWorkerCount.toFixed(2)),
+                '進捗率(%)': progress
+            }
+        ];
+
+        // --- シート2: 作業項目別詳細 (選択中現場) ---
+        // 算出済みの summaryData.items を元にする
+        const detailSheetData = summaryData.items.map(item => ({
+            '現場名': activeProject.siteName,
+            '作業項目名': item.task,
+            '見積金額(円)': item.estimatedAmount,
+            '進捗率(%)': item.progress,
+            '目標工数(h)': item.target,
+            '消化工数(h)': item.actual,
+            '自社延べ人数(人)': Number((item.actual / 8).toFixed(2)),
+            '予測粗利': item.predictedProfitLoss
+        }));
+
+        const wb = xlsx.utils.book_new();
+        const ws1 = xlsx.utils.json_to_sheet(summarySheetData);
+        const ws2 = xlsx.utils.json_to_sheet(detailSheetData);
+
+        // スタイル設定
+        const borderStyle = {
+            top: { style: "thin" },
+            bottom: { style: "thin" },
+            left: { style: "thin" },
+            right: { style: "thin" }
+        };
+        const headerStyle = {
+            font: { bold: true },
+            fill: { fgColor: { rgb: "EFEFEF" } }, // 薄いグレー
+            border: borderStyle
+        };
+        const dataStyle = {
+            border: borderStyle
+        };
+
+        const applyStyleToSheet = (ws) => {
+            if (!ws['!ref']) return;
+            const range = xlsx.utils.decode_range(ws['!ref']);
+            for (let R = range.s.r; R <= range.e.r; ++R) {
+                for (let C = range.s.c; C <= range.e.c; ++C) {
+                    const cellRef = xlsx.utils.encode_cell({ r: R, c: C });
+                    if (!ws[cellRef]) continue;
+                    if (R === 0) {
+                        ws[cellRef].s = headerStyle;
+                    } else {
+                        ws[cellRef].s = Object.assign({}, ws[cellRef].s || {}, dataStyle);
+                    }
+                }
+            }
+        };
+
+        applyStyleToSheet(ws1);
+        applyStyleToSheet(ws2);
+
+        // 列幅の簡易調整
+        ws1['!cols'] = [{ wch: 20 }, { wch: 15 }, { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 10 }];
+        ws2['!cols'] = [{ wch: 20 }, { wch: 30 }, { wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 15 }];
+
+        xlsx.utils.book_append_sheet(wb, ws1, "現場サマリー");
+        xlsx.utils.book_append_sheet(wb, ws2, "作業項目別詳細");
+
+        const today = new Date().toISOString().split('T')[0];
+        xlsx.writeFile(wb, `${activeProject.siteName}_工数管理レポート_${today}.xlsx`);
+    };
 
     // 個別・全体集計ロジック
     const summaryData = useMemo(() => {
@@ -470,9 +611,16 @@ const App = () => {
         const totalActual = items.reduce((sum, i) => sum + i.actual, 0);
         const totalTarget = items.reduce((sum, i) => sum + i.target, 0);
         const totalPredictedProfitLoss = items.reduce((sum, i) => sum + i.predictedProfitLoss, 0);
+        const subcontractorCost = (activeProject.subcontractors || []).reduce((sum, s) => sum + (Number(s.worker_count) * Number(s.unit_price || 25000)), 0);
 
-        return { items, totalActual, totalTarget, totalPredictedProfitLoss };
-    }, [activeProject.masterData, activeProject.records, activeProject.progressData]);
+        return {
+            items,
+            totalActual,
+            totalTarget,
+            totalPredictedProfitLoss: totalPredictedProfitLoss - subcontractorCost,
+            subcontractorCost
+        };
+    }, [activeProject.masterData, activeProject.records, activeProject.progressData, activeProject.subcontractors]);
 
     if (isLoading && projects.length === 0) {
         return <div className="min-h-screen flex items-center justify-center bg-slate-50"><Loader2 className="w-8 h-8 animate-spin text-blue-500" /></div>;
@@ -619,10 +767,23 @@ const App = () => {
                                         {summaryData.totalTarget}<span className="text-sm font-normal text-slate-500">h</span>
                                     </div>
                                 </div>
+
+                                <div className="bg-orange-50 p-6 rounded-2xl border border-orange-200 flex flex-col justify-center">
+                                    <div className="text-xs font-bold text-orange-600 mb-1 uppercase tracking-wider">協力業者 発生コスト (累計)</div>
+                                    <div className="text-2xl font-black text-orange-600 flex items-baseline gap-2">
+                                        ¥{Math.round(summaryData.subcontractorCost || 0).toLocaleString()}
+                                    </div>
+                                </div>
                             </div>
 
                             <div className="flex items-center justify-between mb-4 border-b pb-4">
                                 <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800"><Layout className="text-blue-500 w-5 h-5" /> 項目別詳細予測</h2>
+                                <button
+                                    onClick={exportToExcel}
+                                    className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition hover:bg-green-700 shadow-sm border border-green-700"
+                                >
+                                    <Clipboard size={16} /> Excel出力
+                                </button>
                             </div>
 
                             <div className="overflow-x-auto">
@@ -630,6 +791,7 @@ const App = () => {
                                     <thead>
                                         <tr className="bg-slate-50 border-b text-slate-600 text-sm">
                                             <th className="p-4 font-bold">作業項目</th>
+                                            <th className="p-4 font-bold text-right">見積金額</th>
                                             <th className="p-4 font-bold">目標/実績</th>
                                             <th className="p-4 font-bold w-40">進捗</th>
                                             <th className="p-4 font-bold text-center">工数差異</th>
@@ -641,6 +803,9 @@ const App = () => {
                                             <tr key={item.id} className={`border-b transition ${item.status === 'danger' ? 'bg-red-50' : 'hover:bg-slate-50'}`}>
                                                 <td className="p-4">
                                                     <div className="font-bold text-sm">{item.task}</div>
+                                                </td>
+                                                <td className="p-4 text-right">
+                                                    <div className="font-mono font-bold text-slate-800">¥{Math.round(item.estimatedAmount).toLocaleString()}</div>
                                                 </td>
                                                 <td className="p-4">
                                                     <div className="text-[10px] text-slate-500 tracking-tighter">目標: {item.target}h</div>
@@ -687,7 +852,7 @@ const App = () => {
                                 <h2 className="text-lg font-bold flex items-center gap-2 text-blue-600"><Edit3 size={20} /> 日報実績入力</h2>
                                 <button onClick={addRecord} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition hover:bg-blue-700 shadow-md"><Plus size={16} /> 日報1件追加</button>
                             </div>
-                            <div className="overflow-x-auto pb-32">
+                            <div className="overflow-x-auto mb-8">
                                 <table className="w-full text-left text-sm">
                                     <thead className="bg-slate-50 border-b text-slate-500 font-bold">
                                         <tr><th className="p-3 w-32">日付</th><th className="p-3">作業</th><th className="p-3 w-24">名前</th><th className="p-3 w-20">時間</th><th className="p-3">備考</th><th className="p-3"></th></tr>
@@ -766,6 +931,76 @@ const App = () => {
                                     </tbody>
                                 </table>
                             </div>
+
+                            <div className="flex items-center justify-between mb-6">
+                                <h2 className="text-lg font-bold flex items-center gap-2 text-orange-600"><Edit3 size={20} /> 協力業者実績入力</h2>
+                                <button onClick={addSubcontractorRecord} className="bg-orange-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition hover:bg-orange-700 shadow-md"><Plus size={16} /> 業者1件追加</button>
+                            </div>
+                            <div className="overflow-x-auto pb-32">
+                                <table className="w-full text-left text-sm">
+                                    <thead className="bg-orange-50 border-b border-orange-200 text-orange-800 font-bold">
+                                        <tr>
+                                            <th className="p-3 w-32">日付</th>
+                                            <th className="p-3">会社名</th>
+                                            <th className="p-3 w-24">人数(人)</th>
+                                            <th className="p-3">入力者(任意)</th>
+                                            <th className="p-3"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {(activeProject.subcontractors || []).map((r, i) => (
+                                            <tr key={r.id} className="border-b hover:bg-orange-50 transition">
+                                                <td className="p-2">
+                                                    <input
+                                                        type="date"
+                                                        value={r.date}
+                                                        className="border border-orange-200 rounded p-1 w-full text-xs"
+                                                        onChange={(e) => updateSubcontractorRecordField(r.id, 'date', e.target.value)}
+                                                    />
+                                                </td>
+                                                <td className="p-2">
+                                                    <input
+                                                        type="text"
+                                                        value={r.company_name || ""}
+                                                        placeholder="会社名を入力"
+                                                        className="border border-orange-200 rounded p-1 w-full text-xs outline-none focus:border-orange-400"
+                                                        onChange={(e) => updateSubcontractorRecordField(r.id, 'company_name', e.target.value)}
+                                                    />
+                                                </td>
+                                                <td className="p-2">
+                                                    <input
+                                                        type="number"
+                                                        min="0.1"
+                                                        step="0.1"
+                                                        value={r.worker_count}
+                                                        className="border border-orange-200 rounded p-1 w-full text-right font-bold text-xs"
+                                                        onChange={(e) => updateSubcontractorRecordField(r.id, 'worker_count', Number(e.target.value))}
+                                                    />
+                                                </td>
+                                                <td className="p-2">
+                                                    <input
+                                                        type="text"
+                                                        value={r.worker_name || ""}
+                                                        placeholder="職長名など"
+                                                        className="border border-orange-200 rounded p-1 w-full text-xs outline-none focus:border-orange-400"
+                                                        onChange={(e) => updateSubcontractorRecordField(r.id, 'worker_name', e.target.value)}
+                                                    />
+                                                </td>
+                                                <td className="p-2 text-center">
+                                                    <button onClick={() => removeSubcontractorRecord(r.id)} className="text-orange-300 hover:text-red-500 transition"><Trash2 size={16} /></button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                        {(!activeProject.subcontractors || activeProject.subcontractors.length === 0) && (
+                                            <tr>
+                                                <td colSpan="5" className="p-6 text-center text-slate-400 font-bold border-b border-dashed">
+                                                    協力業者の実績データはありません
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     )}
 
@@ -828,14 +1063,31 @@ const App = () => {
                                                     onBlur={() => saveMasterItemDB(m.id, { name: m.task })}
                                                 />
                                             </div>
+                                            <div className="w-28 text-right">
+                                                <label className="text-[9px] font-bold text-slate-400 block mb-1 uppercase text-right tracking-tighter">見積金額</label>
+                                                <div className="flex items-center gap-1 justify-end font-mono font-bold">
+                                                    <span className="text-slate-400 text-xs">¥</span><input
+                                                        type="number" value={m.estimatedAmount || 0}
+                                                        className="w-full text-right outline-none bg-slate-50 rounded px-1"
+                                                        onChange={(e) => {
+                                                            const newEst = Number(e.target.value);
+                                                            const newTarget = Math.round(newEst / HOURLY_WAGE);
+                                                            updateLayer(p => ({
+                                                                masterData: p.masterData.map(item => item.id === m.id ? { ...item, estimatedAmount: newEst, target: newTarget } : item)
+                                                            }));
+                                                        }}
+                                                        onBlur={() => saveMasterItemDB(m.id, { estimated_amount: m.estimatedAmount || 0, target_hours: m.target })}
+                                                    />
+                                                </div>
+                                            </div>
                                             <div className="w-24 text-right">
                                                 <label className="text-[9px] font-bold text-slate-400 block mb-1 uppercase text-right tracking-tighter">目標時間</label>
                                                 <div className="flex items-center gap-1 justify-end font-mono font-bold">
                                                     <input
                                                         type="number" value={m.target}
-                                                        className="w-full text-right outline-none bg-slate-50 rounded px-1"
-                                                        onChange={(e) => updateMasterItemLocal(m.id, 'target', Number(e.target.value))}
-                                                        onBlur={() => saveMasterItemDB(m.id, { target_hours: m.target })}
+                                                        className="w-full text-right outline-none bg-slate-50 rounded px-1 cursor-not-allowed opacity-70"
+                                                        readOnly
+                                                        title="見積金額から自動計算されます"
                                                     /><span>h</span>
                                                 </div>
                                             </div>

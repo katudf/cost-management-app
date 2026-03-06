@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './lib/supabase';
-import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save } from 'lucide-react';
+import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2 } from 'lucide-react';
 
 const WorkerApp = () => {
     const [workers, setWorkers] = useState([]);
@@ -12,6 +12,9 @@ const WorkerApp = () => {
     const [tasks, setTasks] = useState([]);
     const [isSaving, setIsSaving] = useState(false);
     const [saveMessage, setSaveMessage] = useState('');
+
+    const [subcontractors, setSubcontractors] = useState([]);
+    const [deletedSubcontractorIds, setDeletedSubcontractorIds] = useState([]);
 
     // Initial load
     useEffect(() => {
@@ -68,6 +71,11 @@ const WorkerApp = () => {
                     .eq('worker_name', loggedInWorker.name)
                     .eq('date', today);
 
+                const { data: sData } = await supabase.from('SubcontractorRecords')
+                    .select('*')
+                    .eq('project_id', selectedProjectId)
+                    .eq('date', today);
+
                 const mappedTasks = (tData || []).map(t => {
                     const todayRecord = (rData || []).find(r => r.project_task_id === t.id);
                     return {
@@ -83,6 +91,8 @@ const WorkerApp = () => {
                 });
 
                 setTasks(mappedTasks);
+                setSubcontractors(sData || []);
+                setDeletedSubcontractorIds([]);
             } catch (error) {
                 console.error('Error loading project details:', error);
             } finally {
@@ -103,6 +113,8 @@ const WorkerApp = () => {
             setLoggedInWorker(null);
             setSelectedProjectId('');
             setTasks([]);
+            setSubcontractors([]);
+            setDeletedSubcontractorIds([]);
             localStorage.removeItem('cost-app-worker');
         }
     };
@@ -119,6 +131,21 @@ const WorkerApp = () => {
             }
             return t;
         }));
+    };
+
+    const addSubcontractor = () => {
+        setSubcontractors(prev => [...prev, { id: 'temp-' + Date.now(), company_name: '', worker_count: 1 }]);
+    };
+
+    const updateSubcontractor = (id, field, value) => {
+        setSubcontractors(prev => prev.map(s => s.id === id ? { ...s, [field]: value } : s));
+    };
+
+    const removeSubcontractor = (id) => {
+        if (!String(id).startsWith('temp-')) {
+            setDeletedSubcontractorIds(prev => [...prev, id]);
+        }
+        setSubcontractors(prev => prev.filter(s => s.id !== id));
     };
 
     const handleSubmit = async () => {
@@ -162,6 +189,35 @@ const WorkerApp = () => {
                     await supabase.from('ProjectTasks').update({
                         progress_percentage: t.progress_percentage
                     }).eq('id', t.id);
+                }
+            }
+
+            // Subcontractor logic
+            if (isForeman) {
+                // Delete removed records
+                for (const delId of deletedSubcontractorIds) {
+                    await supabase.from('SubcontractorRecords').delete().eq('id', delId);
+                }
+
+                // Upsert records
+                for (const s of subcontractors) {
+                    if (!s.company_name) continue;
+
+                    if (String(s.id).startsWith('temp-')) {
+                        await supabase.from('SubcontractorRecords').insert([{
+                            project_id: selectedProjectId,
+                            date: today,
+                            company_name: s.company_name,
+                            worker_count: s.worker_count,
+                            unit_price: 25000,
+                            worker_name: loggedInWorker.name
+                        }]);
+                    } else {
+                        await supabase.from('SubcontractorRecords').update({
+                            company_name: s.company_name,
+                            worker_count: s.worker_count
+                        }).eq('id', s.id);
+                    }
                 }
             }
 
@@ -320,6 +376,55 @@ const WorkerApp = () => {
                                 </div>
                             </div>
                         ))}
+
+                        {/* 協力業者の入力セクション (職長のみ) */}
+                        {isForeman && (
+                            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mt-2 mb-20">
+                                <div className="bg-blue-50 p-4 border-b border-blue-100 flex justify-between items-center">
+                                    <h3 className="font-bold text-blue-800 leading-snug">協力業者 (常用)</h3>
+                                    <button
+                                        onClick={addSubcontractor}
+                                        className="bg-blue-600 text-white text-xs px-3 py-1.5 rounded-lg font-bold shadow-sm hover:bg-blue-700 transition"
+                                    >
+                                        + 追加
+                                    </button>
+                                </div>
+                                <div className="p-4 flex flex-col gap-3">
+                                    {subcontractors.length === 0 ? (
+                                        <div className="text-center py-4 text-slate-400 text-sm font-bold border-2 border-dashed border-slate-100 rounded-xl">追加ボタンから業者を入力してください</div>
+                                    ) : (
+                                        subcontractors.map(s => (
+                                            <div key={s.id} className="flex gap-2 items-center bg-slate-50 p-2 rounded-xl border border-slate-100">
+                                                <input
+                                                    type="text"
+                                                    placeholder="会社名"
+                                                    value={s.company_name || ''}
+                                                    onChange={(e) => updateSubcontractor(s.id, 'company_name', e.target.value)}
+                                                    className="flex-1 min-w-0 bg-white border border-slate-200 p-2 rounded-lg text-sm font-bold outline-none focus:border-blue-400"
+                                                />
+                                                <div className="flex items-center gap-1 shrink-0">
+                                                    <input
+                                                        type="number"
+                                                        min="0.1"
+                                                        step="0.1"
+                                                        value={s.worker_count || ''}
+                                                        onChange={(e) => updateSubcontractor(s.id, 'worker_count', Number(e.target.value))}
+                                                        className="w-16 bg-white border border-slate-200 p-2 rounded-lg text-sm text-center font-bold outline-none focus:border-blue-400"
+                                                    />
+                                                    <span className="text-xs font-bold text-slate-500">人</span>
+                                                </div>
+                                                <button
+                                                    onClick={() => removeSubcontractor(s.id)}
+                                                    className="w-8 h-8 flex items-center justify-center shrink-0 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition"
+                                                >
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+                        )}
                     </div>
                 )}
             </main>
