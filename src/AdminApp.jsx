@@ -76,6 +76,7 @@ const App = () => {
 
                 return {
                     id: p.id,
+                    order: p.order,
                     siteName: p.name || '無題',
                     foreman_worker_id: p.foreman_worker_id || null,
                     masterData,
@@ -133,7 +134,8 @@ const App = () => {
     // --- DB連動アクション ---
 
     const addNewProject = async () => {
-        const { data, error } = await supabase.from('Projects').insert([{ name: '新規の現場', order: projects.length }]).select();
+        const nextOrder = projects.length > 0 ? Math.max(...projects.map(p => p.order || 0)) + 1 : 0;
+        const { data, error } = await supabase.from('Projects').insert([{ name: '新規の現場', order: nextOrder }]).select();
         if (error) {
             console.error(error);
             alert('現場の作成に失敗しました: ' + error.message);
@@ -142,7 +144,7 @@ const App = () => {
         const newProj = data[0];
 
         setProjects(prev => [...prev, {
-            id: newProj.id, siteName: newProj.name, masterData: [], records: [], progressData: {}
+            id: newProj.id, order: newProj.order, siteName: newProj.name, masterData: [], records: [], progressData: {}
         }]);
         setActiveProjectId(newProj.id);
     };
@@ -417,19 +419,20 @@ const App = () => {
         try {
             let targetProjectId = null;
             let siteNameToUse = info.fileName || info.finalSiteName || 'エクセル取込現場';
+            const nextOrder = projects.length > 0 ? Math.max(...projects.map(p => p.order || 0)) + 1 : 0;
 
             if (choice === 'create_new') {
-                const { data, error } = await supabase.from('Projects').insert([{ name: siteNameToUse, order: projects.length }]).select();
+                const { data, error } = await supabase.from('Projects').insert([{ name: siteNameToUse, order: nextOrder }]).select();
                 if (error) throw error;
                 targetProjectId = data[0].id;
             } else if (choice === 'create_alias') {
-                const { data, error } = await supabase.from('Projects').insert([{ name: aliasName || 'エクセル取込現場', order: projects.length }]).select();
+                const { data, error } = await supabase.from('Projects').insert([{ name: aliasName || 'エクセル取込現場', order: nextOrder }]).select();
                 if (error) throw error;
                 targetProjectId = data[0].id;
             } else if (choice === 'overwrite' || choice === 'overwrite_empty') {
                 targetProjectId = directParams ? directParams.projId : activeProjectId;
                 if (!targetProjectId) {
-                    const { data, error } = await supabase.from('Projects').insert([{ name: siteNameToUse, order: projects.length }]).select();
+                    const { data, error } = await supabase.from('Projects').insert([{ name: siteNameToUse, order: nextOrder }]).select();
                     if (error) throw error;
                     targetProjectId = data[0].id;
                 } else {

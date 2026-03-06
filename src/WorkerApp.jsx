@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './lib/supabase';
-import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2 } from 'lucide-react';
+import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2, PlusCircle } from 'lucide-react';
 
 const WorkerApp = () => {
     const [workers, setWorkers] = useState([]);
@@ -146,6 +146,47 @@ const WorkerApp = () => {
             setDeletedSubcontractorIds(prev => [...prev, id]);
         }
         setSubcontractors(prev => prev.filter(s => s.id !== id));
+    };
+
+    const handleAddNewTask = async () => {
+        if (!selectedProjectId) return;
+        const taskName = window.prompt("追加する作業項目の名称を入力してください。");
+        if (!taskName || taskName.trim() === '') return;
+
+        setIsLoading(true);
+        try {
+            const newTaskOrder = tasks.length > 0 ? Math.max(...tasks.map(t => t.order || 0)) + 1 : 1;
+            const newTask = {
+                projectId: selectedProjectId,
+                name: taskName.trim(),
+                target_hours: 0,
+                estimated_amount: 0,
+                order: newTaskOrder,
+                progress_percentage: 0
+            };
+
+            const { data, error } = await supabase.from('ProjectTasks').insert([newTask]).select();
+            if (error) throw error;
+
+            if (data && data.length > 0) {
+                const inserted = data[0];
+                setTasks(prev => [...prev, {
+                    id: inserted.id,
+                    name: inserted.name,
+                    target_hours: inserted.target_hours,
+                    progress_percentage: inserted.progress_percentage,
+                    order: inserted.order,
+                    today_hours: 0,
+                    today_record_id: null,
+                    today_note: ''
+                }]);
+            }
+        } catch (error) {
+            console.error("Failed to add new task:", error);
+            window.alert('作業項目の追加に失敗しました。');
+        } finally {
+            setIsLoading(false);
+        }
     };
 
     const handleSubmit = async () => {
@@ -376,6 +417,15 @@ const WorkerApp = () => {
                                 </div>
                             </div>
                         ))}
+
+                        {/* 新規作業項目追加ボタン */}
+                        <button
+                            onClick={handleAddNewTask}
+                            className="bg-white border-2 border-dashed border-slate-300 text-slate-500 hover:text-blue-600 hover:border-blue-400 hover:bg-blue-50 py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition"
+                        >
+                            <PlusCircle size={20} />
+                            新しい作業項目を追加
+                        </button>
 
                         {/* 協力業者の入力セクション (職長のみ) */}
                         {isForeman && (
