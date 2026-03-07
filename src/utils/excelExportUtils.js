@@ -88,15 +88,54 @@ export const exportToExcel = (activeProject, summaryData) => {
         }
     };
 
+    // 行のスタイルを残りのシートにも適用
     applyStyleToSheet(ws1);
     applyStyleToSheet(ws2);
+
+    // 作業員別の集計データ作成（追加要件：延べ作業時間と人工の集計）
+    const workerHours = {};
+    activeProject.records.forEach(r => {
+        const workerName = r.worker || '未設定';
+        if (!workerHours[workerName]) {
+            workerHours[workerName] = 0;
+        }
+        workerHours[workerName] += Number(r.hours || 0);
+    });
+
+    const ws3Data = [
+        ["作業員名", "延べ作業時間 (h)", "延べ人工 (8h/人工)"]
+    ];
+
+    let totalWorkerHours = 0;
+    // 作業時間が多い順にソートして出力
+    const sortedWorkers = Object.keys(workerHours).sort((a, b) => workerHours[b] - workerHours[a]);
+
+    sortedWorkers.forEach(worker => {
+        const hours = workerHours[worker];
+        totalWorkerHours += hours;
+        // 人工は小数第2位までに丸める
+        const ninku = parseFloat((hours / 8).toFixed(2));
+        ws3Data.push([worker, hours, ninku]);
+    });
+
+    // 合計行
+    ws3Data.push([
+        "【合計】",
+        totalWorkerHours,
+        parseFloat((totalWorkerHours / 8).toFixed(2))
+    ]);
+
+    const ws3 = xlsx.utils.aoa_to_sheet(ws3Data);
+    applyStyleToSheet(ws3);
 
     // 列幅の簡易調整
     ws1['!cols'] = [{ wch: 20 }, { wch: 15 }, { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 10 }];
     ws2['!cols'] = [{ wch: 20 }, { wch: 30 }, { wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 15 }];
+    ws3['!cols'] = [{ wch: 20 }, { wch: 20 }, { wch: 20 }];
 
     xlsx.utils.book_append_sheet(wb, ws1, "現場サマリー");
     xlsx.utils.book_append_sheet(wb, ws2, "作業項目別詳細");
+    xlsx.utils.book_append_sheet(wb, ws3, "作業員別集計");
 
     const today = new Date().toISOString().split('T')[0];
     xlsx.writeFile(wb, `${activeProject.siteName}_工数管理レポート_${today}.xlsx`);
