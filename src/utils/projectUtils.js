@@ -1,6 +1,6 @@
-import { HOURLY_WAGE } from './constants';
+// HOURLY_WAGE is now dynamically passed as 'hourlyWage' in calculateProjectsSummary
 
-export const calculateProjectsSummary = (projects) => {
+export const calculateProjectsSummary = (projects, hourlyWage) => {
     return projects.map(proj => {
         const masterData = proj.masterData || [];
         const records = proj.records || [];
@@ -14,7 +14,7 @@ export const calculateProjectsSummary = (projects) => {
             const actual = records.filter(r => r.taskId === m.id).reduce((sum, r) => sum + Number(r.hours), 0);
             const progress = progressData[m.id] || 0;
             const predictedFinal = progress > 0 ? (actual / (progress / 100)) : 0;
-            const predictedProfitLoss = progress > 0 ? (m.target - predictedFinal) * HOURLY_WAGE : 0;
+            const predictedProfitLoss = progress > 0 ? (m.target - predictedFinal) * hourlyWage : 0;
 
             totalActual += actual;
             totalTarget += m.target;

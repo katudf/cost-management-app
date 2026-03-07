@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Layout, Table, Clipboard, AlertCircle, Plus, Trash2, CheckCircle2, BarChart3, Settings, Edit3, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Trash, Upload, Loader2, User, Users, ArrowUp, ArrowDown, FileText, Calendar } from 'lucide-react';
 import { supabase } from './lib/supabase';
-import { DEFAULT_MASTER_DATA, HOURLY_WAGE } from './utils/constants';
+import { DEFAULT_MASTER_DATA } from './utils/constants';
 import { calculateAge } from './utils/dateUtils';
 import { calculateProjectsSummary } from './utils/projectUtils';
 import { parseExcelForImport } from './utils/excelImportUtils';
@@ -13,6 +13,7 @@ import DashboardTab from './components/tabs/DashboardTab';
 import InputTab from './components/tabs/InputTab';
 import MasterTab from './components/tabs/MasterTab';
 import WorkersTab from './components/tabs/WorkersTab';
+import SystemSettingsTab from './components/tabs/SystemSettingsTab';
 
 const App = () => {
     const [activeTab, setActiveTab] = useState('dashboard');
@@ -38,6 +39,7 @@ const App = () => {
     const [projects, setProjects] = useState([]);
     const [activeProjectId, setActiveProjectId] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [hourlyWage, setHourlyWage] = useState(3500);
 
     // -- 起動時のデータ取得 --
     const fetchAllData = async (forceActiveId = null) => {
@@ -60,6 +62,11 @@ const App = () => {
 
             const { data: sData, error: sError } = await supabase.from('SubcontractorRecords').select('*');
             if (sError) throw sError;
+
+            const { data: settingsData, error: settingsError } = await supabase.from('system_settings').select('hourly_wage').eq('id', 1).single();
+            if (!settingsError && settingsData) {
+                setHourlyWage(settingsData.hourly_wage);
+            }
 
             // ローカルステート用の構造にマッピング
             const loadedProjects = pData.map(p => {
@@ -495,7 +502,7 @@ const App = () => {
                             let estimatedAmount = 0;
                             if (typeof amount === 'number' && amount > 0) {
                                 estimatedAmount = amount;
-                                targetHours = Math.round(amount / HOURLY_WAGE);
+                                targetHours = Math.round(amount / hourlyWage);
                             }
 
                             newMasterData.push({ task: taskName, target: targetHours, estimatedAmount: estimatedAmount }); // DB用なのでID持たせず
@@ -590,8 +597,8 @@ const App = () => {
     };
     // --- 全体ダッシュボード集計ロジック ---
     const allProjectsSummary = useMemo(() => {
-        return calculateProjectsSummary(projects);
-    }, [projects]);
+        return calculateProjectsSummary(projects, hourlyWage);
+    }, [projects, hourlyWage]);
 
     const handleExportToExcel = () => {
         if (!activeProject || !activeProject.masterData || activeProject.masterData.length === 0) {
@@ -763,9 +770,9 @@ const App = () => {
                             </div>
                         </div>
                         <nav className="bg-white p-2 rounded-lg shadow-sm border flex gap-1 mt-2 md:mt-0 overflow-x-auto">
-                            {['dashboard', 'summary', 'input', 'master', 'workers'].map((tab) => (
+                            {['dashboard', 'summary', 'input', 'master', 'workers', 'settings'].map((tab) => (
                                 <button key={tab} onClick={() => setActiveTab(tab)} className={`px-4 py-2 rounded-md transition font-bold whitespace-nowrap ${activeTab === tab ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 text-slate-600'}`}>
-                                    {tab === 'dashboard' ? 'ホーム' : tab === 'summary' ? '管理シート' : tab === 'input' ? '実績入力' : tab === 'master' ? '工事設定' : '作業員'}
+                                    {tab === 'dashboard' ? 'ホーム' : tab === 'summary' ? '管理シート' : tab === 'input' ? '実績入力' : tab === 'master' ? '工事設定' : tab === 'settings' ? 'システム設定' : '作業員'}
                                 </button>
                             ))}
                         </nav>
@@ -891,7 +898,7 @@ const App = () => {
                             summaryData={summaryData}
                             updateLayer={updateLayer}
                             saveProgressDB={saveProgressDB}
-                            handleExportToExcel={exportToExcel}
+                            handleExportToExcel={() => exportToExcel(activeProject, summaryData)}
                             isLoading={isLoading}
                         />
                     )}
@@ -928,7 +935,7 @@ const App = () => {
                             saveMasterItemDB={saveMasterItemDB}
                             removeMasterItem={removeMasterItem}
                             addMasterItem={addMasterItem}
-                            HOURLY_WAGE={HOURLY_WAGE}
+                            HOURLY_WAGE={hourlyWage}
                         />
                     )}
 
@@ -942,6 +949,15 @@ const App = () => {
                             removeWorker={removeWorker}
                             workerSummaryData={workerSummaryData}
                             setExportModalWorker={setExportModalWorker}
+                        />
+                    )}
+
+                    {activeTab === 'settings' && (
+                        <SystemSettingsTab
+                            hourlyWage={hourlyWage}
+                            setHourlyWage={setHourlyWage}
+                            isLoading={isLoading}
+                            setIsLoading={setIsLoading}
                         />
                     )}
                 </main>

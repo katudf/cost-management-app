@@ -3,10 +3,10 @@ import * as xlsx from 'xlsx-js-style';
 /**
  * Excelファイルをインポート用にパースする関数
  * @param {File} file インポートするExcelファイル
- * @param {number} HOURLY_WAGE 時給（予定時間の計算に使用）
+ * @param {number} hourlyWage 時給（予定時間の計算に使用）
  * @returns {Promise<{projectName: string, masterData: Array}>} パース結果
  */
-export const parseExcelForImport = (file, HOURLY_WAGE) => {
+export const parseExcelForImport = (file, hourlyWage) => {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
 
@@ -57,7 +57,7 @@ export const parseExcelForImport = (file, HOURLY_WAGE) => {
                             let estimatedAmount = 0;
                             if (typeof amount === 'number' && amount > 0) {
                                 estimatedAmount = amount;
-                                targetHours = Math.round(amount / HOURLY_WAGE);
+                                targetHours = Math.round(amount / hourlyWage);
                             }
 
                             newMasterData.push({ task: taskName, target: targetHours, estimatedAmount: estimatedAmount });
