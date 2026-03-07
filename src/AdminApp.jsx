@@ -693,7 +693,7 @@ const App = () => {
             const variance = progress - consumptionRate;
 
             const predictedFinal = progress > 0 ? (actual / (progress / 100)) : 0;
-            const predictedProfitLoss = progress > 0 ? (m.target - predictedFinal) * HOURLY_WAGE : 0;
+            const predictedProfitLoss = progress > 0 ? (m.target - predictedFinal) * hourlyWage : 0;
 
             return { ...m, actual, progress, variance, predictedProfitLoss, status: variance < -5 ? 'danger' : variance < 0 ? 'warning' : 'ok' };
         });
@@ -710,7 +710,7 @@ const App = () => {
             totalPredictedProfitLoss: totalPredictedProfitLoss - subcontractorCost,
             subcontractorCost
         };
-    }, [activeProject.masterData, activeProject.records, activeProject.progressData, activeProject.subcontractors]);
+    }, [activeProject.masterData, activeProject.records, activeProject.progressData, activeProject.subcontractors, hourlyWage]);
 
     const displayProjects = useMemo(() => {
         let list = allProjectsSummary.filter(p => filterStatuses.includes(p.status || '予定'));
