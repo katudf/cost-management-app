@@ -27,6 +27,11 @@ const WorkerApp = () => {
                     setLoggedInWorker(JSON.parse(savedWorkerStr));
                 }
 
+                const savedProjectId = localStorage.getItem('cost-app-worker-project');
+                if (savedProjectId) {
+                    setSelectedProjectId(savedProjectId);
+                }
+
                 // Fetch workers for login screen
                 const { data: wData } = await supabase.from('Workers').select('id, name').order('display_order', { ascending: true, nullsFirst: false });
                 if (wData) {
@@ -117,6 +122,7 @@ const WorkerApp = () => {
             setSubcontractors([]);
             setDeletedSubcontractorIds([]);
             localStorage.removeItem('cost-app-worker');
+            localStorage.removeItem('cost-app-worker-project');
         }
     };
 
@@ -311,6 +317,11 @@ const WorkerApp = () => {
     const activeProject = projects.find(p => p.id === Number(selectedProjectId));
     const isForeman = activeProject && activeProject.foreman_worker_id === loggedInWorker.id;
 
+    // 現在の入力合計時間を計算
+    const totalInputHours = tasks.reduce((sum, t) => {
+        return sum + (Number(t.today_hours) || 0) + (Number(t.today_overtime_hours) || 0);
+    }, 0);
+
     return (
         <div className="min-h-screen bg-slate-100 font-sans text-slate-900 pb-24">
             <header className="bg-blue-600 text-white p-4 shadow-md sticky top-0 z-40 flex items-center justify-between">
@@ -331,7 +342,10 @@ const WorkerApp = () => {
                     <label className="block text-sm font-bold text-slate-600 mb-2">今日の現場を選択</label>
                     <select
                         value={selectedProjectId}
-                        onChange={(e) => setSelectedProjectId(e.target.value)}
+                        onChange={(e) => {
+                            setSelectedProjectId(e.target.value);
+                            localStorage.setItem('cost-app-worker-project', e.target.value);
+                        }}
                         className="w-full bg-white border-2 border-blue-200 text-slate-800 p-4 rounded-xl font-bold text-lg outline-none focus:border-blue-500 shadow-sm appearance-none"
                     >
                         <option value="">現場を選ぶ...</option>
@@ -514,10 +528,15 @@ const WorkerApp = () => {
                         <button
                             onClick={handleSubmit}
                             disabled={isSaving}
-                            className="w-full bg-blue-600 text-white font-black text-lg py-4 rounded-xl shadow-xl shadow-blue-600/20 active:bg-blue-700 transition flex justify-center items-center gap-2 disabled:opacity-70"
+                            className="w-full bg-blue-600 text-white py-4 rounded-xl shadow-xl shadow-blue-600/20 active:bg-blue-700 transition flex flex-col justify-center items-center gap-1 disabled:opacity-70"
                         >
-                            {isSaving ? <Loader2 className="animate-spin" /> : <Save />}
-                            今日の実績を送信
+                            <div className="flex items-center gap-2 font-black text-lg">
+                                {isSaving ? <Loader2 className="animate-spin" /> : <Save />}
+                                今日の実績を送信
+                            </div>
+                            <div className="text-blue-200 text-sm font-bold flex items-center gap-1">
+                                合計入力時間: <span className="text-white text-xl">{totalInputHours.toFixed(1)}</span> h
+                            </div>
                         </button>
                     </div>
                 </div>
