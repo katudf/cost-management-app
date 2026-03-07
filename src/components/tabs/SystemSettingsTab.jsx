@@ -41,7 +41,7 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, isLoading, setIsLoading 
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 max-w-2xl">
                 <div className="mb-6">
                     <label className="block text-sm font-bold text-slate-700 mb-2">
-                        1人あたりの人工（にんく）費用 (円/時間)
+                        1人あたりの人工費用 (円/時間)
                     </label>
                     <div className="flex items-center gap-3">
                         <div className="relative flex-1 max-w-xs">
@@ -56,7 +56,6 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, isLoading, setIsLoading 
                         <span className="text-slate-500 text-sm font-bold">円 / 1時間</span>
                     </div>
                     <p className="text-xs text-slate-500 mt-2">
-                        ※この設定は、現場ごとの目標工数計算や予測粗利計算の基準となる重要な設定です。<br />
                         現在入力中の値: 1日(8時間)あたり <strong>¥{(localWage * 8).toLocaleString()}</strong> 相当
                     </p>
                 </div>

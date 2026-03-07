@@ -20,7 +20,7 @@ const DashboardTab = ({
                         ¥{Math.abs(Math.round(summaryData.totalPredictedProfitLoss)).toLocaleString()}
                     </div>
                     <div className={`text-[10px] font-bold mt-1 ${summaryData.totalPredictedProfitLoss >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                        {summaryData.totalPredictedProfitLoss >= 0 ? '現在の進捗ペースなら目標粗利を確保可能だ！会社経費もカバーできるぞ！' : 'このままだと現場粗利がマイナスだ。至急対策を！'}
+                        {summaryData.totalPredictedProfitLoss >= 0 ? '現在のペースなら目標達成可能！' : 'このままだとマイナスだ。至急対策を！'}
                     </div>
                 </div>
 

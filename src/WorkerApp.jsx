@@ -16,6 +16,10 @@ const WorkerApp = () => {
     const [subcontractors, setSubcontractors] = useState([]);
     const [deletedSubcontractorIds, setDeletedSubcontractorIds] = useState([]);
 
+    const [hourlyWage, setHourlyWage] = useState(3500);
+    const [allProjectRecords, setAllProjectRecords] = useState([]);
+    const [allSubcontractorRecords, setAllSubcontractorRecords] = useState([]);
+
     // Initial load
     useEffect(() => {
         const init = async () => {
@@ -42,6 +46,12 @@ const WorkerApp = () => {
                 const { data: pData } = await supabase.from('Projects').select('*').order('created_at', { ascending: true });
                 if (pData) {
                     setProjects(pData);
+                }
+
+                // Fetch hourly wage
+                const { data: settingsData } = await supabase.from('system_settings').select('hourly_wage').eq('id', 1).single();
+                if (settingsData && settingsData.hourly_wage) {
+                    setHourlyWage(settingsData.hourly_wage);
                 }
             } catch (error) {
                 console.error('Initialization error:', error);
@@ -99,6 +109,19 @@ const WorkerApp = () => {
                 setTasks(mappedTasks);
                 setSubcontractors(sData || []);
                 setDeletedSubcontractorIds([]);
+
+                // Fetch ALL records for foreman calculations
+                const project = projects.find(p => p.id === Number(selectedProjectId));
+                if (project && project.foreman_worker_id === loggedInWorker.id) {
+                    const { data: allRecords } = await supabase.from('TaskRecords').select('*').eq('project_id', selectedProjectId);
+                    setAllProjectRecords(allRecords || []);
+
+                    const { data: allSubData } = await supabase.from('SubcontractorRecords').select('*').eq('project_id', selectedProjectId);
+                    setAllSubcontractorRecords(allSubData || []);
+                } else {
+                    setAllProjectRecords([]);
+                    setAllSubcontractorRecords([]);
+                }
             } catch (error) {
                 console.error('Error loading project details:', error);
             } finally {
@@ -322,12 +345,44 @@ const WorkerApp = () => {
         return sum + (Number(t.today_hours) || 0) + (Number(t.today_overtime_hours) || 0);
     }, 0);
 
+    // 職長用ダッシュボードの計算
+    let foremanSummary = null;
+    if (isForeman) {
+        const totalTarget = tasks.reduce((sum, t) => sum + (Number(t.target_hours) || 0), 0);
+
+        let totalActual = 0;
+        let predictedProfitLoss = 0;
+
+        tasks.forEach(t => {
+            const actual = allProjectRecords.filter(r => r.project_task_id === t.id).reduce((sum, r) => sum + Number(r.hours), 0);
+            totalActual += actual;
+
+            const progress = t.progress_percentage || 0;
+            const predictedFinal = progress > 0 ? (actual / (progress / 100)) : 0;
+            const taskProfitLoss = progress > 0 ? (t.target_hours - predictedFinal) * hourlyWage : 0;
+            predictedProfitLoss += taskProfitLoss;
+        });
+
+        const subcontractorCost = allSubcontractorRecords.reduce((sum, s) => sum + (Number(s.worker_count) * Number(s.unit_price || 25000)), 0);
+
+        const overallProgress = totalTarget > 0
+            ? tasks.reduce((sum, t) => sum + (t.target_hours * (t.progress_percentage || 0)), 0) / totalTarget
+            : 0;
+
+        foremanSummary = {
+            totalTarget,
+            totalActual,
+            overallProgress: Math.round(overallProgress),
+            predictedProfitLoss: Math.round(predictedProfitLoss - subcontractorCost),
+        };
+    }
+
     return (
         <div className="min-h-screen bg-slate-100 font-sans text-slate-900 pb-24">
             <header className="bg-blue-600 text-white p-4 shadow-md sticky top-0 z-40 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                     <HardHat size={20} />
-                    <span className="font-bold text-lg leading-none">{loggedInWorker.name} さん</span>
+                    <span className="font-bold text-lg leading-none">{loggedInWorker.name} </span>
                 </div>
                 <button
                     onClick={handleLogout}
@@ -368,10 +423,37 @@ const WorkerApp = () => {
 
                 {!isLoading && selectedProjectId && tasks.length > 0 && (
                     <div className="flex flex-col gap-4">
-                        {isForeman && (
-                            <div className="bg-green-100 border-2 border-green-500 text-green-800 px-4 py-3 rounded-xl font-bold flex gap-2 items-center text-sm shadow-sm">
-                                <CheckCircle2 className="shrink-0" />
-                                <div>あなたは職長です。<br />「進捗率」の更新をお願いします。</div>
+                        {isForeman && foremanSummary && (
+                            <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden mb-2">
+                                <div className="bg-green-600 px-4 py-3 flex gap-2 items-center text-white shadow-sm">
+                                    <CheckCircle2 className="shrink-0 w-5 h-5" />
+                                    <h3 className="font-bold text-sm">職長ダッシュボード</h3>
+                                </div>
+                                <div className="p-4 bg-slate-50 flex flex-col gap-3">
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center justify-center">
+                                            <div className="text-[10px] font-bold text-slate-500 mb-1">全体進捗率</div>
+                                            <div className="text-2xl font-black text-blue-600">{foremanSummary.overallProgress}%</div>
+                                        </div>
+                                        <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center justify-center">
+                                            <div className="text-[10px] font-bold text-slate-500 mb-1">消化工数 / 全体目標</div>
+                                            <div className="text-lg font-black text-slate-700">
+                                                {foremanSummary.totalActual.toFixed(1)} <span className="text-xs text-slate-400 font-bold mx-0.5">/</span> {foremanSummary.totalTarget.toFixed(1)} <span className="text-xs text-slate-400">h</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center justify-center">
+                                        <div className="text-[10px] font-bold text-slate-500 mb-1">現場全体の予測粗利</div>
+                                        <div className={`text-2xl font-black ${foremanSummary.predictedProfitLoss >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                            ¥{Math.abs(foremanSummary.predictedProfitLoss).toLocaleString()}
+                                            <span className="text-sm ml-1">{foremanSummary.predictedProfitLoss >= 0 ? '' : '赤字'}</span>
+                                        </div>
+                                        <div className={`text-[10px] font-bold mt-1 ${foremanSummary.predictedProfitLoss >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                                            {foremanSummary.predictedProfitLoss >= 0 ? '現在のペースなら目標達成可能！' : 'このままだとマイナスだ。至急対策を！'}
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         )}
 
