@@ -429,6 +429,10 @@ const WorkerApp = () => {
                                     <CheckCircle2 className="shrink-0 w-5 h-5" />
                                     <h3 className="font-bold text-sm">職長ダッシュボード</h3>
                                 </div>
+                                <div className="bg-green-50 px-4 py-2 border-b border-green-100 text-xs font-bold text-green-800 flex items-start gap-1">
+                                    <span className="text-green-600 mt-0.5">※</span>
+                                    <span>あなたは職長です。本日の作業終了後、各作業項目の<strong className="text-green-700 underline underline-offset-2 mx-1">進捗率</strong>を更新してください。</span>
+                                </div>
                                 <div className="p-4 bg-slate-50 flex flex-col gap-3">
                                     <div className="grid grid-cols-2 gap-3">
                                         <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center justify-center">
