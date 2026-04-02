@@ -1,0 +1,8 @@
+[dotenv@17.3.1] injecting env (2) from .env -- tip: 笞｡・・secrets for agents: https://dotenvx.com/as2
+Reading Excel file: C:\Users\katuy\Desktop\cost-management-app\docs\test_data\莉募・蟶ｳ.xlsx
+An error occurred: TypeError: xlsx.readFile is not a function
+    at run (file:///C:/Users/katuy/Desktop/cost-management-app/scripts/upload_purchase_ledger.js:42:31)
+    at file:///C:/Users/katuy/Desktop/cost-management-app/scripts/upload_purchase_ledger.js:134:1
+    at ModuleJob.run (node:internal/modules/esm/module_job:274:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:644:26)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)

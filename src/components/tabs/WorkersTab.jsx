@@ -1,6 +1,7 @@
-import React from 'react';
-import { Users, Settings, Plus, ArrowUp, ArrowDown, Calendar, Edit3, Trash2, BarChart3, User } from 'lucide-react';
+import React, { useState } from 'react';
+import { Users, Settings, Plus, ArrowUp, ArrowDown, Calendar, BarChart3, User, ChevronRight } from 'lucide-react';
 import { calculateAge } from '../../utils/dateUtils';
+import WorkerDetailsModal from '../WorkerDetailsModal';
 
 const WorkersTab = ({
     isLoading,
@@ -12,8 +13,17 @@ const WorkersTab = ({
     workerSummaryData,
     setExportModalWorker
 }) => {
+    const [selectedWorkerForDetails, setSelectedWorkerForDetails] = useState(null);
+
     return (
         <div className={`p-6 bg-slate-50 min-h-[500px] ${isLoading ? 'opacity-50 pointer-events-none' : ''}`}>
+            <WorkerDetailsModal 
+                isOpen={!!selectedWorkerForDetails}
+                worker={workers.find(w => w.id === selectedWorkerForDetails)}
+                onClose={() => setSelectedWorkerForDetails(null)}
+                onEdit={openEditWorkerModal}
+                onDelete={removeWorker}
+            />
             <div className="flex items-center justify-between mb-6">
                 <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Users className="text-blue-600" /> 作業員管理・稼働確認</h2>
             </div>
@@ -35,19 +45,23 @@ const WorkersTab = ({
                     </div>
                     <div className="space-y-2">
                         {workers.map((worker, idx) => (
-                            <div key={worker.id} className="flex flex-col sm:flex-row items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-lg hover:border-blue-300 transition group gap-2">
+                            <div 
+                                key={worker.id}
+                                className="flex flex-col sm:flex-row items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-lg hover:border-blue-300 hover:bg-white transition group gap-2 cursor-pointer"
+                                onClick={() => setSelectedWorkerForDetails(worker.id)}
+                            >
                                 <div className="flex items-center gap-3 w-full sm:w-auto">
                                     <div className="flex flex-col">
                                         <button
                                             disabled={idx === 0}
-                                            onClick={() => moveWorkerOrder(idx, -1)}
+                                            onClick={(e) => { e.stopPropagation(); moveWorkerOrder(idx, -1); }}
                                             className="text-slate-300 hover:text-blue-600 disabled:opacity-30 disabled:hover:text-slate-300 p-0.5"
                                         >
                                             <ArrowUp size={16} />
                                         </button>
                                         <button
                                             disabled={idx === workers.length - 1}
-                                            onClick={() => moveWorkerOrder(idx, 1)}
+                                            onClick={(e) => { e.stopPropagation(); moveWorkerOrder(idx, 1); }}
                                             className="text-slate-300 hover:text-blue-600 disabled:opacity-30 disabled:hover:text-slate-300 p-0.5"
                                         >
                                             <ArrowDown size={16} />
@@ -56,7 +70,7 @@ const WorkersTab = ({
                                     <span className="text-xs text-slate-400 font-mono w-4">{idx + 1}</span>
                                     <div className="flex flex-col min-w-[150px]">
                                         <span className="text-[10px] text-slate-400 font-bold">{worker.kana || 'フリガナ未設定'}</span>
-                                        <span className="font-bold text-lg text-slate-800">{worker.name}</span>
+                                        <span className="font-bold text-lg text-slate-800 group-hover:text-blue-700 transition">{worker.name}</span>
                                     </div>
                                     <div className="flex flex-col text-sm text-slate-600 ml-4 hidden md:flex">
                                         <div className="flex items-center gap-1"><Calendar size={14} className="text-slate-400" /> {worker.birthDate ? `${calculateAge(worker.birthDate)}歳` : '年齢未定'}</div>
@@ -65,20 +79,9 @@ const WorkersTab = ({
                                         <span className="text-xs text-slate-500">{worker.contactInfo || '連絡先未設定'}</span>
                                     </div>
                                 </div>
-                                <div className="flex items-center gap-2 w-full sm:w-auto mt-2 sm:mt-0 opacity-100 sm:opacity-0 group-hover:opacity-100 transition">
-                                    <button
-                                        onClick={() => openEditWorkerModal(worker)}
-                                        className="text-blue-500 hover:text-blue-600 hover:bg-blue-50 px-3 py-1.5 rounded transition flex items-center justify-center gap-1 font-bold text-sm bg-white border border-blue-200"
-                                    >
-                                        <Edit3 size={16} /> <span className="sm:hidden text-sm">編集</span>
-                                    </button>
-                                    <button
-                                        onClick={() => removeWorker(worker.id, worker.name)}
-                                        className="text-red-400 hover:text-red-500 hover:bg-red-50 p-1.5 rounded transition flex items-center justify-center gap-1"
-                                        title="削除"
-                                    >
-                                        <Trash2 size={16} /> <span className="sm:hidden text-sm">削除</span>
-                                    </button>
+                                <div className="flex items-center text-slate-400 opacity-60 mr-2 mt-2 sm:mt-0 group-hover:opacity-100 group-hover:text-blue-500 transition">
+                                    <span className="text-xs font-bold mr-1 hidden sm:inline">詳細</span>
+                                    <ChevronRight size={18} />
                                 </div>
                             </div>
                         ))}

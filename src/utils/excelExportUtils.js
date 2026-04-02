@@ -6,8 +6,12 @@ import * as xlsx from 'xlsx-js-style';
 export const exportToExcel = (activeProject, summaryData) => {
     if (!activeProject || summaryData.items.length === 0) return;
 
+    // 現場名ヘッダー行を作成
+    const siteNameRow = [`現場名: ${activeProject.siteName || '無題'}`];
+
     // Excel書き込みデータ作成（サマリー用）
     const ws1Data = [
+        siteNameRow,
         ["項目", "予定時間", "実績時間", "進捗率(%)", "時間差異", "予測損益", "状況"]
     ];
     summaryData.items.forEach(item => {
@@ -34,6 +38,7 @@ export const exportToExcel = (activeProject, summaryData) => {
 
     // Excel書き込みデータ作成（詳細用）
     const ws2Data = [
+        siteNameRow,
         ["作業項目", "作業内容", "作業員", "時間", "日付", "作成日時"]
     ];
     activeProject.records.forEach(r => {
@@ -72,14 +77,24 @@ export const exportToExcel = (activeProject, summaryData) => {
         border: borderStyle
     };
 
-    const applyStyleToSheet = (ws) => {
+    const applyStyleToSheet = (ws, columnsCount) => {
         if (!ws['!ref']) return;
+
+        // 現場名のセル（A1）をマージする
+        if (!ws['!merges']) ws['!merges'] = [];
+        ws['!merges'].push({ s: { r: 0, c: 0 }, e: { r: 0, c: columnsCount - 1 } });
+
         const range = xlsx.utils.decode_range(ws['!ref']);
         for (let R = range.s.r; R <= range.e.r; ++R) {
             for (let C = range.s.c; C <= range.e.c; ++C) {
                 const cellRef = xlsx.utils.encode_cell({ r: R, c: C });
                 if (!ws[cellRef]) continue;
                 if (R === 0) {
+                    ws[cellRef].s = {
+                        font: { bold: true, sz: 12 },
+                        alignment: { vertical: "center", horizontal: "left" }
+                    };
+                } else if (R === 1) {
                     ws[cellRef].s = headerStyle;
                 } else {
                     ws[cellRef].s = Object.assign({}, ws[cellRef].s || {}, dataStyle);
@@ -89,8 +104,8 @@ export const exportToExcel = (activeProject, summaryData) => {
     };
 
     // 行のスタイルを残りのシートにも適用
-    applyStyleToSheet(ws1);
-    applyStyleToSheet(ws2);
+    applyStyleToSheet(ws1, 7);
+    applyStyleToSheet(ws2, 6);
 
     // 作業員別の集計データ作成（追加要件：延べ作業時間と人工の集計）
     const workerHours = {};
@@ -103,6 +118,7 @@ export const exportToExcel = (activeProject, summaryData) => {
     });
 
     const ws3Data = [
+        siteNameRow,
         ["作業員名", "延べ作業時間 (h)", "延べ人工 (8h/人工)"]
     ];
 
@@ -126,7 +142,7 @@ export const exportToExcel = (activeProject, summaryData) => {
     ]);
 
     const ws3 = xlsx.utils.aoa_to_sheet(ws3Data);
-    applyStyleToSheet(ws3);
+    applyStyleToSheet(ws3, 3);
 
     // 列幅の簡易調整
     ws1['!cols'] = [{ wch: 20 }, { wch: 15 }, { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 10 }];

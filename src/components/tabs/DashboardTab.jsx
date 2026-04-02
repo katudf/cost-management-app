@@ -1,5 +1,5 @@
 import React from 'react';
-import { Layout, TrendingUp, TrendingDown, Clipboard } from 'lucide-react';
+import { Layout, TrendingUp, TrendingDown, Clipboard, Settings } from 'lucide-react';
 
 const DashboardTab = ({
     activeProject,
@@ -7,7 +7,8 @@ const DashboardTab = ({
     updateLayer,
     saveProgressDB,
     handleExportToExcel,
-    isLoading
+    isLoading,
+    setActiveTab
 }) => {
     return (
         <div className={`p-6 ${isLoading ? 'opacity-50 pointer-events-none' : ''}`}>
@@ -41,14 +42,22 @@ const DashboardTab = ({
                 </div>
             </div>
 
-            <div className="flex items-center justify-between mb-4 border-b pb-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 border-b pb-4">
                 <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800"><Layout className="text-blue-500 w-5 h-5" /> 項目別詳細予測</h2>
-                <button
-                    onClick={handleExportToExcel}
-                    className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition hover:bg-green-700 shadow-sm border border-green-700"
-                >
-                    <Clipboard size={16} /> Excel出力
-                </button>
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={() => setActiveTab && setActiveTab('master')}
+                        className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition hover:bg-blue-700 shadow-sm border border-blue-700"
+                    >
+                        <Settings size={16} /> 工事設定へ
+                    </button>
+                    <button
+                        onClick={handleExportToExcel}
+                        className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition hover:bg-green-700 shadow-sm border border-green-700"
+                    >
+                        <Clipboard size={16} /> Excel出力
+                    </button>
+                </div>
             </div>
 
             <div className="overflow-x-auto">

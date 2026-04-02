@@ -14,6 +14,7 @@ import InputTab from './components/tabs/InputTab';
 import MasterTab from './components/tabs/MasterTab';
 import WorkersTab from './components/tabs/WorkersTab';
 import SystemSettingsTab from './components/tabs/SystemSettingsTab';
+import PurchaseLedgerTab from './components/tabs/PurchaseLedgerTab';
 
 const App = () => {
     const [activeTab, setActiveTab] = useState('dashboard');
@@ -48,7 +49,18 @@ const App = () => {
         try {
             // Workers取得
             const { data: wData } = await supabase.from('Workers').select('*').order('display_order', { ascending: true, nullsFirst: false });
-            if (wData) setWorkers(wData.filter(w => w.name && w.name.trim() !== ''));
+
+            // WorkerCertifications取得
+            const { data: cData } = await supabase.from('WorkerCertifications').select('*');
+
+            if (wData) {
+                const validWorkers = wData.filter(w => w.name && w.name.trim() !== '');
+                const workersWithCerts = validWorkers.map(w => ({
+                    ...w,
+                    certifications: cData ? cData.filter(c => Number(c.workerId) === Number(w.id)) : []
+                }));
+                setWorkers(workersWithCerts);
+            }
 
             // Projects, ProjectTasks, TaskRecords取得
             const { data: pData, error: pError } = await supabase.from('Projects').select('*').order('created_at', { ascending: true });
@@ -743,7 +755,7 @@ const App = () => {
                     <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
                         <div className="flex-1">
                             <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2 mb-3 cursor-pointer hover:opacity-80 transition" onClick={() => setActiveTab('dashboard')}>
-                                <BarChart3 className="text-blue-600" /> 詳細工数管理システム
+                                <BarChart3 className="text-blue-600" /> 工事管理システム
                             </h1>
                             <div className="flex flex-wrap items-center gap-2">
                                 <div className="relative flex items-center">
@@ -770,9 +782,9 @@ const App = () => {
                             </div>
                         </div>
                         <nav className="bg-white p-2 rounded-lg shadow-sm border flex gap-1 mt-2 md:mt-0 overflow-x-auto">
-                            {['dashboard', 'summary', 'input', 'master', 'workers', 'settings'].map((tab) => (
+                            {['dashboard', 'summary', 'input', 'master', 'workers', 'settings', 'purchase_ledger'].map((tab) => (
                                 <button key={tab} onClick={() => setActiveTab(tab)} className={`px-4 py-2 rounded-md transition font-bold whitespace-nowrap ${activeTab === tab ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 text-slate-600'}`}>
-                                    {tab === 'dashboard' ? 'ホーム' : tab === 'summary' ? '管理シート' : tab === 'input' ? '実績入力' : tab === 'master' ? '工事設定' : tab === 'settings' ? 'システム設定' : '作業員'}
+                                    {tab === 'dashboard' ? 'ホーム' : tab === 'summary' ? '管理シート' : tab === 'input' ? '実績入力' : tab === 'master' ? '工事設定' : tab === 'settings' ? 'システム設定' : tab === 'workers' ? '作業員' : '材料'}
                                 </button>
                             ))}
                         </nav>
@@ -900,6 +912,7 @@ const App = () => {
                             saveProgressDB={saveProgressDB}
                             handleExportToExcel={() => exportToExcel(activeProject, summaryData)}
                             isLoading={isLoading}
+                            setActiveTab={setActiveTab}
                         />
                     )}
 
@@ -958,7 +971,13 @@ const App = () => {
                             setHourlyWage={setHourlyWage}
                             isLoading={isLoading}
                             setIsLoading={setIsLoading}
+                            workers={workers}
+                            fetchAllData={fetchAllData}
                         />
+                    )}
+
+                    {activeTab === 'purchase_ledger' && (
+                        <PurchaseLedgerTab />
                     )}
                 </main>
 
