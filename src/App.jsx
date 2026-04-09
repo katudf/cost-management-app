@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import AdminApp from './AdminApp';
 import WorkerApp from './WorkerApp';
+import ScheduleViewApp from './ScheduleViewApp';
 
 const App = () => {
     const [mode, setMode] = useState(null);
@@ -10,6 +11,8 @@ const App = () => {
         // ?mode=worker がURLにあればWorkerAppを表示
         if (queryParams.get('mode') === 'worker') {
             setMode('worker');
+        } else if (queryParams.get('mode') === 'schedule') {
+            setMode('schedule');
         } else {
             setMode('admin');
         }
@@ -23,7 +26,12 @@ const App = () => {
         return <WorkerApp />;
     }
 
+    if (mode === 'schedule') {
+        return <ScheduleViewApp />;
+    }
+
     return <AdminApp />;
 };
 
 export default App;
+

@@ -1,8 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { Settings, Save, CheckCircle2, Award, Plus, Edit3, Trash2, X, ChevronDown, ChevronRight } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { useToast } from '../../components/Toast';
 
 const SystemSettingsTab = ({ hourlyWage, setHourlyWage, isLoading, setIsLoading, workers = [], fetchAllData }) => {
+    const { showToast } = useToast();
     const [localWage, setLocalWage] = useState(hourlyWage);
     const [isSaving, setIsSaving] = useState(false);
     const [showSuccess, setShowSuccess] = useState(false);
@@ -55,7 +57,7 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, isLoading, setIsLoading,
             if (fetchAllData) await fetchAllData();
         } catch (error) {
             console.error('資格保存エラー:', error);
-            alert('保存に失敗しました: ' + error.message);
+            showToast('保存に失敗しました: ' + error.message, 'error');
         } finally {
             setIsSaving(false);
             setIsLoading(false);
@@ -72,7 +74,7 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, isLoading, setIsLoading,
             if (fetchAllData) await fetchAllData();
         } catch (error) {
             console.error('資格削除エラー:', error);
-            alert('削除に失敗しました: ' + error.message);
+            showToast('削除に失敗しました: ' + error.message, 'error');
         } finally {
             setIsSaving(false);
             setIsLoading(false);
@@ -95,7 +97,7 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, isLoading, setIsLoading,
             setTimeout(() => setShowSuccess(false), 3000);
         } catch (error) {
             console.error('設定の保存に失敗しました:', error);
-            alert('設定の保存に失敗しました: ' + error.message);
+            showToast('設定の保存に失敗しました: ' + error.message, 'error');
         } finally {
             setIsSaving(false);
             setIsLoading(false);
@@ -355,4 +357,5 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, isLoading, setIsLoading,
     );
 };
 
-export default SystemSettingsTab;
+export default React.memo(SystemSettingsTab);
+

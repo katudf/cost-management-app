@@ -1,5 +1,5 @@
-import React from 'react';
-import { Edit3, Plus, Trash2 } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Edit3, Plus, Trash2, Filter } from 'lucide-react';
 
 const InputTab = ({
     activeProject,
@@ -14,6 +14,17 @@ const InputTab = ({
     updateSubcontractorRecordField,
     removeSubcontractorRecord
 }) => {
+    const [filterDate, setFilterDate] = useState('');
+    const [filterWorker, setFilterWorker] = useState('');
+
+    const filteredRecords = useMemo(() => {
+        return activeProject.records.filter(r => {
+            const matchDate = filterDate ? r.date === filterDate : true;
+            const matchWorker = filterWorker ? (r.worker || '').includes(filterWorker) : true;
+            return matchDate && matchWorker;
+        });
+    }, [activeProject.records, filterDate, filterWorker]);
+
     return (
         <div className={`p-6 ${isLoading ? 'opacity-50 pointer-events-none' : ''}`}>
             <div className="flex items-center justify-between mb-6">
@@ -22,6 +33,35 @@ const InputTab = ({
                     <Plus size={16} /> 日報1件追加
                 </button>
             </div>
+            
+            {/* Filter UI */}
+            <div className="flex flex-col md:flex-row gap-4 mb-4 bg-slate-100 p-3 rounded-lg border border-slate-200">
+                <div className="flex items-center gap-2 font-bold text-slate-600">
+                    <Filter size={16} /> 絞り込み:
+                </div>
+                <input 
+                    type="date" 
+                    value={filterDate}
+                    onChange={(e) => setFilterDate(e.target.value)}
+                    className="border rounded p-2 text-sm w-full md:w-auto"
+                />
+                <input 
+                    type="text" 
+                    placeholder="氏名で絞り込み..."
+                    value={filterWorker}
+                    onChange={(e) => setFilterWorker(e.target.value)}
+                    className="border rounded p-2 text-sm w-full md:w-auto"
+                />
+                {(filterDate || filterWorker) && (
+                    <button 
+                        onClick={() => { setFilterDate(''); setFilterWorker(''); }}
+                        className="text-sm text-slate-500 underline hover:text-slate-700"
+                    >
+                        クリア
+                    </button>
+                )}
+            </div>
+
             <div className="overflow-x-auto mb-8">
                 <table className="w-full text-left text-sm">
                     <thead className="bg-slate-50 border-b text-slate-500 font-bold">
@@ -35,7 +75,13 @@ const InputTab = ({
                         </tr>
                     </thead>
                     <tbody>
-                        {activeProject.records.map((r) => (
+                        {filteredRecords.length === 0 ? (
+                            <tr>
+                                <td colSpan="6" className="p-8 text-center text-slate-400 font-bold bg-white">
+                                    表示する日報がありません。
+                                </td>
+                            </tr>
+                        ) : filteredRecords.map((r) => (
                             <tr key={r.id} className="border-b hover:bg-slate-50">
                                 <td className="p-2">
                                     <input
@@ -69,7 +115,7 @@ const InputTab = ({
                                     />
                                     {focusedWorkerRow === r.id && workers.length > 0 && (
                                         <ul className="absolute z-[100] left-2 right-2 top-[calc(100%-4px)] mt-1 bg-white border border-slate-200 shadow-2xl max-h-48 overflow-y-auto rounded-md py-1">
-                                            {workers.map(w => (
+                                            {workers.filter(w => !w.resignation_date).map(w => (
                                                 <li
                                                     key={w.id}
                                                     className="px-3 py-2 text-xs hover:bg-blue-100 cursor-pointer text-slate-800 font-medium"
@@ -190,4 +236,5 @@ const InputTab = ({
     );
 };
 
-export default InputTab;
+export default React.memo(InputTab);
+

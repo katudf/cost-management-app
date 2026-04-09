@@ -121,4 +121,5 @@ const DashboardTab = ({
     );
 };
 
-export default DashboardTab;
+export default React.memo(DashboardTab);
+

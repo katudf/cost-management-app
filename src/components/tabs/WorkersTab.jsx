@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Users, Settings, Plus, ArrowUp, ArrowDown, Calendar, BarChart3, User, ChevronRight } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Users, Settings, Plus, Calendar, BarChart3, User, ChevronRight } from 'lucide-react';
 import { calculateAge } from '../../utils/dateUtils';
 import WorkerDetailsModal from '../WorkerDetailsModal';
 
@@ -7,13 +7,27 @@ const WorkersTab = ({
     isLoading,
     workers,
     addWorker,
-    moveWorkerOrder,
+    handleWorkerReorder,
     openEditWorkerModal,
     removeWorker,
     workerSummaryData,
     setExportModalWorker
 }) => {
     const [selectedWorkerForDetails, setSelectedWorkerForDetails] = useState(null);
+    const [showResigned, setShowResigned] = useState(false);
+
+    const filteredWorkers = useMemo(() => {
+        if (showResigned) return workers;
+        return (workers || []).filter(w => !w.resignation_date);
+    }, [workers, showResigned]);
+
+    const filteredSummaryData = useMemo(() => {
+        if (showResigned) return workerSummaryData;
+        return (workerSummaryData || []).filter(data => {
+            const worker = workers.find(w => w.name === data.name);
+            return !worker || !worker.resignation_date;
+        });
+    }, [workerSummaryData, workers, showResigned]);
 
     return (
         <div className={`p-6 bg-slate-50 min-h-[500px] ${isLoading ? 'opacity-50 pointer-events-none' : ''}`}>
@@ -24,8 +38,19 @@ const WorkersTab = ({
                 onEdit={openEditWorkerModal}
                 onDelete={removeWorker}
             />
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
                 <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Users className="text-blue-600" /> 作業員管理・稼働確認</h2>
+                <div className="bg-white px-4 py-2 rounded-lg border border-slate-200 shadow-sm flex items-center gap-2">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                        <input
+                            type="checkbox"
+                            checked={showResigned}
+                            onChange={(e) => setShowResigned(e.target.checked)}
+                            className="w-4 h-4 rounded accent-blue-600"
+                        />
+                        <span className="text-sm font-bold text-slate-600">退社済みの作業員を表示</span>
+                    </label>
+                </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -44,29 +69,34 @@ const WorkersTab = ({
                         </button>
                     </div>
                     <div className="space-y-2">
-                        {workers.map((worker, idx) => (
+                        {filteredWorkers.map((worker, idx) => (
                             <div 
                                 key={worker.id}
-                                className="flex flex-col sm:flex-row items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-lg hover:border-blue-300 hover:bg-white transition group gap-2 cursor-pointer"
+                                className="flex flex-col sm:flex-row items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-lg hover:border-blue-300 hover:bg-white transition group gap-2 cursor-grab active:cursor-grabbing"
+                                draggable={true}
+                                onDragStart={(e) => {
+                                    e.dataTransfer.setData('workerid', worker.id.toString());
+                                    e.dataTransfer.effectAllowed = 'copyMove';
+                                }}
+                                onDragOver={(e) => {
+                                    e.preventDefault();
+                                    e.dataTransfer.dropEffect = 'move';
+                                    e.currentTarget.classList.add('bg-slate-200');
+                                }}
+                                onDragLeave={(e) => {
+                                    e.currentTarget.classList.remove('bg-slate-200');
+                                }}
+                                onDrop={(e) => {
+                                    e.preventDefault();
+                                    e.currentTarget.classList.remove('bg-slate-200');
+                                    const draggedWorkerId = e.dataTransfer.getData('workerid');
+                                    if (draggedWorkerId) {
+                                        handleWorkerReorder(parseInt(draggedWorkerId, 10), worker.id);
+                                    }
+                                }}
                                 onClick={() => setSelectedWorkerForDetails(worker.id)}
                             >
                                 <div className="flex items-center gap-3 w-full sm:w-auto">
-                                    <div className="flex flex-col">
-                                        <button
-                                            disabled={idx === 0}
-                                            onClick={(e) => { e.stopPropagation(); moveWorkerOrder(idx, -1); }}
-                                            className="text-slate-300 hover:text-blue-600 disabled:opacity-30 disabled:hover:text-slate-300 p-0.5"
-                                        >
-                                            <ArrowUp size={16} />
-                                        </button>
-                                        <button
-                                            disabled={idx === workers.length - 1}
-                                            onClick={(e) => { e.stopPropagation(); moveWorkerOrder(idx, 1); }}
-                                            className="text-slate-300 hover:text-blue-600 disabled:opacity-30 disabled:hover:text-slate-300 p-0.5"
-                                        >
-                                            <ArrowDown size={16} />
-                                        </button>
-                                    </div>
                                     <span className="text-xs text-slate-400 font-mono w-4">{idx + 1}</span>
                                     <div className="flex flex-col min-w-[150px]">
                                         <span className="text-[10px] text-slate-400 font-bold">{worker.kana || 'フリガナ未設定'}</span>
@@ -85,7 +115,7 @@ const WorkersTab = ({
                                 </div>
                             </div>
                         ))}
-                        {workers.length === 0 && (
+                        {filteredWorkers.length === 0 && (
                             <div className="text-center py-8 text-slate-400 font-bold text-sm">作業員が登録されていません</div>
                         )}
                     </div>
@@ -112,12 +142,12 @@ const WorkersTab = ({
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
-                                {workerSummaryData.length === 0 ? (
+                                {filteredSummaryData.length === 0 ? (
                                     <tr>
                                         <td colSpan="3" className="p-8 text-center text-slate-400 font-bold">まだ作業実績がありません</td>
                                     </tr>
                                 ) : (
-                                    workerSummaryData.map((data, idx) => (
+                                    filteredSummaryData.map((data, idx) => (
                                         <tr key={idx} className="hover:bg-slate-50 transition">
                                             <td className="p-3 font-bold text-slate-800 flex items-center gap-2 whitespace-nowrap">
                                                 <User size={16} className="text-slate-400" /> {data.name}
@@ -162,4 +192,5 @@ const WorkersTab = ({
     );
 };
 
-export default WorkersTab;
+export default React.memo(WorkersTab);
+

@@ -39,7 +39,7 @@ const App = () => {
     });
 
     const { projects, setProjects, workers, setWorkers, hourlyWage, setHourlyWage, isLoading, setIsLoading, fetchAllData } = useSupabaseData(showToast);
-    
+
     const workerOps = useWorkers({ workers, setWorkers, showToast });
     const projectOps = useProjects({ projects, setProjects, activeProjectId, setActiveProjectId, showToast, workers });
     const dashboardStats = useDashboardStats({ projects, activeProject: projectOps.activeProject, hourlyWage });
@@ -122,7 +122,7 @@ const App = () => {
                     if (duplicateProject) {
                         setImportModalInfo({ type: 'duplicate', data: newMasterData, count: newMasterData.length, fileName: finalSiteName, duplicateId: duplicateProject.id });
                         setAliasName(`${finalSiteName} (コピー)`);
-                    } else if (projectOps.activeProject.masterData && projectOps.activeProject.masterData.length > 0) {
+                    } else if (activeProject.masterData && activeProject.masterData.length > 0) {
                         setImportModalInfo({ type: 'normal', data: newMasterData, count: newMasterData.length, fileName: finalSiteName });
                     } else {
                         // 空の場合はそのまま上書き
@@ -201,15 +201,15 @@ const App = () => {
         }
     };
     const handleExportToExcel = () => {
-        if (!projectOps.activeProject || !projectOps.activeProject.masterData || projectOps.activeProject.masterData.length === 0) {
+        if (!activeProject || !activeProject.masterData || activeProject.masterData.length === 0) {
             showToast('出力するデータがありません。', 'error');
             return;
         }
-        exportToExcel(projectOps.activeProject, dashboardStats.summaryData);
+        exportToExcel(activeProject, summaryData);
     };
 
     const exportWorkerReport = async () => {
-        if (!workerOps.exportModalWorker || !exportWeekStart) return;
+        if (!exportModalWorker || !exportWeekStart) return;
         setIsLoading(true);
 
         try {
@@ -220,7 +220,7 @@ const App = () => {
                 return d.toISOString().split('T')[0];
             });
 
-            const workerName = workerOps.exportModalWorker;
+            const workerName = exportModalWorker;
             const weekPrefix = exportWeekStart.replace(/-/g, '').slice(0, 8); // e.g., 20260302
 
             // Fetch records for this week
@@ -245,7 +245,7 @@ const App = () => {
 
             generateWorkerReportExcel(workerName, weekPrefix, days, recordsData, projects, subcontractorsData);
 
-            workerOps.setExportModalWorker(null);
+            setExportModalWorker(null);
 
         } catch (e) {
             console.error(e);
@@ -255,6 +255,11 @@ const App = () => {
         }
     };
 
+    const toggleFilterStatus = (status) => {
+        setFilterStatuses(prev =>
+            prev.includes(status) ? prev.filter(s => s !== status) : [...prev, status]
+        );
+    };
 
     if (isLoading && projects.length === 0) {
         return <div className="min-h-screen flex items-center justify-center bg-slate-50"><Loader2 className="w-8 h-8 animate-spin text-blue-500" /></div>;
@@ -270,28 +275,25 @@ const App = () => {
                                 <BarChart3 className="text-blue-600" /> 工事管理システム
                             </h1>
                             <div className="flex flex-wrap items-center gap-2">
-                                {activeTab !== 'assignment' && activeTab !== 'workers' && (
-                                    <div className="relative flex items-center">
-                                        <FolderGit2 className="absolute left-3 text-slate-400 w-4 h-4" />
-                                        <select
-                                            value={activeProjectId || ''}
-                                            onChange={(e) => {
-                                                setActiveProjectId(Number(e.target.value));
-                                                if (activeTab === 'dashboard') setActiveTab('master');
-                                            }}
-                                            className="pl-9 pr-8 py-2 bg-white border border-slate-300 rounded-lg shadow-sm font-bold text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 appearance-none hover:border-slate-400 transition"
-                                        >
-                                            {projects.length === 0 && <option value="">現場なし</option>}
-                                            {projects.map(p => (
-                                                <option key={p.id} value={p.id}>{p.siteName || '無題の現場'}</option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                )}
+                                <div className="relative flex items-center">
+                                    <FolderGit2 className="absolute left-3 text-slate-400 w-4 h-4" />
+                                    <select
+                                        value={activeProjectId || ''}
+                                        onChange={(e) => {
+                                            setActiveProjectId(Number(e.target.value));
+                                            if (activeTab === 'dashboard') setActiveTab('summary');
+                                        }}
+                                        className="pl-9 pr-8 py-2 bg-white border border-slate-300 rounded-lg shadow-sm font-bold text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 appearance-none hover:border-slate-400 transition"
+                                    >
+                                        {projects.length === 0 && <option value="">現場なし</option>}
+                                        {projects.map(p => (
+                                            <option key={p.id} value={p.id}>{p.siteName || '無題の現場'}</option>
+                                        ))}
+                                    </select>
+                                </div>
                                 {activeTab === 'master' && (
-                                    <button onClick={projectOps.addNewProject} title="新しい現場を追加" className="px-3 py-2 text-slate-500 flex items-center gap-2 hover:text-blue-600 hover:bg-white rounded-lg transition shadow-sm border border-transparent hover:border-blue-200 text-sm font-bold">
-                                        <PlusCircle size={18} />
-                                        新しい現場を追加
+                                    <button onClick={addNewProject} title="新しい現場を追加" className="p-2 text-slate-500 hover:text-blue-600 hover:bg-white rounded-lg transition shadow-sm border border-transparent hover:border-blue-200">
+                                        <PlusCircle size={20} />
                                     </button>
                                 )}
                             </div>
@@ -299,6 +301,8 @@ const App = () => {
                         <nav className="bg-white p-2 rounded-lg shadow-sm border flex gap-1 mt-2 md:mt-0 overflow-x-auto">
                             {[
                                 { key: 'dashboard', label: 'ホーム', Icon: Home },
+                                { key: 'summary', label: '管理シート', Icon: Table },
+                                { key: 'input', label: '実績入力', Icon: Clipboard },
                                 { key: 'master', label: '工事設定', Icon: Settings },
                                 { key: 'workers', label: '作業員', Icon: Users },
                                 { key: 'assignment', label: '配置表', Icon: Calendar },
@@ -330,8 +334,8 @@ const App = () => {
                                                 <label key={status} className="flex items-center gap-1 cursor-pointer hover:bg-slate-50 px-1 rounded transition">
                                                     <input
                                                         type="checkbox"
-                                                        checked={dashboardStats.filterStatuses.includes(status)}
-                                                        onChange={() => dashboardStats.toggleFilterStatus(status)}
+                                                        checked={filterStatuses.includes(status)}
+                                                        onChange={() => toggleFilterStatus(status)}
                                                         className="w-4 h-4 accent-blue-600 cursor-pointer"
                                                     /> {status}
                                                 </label>
@@ -340,8 +344,8 @@ const App = () => {
                                         <div className="flex items-center gap-2 text-sm font-bold text-slate-600">
                                             <span className="text-slate-400">並び順:</span>
                                             <select
-                                                value={dashboardStats.sortOption}
-                                                onChange={(e) => dashboardStats.setSortOption(e.target.value)}
+                                                value={sortOption}
+                                                onChange={(e) => setSortOption(e.target.value)}
                                                 className="bg-slate-50 border border-slate-200 rounded p-1 outline-none focus:border-blue-400 cursor-pointer font-bold text-slate-700"
                                             >
                                                 <option value="created_desc">登録が新しい順</option>
@@ -356,11 +360,11 @@ const App = () => {
                                 )}
                             </div>
 
-                            {/* 全体サマリー統計 (コメントアウト中)
+                            {/* 全体サマリー統計 */}
                             {projects.length > 0 && (() => {
-                                const activeProjects = dashboardStats.allProjectsSummary.filter(p => (p.status || '予定') === '施工中');
-                                const plannedCount = dashboardStats.allProjectsSummary.filter(p => (p.status || '予定') === '予定').length;
-                                const completedCount = dashboardStats.allProjectsSummary.filter(p => (p.status || '予定') === '完了').length;
+                                const activeProjects = allProjectsSummary.filter(p => (p.status || '予定') === '施工中');
+                                const plannedCount = allProjectsSummary.filter(p => (p.status || '予定') === '予定').length;
+                                const completedCount = allProjectsSummary.filter(p => (p.status || '予定') === '完了').length;
                                 const totalProfit = activeProjects.reduce((sum, p) => sum + (p.predictedProfitLoss || 0), 0);
                                 const totalActual = activeProjects.reduce((sum, p) => sum + (p.totalActual || 0), 0);
                                 const totalTarget = activeProjects.reduce((sum, p) => sum + (p.totalTarget || 0), 0);
@@ -406,26 +410,25 @@ const App = () => {
                                     </div>
                                 );
                             })()}
-                            */}
 
                             {projects.length === 0 ? (
                                 <div className="text-center py-20 bg-white rounded-xl border border-dashed border-slate-300">
                                     <FolderGit2 className="mx-auto w-16 h-16 text-slate-300 mb-4" />
                                     <p className="text-slate-500 font-bold mb-4">まだ現場が登録されていません</p>
-                                    <button onClick={projectOps.addNewProject} className="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold shadow-md hover:bg-blue-700 transition flex items-center gap-2 mx-auto">
+                                    <button onClick={addNewProject} className="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold shadow-md hover:bg-blue-700 transition flex items-center gap-2 mx-auto">
                                         <PlusCircle size={20} /> 新しい現場を作成
                                     </button>
                                 </div>
                             ) : (
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                    {dashboardStats.displayProjects.length === 0 ? (
+                                    {displayProjects.length === 0 ? (
                                         <div className="col-span-full text-center py-10 bg-white rounded-xl border border-dashed border-slate-300 text-slate-400 font-bold">該当する条件の現場がありません。</div>
-                                    ) : dashboardStats.displayProjects.map(proj => (
+                                    ) : displayProjects.map(proj => (
                                         <div
                                             key={proj.id}
                                             onClick={() => {
                                                 setActiveProjectId(proj.id);
-                                                setActiveTab('master');
+                                                setActiveTab('summary');
                                             }}
                                             className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-xl hover:-translate-y-1 hover:border-blue-300 transition-all cursor-pointer overflow-hidden flex flex-col h-full group"
                                         >
@@ -479,39 +482,52 @@ const App = () => {
                         </div>
                     )}
 
+                    {activeTab === 'summary' && (
+                        <DashboardTab
+                            activeProject={activeProject}
+                            summaryData={summaryData}
+                            updateLayer={updateLayer}
+                            saveProgressDB={saveProgressDB}
+                            handleExportToExcel={() => exportToExcel(activeProject, summaryData)}
+                            isLoading={isLoading}
+                            setActiveTab={setActiveTab}
+                        />
+                    )}
 
+                    {activeTab === 'input' && (
+                        <InputTab
+                            activeProject={activeProject}
+                            isLoading={isLoading}
+                            addRecord={addRecord}
+                            updateRecordField={updateRecordField}
+                            removeRecord={removeRecord}
+                            workers={workers}
+                            focusedWorkerRow={focusedWorkerRow}
+                            setFocusedWorkerRow={setFocusedWorkerRow}
+                            addSubcontractorRecord={addSubcontractorRecord}
+                            updateSubcontractorRecordField={updateSubcontractorRecordField}
+                            removeSubcontractorRecord={removeSubcontractorRecord}
+                        />
+                    )}
 
                     {activeTab === 'master' && (
                         <MasterTab
-                            activeProject={projectOps.activeProject}
+                            activeProject={activeProject}
                             isLoading={isLoading}
                             handleExcelImport={handleExcelImport}
                             fileInputRef={fileInputRef}
-                            removeProject={projectOps.removeProject}
-                            updateLayer={projectOps.updateLayer}
-                            handleSiteNameBlur={projectOps.handleSiteNameBlur}
-                            handleProjectStatusChange={projectOps.handleProjectStatusChange}
-                            handleForemanChange={projectOps.handleForemanChange}
-                            handleProjectDateChange={projectOps.handleProjectDateChange}
+                            removeProject={removeProject}
+                            updateLayer={updateLayer}
+                            handleSiteNameBlur={handleSiteNameBlur}
+                            handleProjectStatusChange={handleProjectStatusChange}
+                            handleForemanChange={handleForemanChange}
+                            handleProjectDateChange={handleProjectDateChange}
                             workers={workers}
-                            updateMasterItemLocal={projectOps.updateMasterItemLocal}
-                            saveMasterItemDB={projectOps.saveMasterItemDB}
-                            removeMasterItem={projectOps.removeMasterItem}
-                            addMasterItem={projectOps.addMasterItem}
+                            updateMasterItemLocal={updateMasterItemLocal}
+                            saveMasterItemDB={saveMasterItemDB}
+                            removeMasterItem={removeMasterItem}
+                            addMasterItem={addMasterItem}
                             HOURLY_WAGE={hourlyWage}
-                            // Props for DashboardTab
-                            summaryData={dashboardStats.summaryData}
-                            saveProgressDB={projectOps.saveProgressDB}
-                            handleExportToExcel={() => exportToExcel(projectOps.activeProject, dashboardStats.summaryData)}
-                            // Props for InputTab
-                            addRecord={projectOps.addRecord}
-                            updateRecordField={projectOps.updateRecordField}
-                            removeRecord={projectOps.removeRecord}
-                            focusedWorkerRow={workerOps.focusedWorkerRow}
-                            setFocusedWorkerRow={workerOps.setFocusedWorkerRow}
-                            addSubcontractorRecord={projectOps.addSubcontractorRecord}
-                            updateSubcontractorRecordField={projectOps.updateSubcontractorRecordField}
-                            removeSubcontractorRecord={projectOps.removeSubcontractorRecord}
                         />
                     )}
 
@@ -519,12 +535,12 @@ const App = () => {
                         <WorkersTab
                             isLoading={isLoading}
                             workers={workers}
-                            addWorker={workerOps.addWorker}
-                            handleWorkerReorder={workerOps.handleWorkerReorder}
-                            openEditWorkerModal={workerOps.openEditWorkerModal}
-                            removeWorker={workerOps.removeWorker}
-                            workerSummaryData={dashboardStats.workerSummaryData}
-                            setExportModalWorker={workerOps.setExportModalWorker}
+                            addWorker={addWorker}
+                            handleWorkerReorder={handleWorkerReorder}
+                            openEditWorkerModal={openEditWorkerModal}
+                            removeWorker={removeWorker}
+                            workerSummaryData={workerSummaryData}
+                            setExportModalWorker={setExportModalWorker}
                         />
                     )}
 
@@ -547,20 +563,17 @@ const App = () => {
                         <AssignmentChartTab
                             projects={projects}
                             workers={workers}
-                            allProjectsSummary={dashboardStats.allProjectsSummary || []}
-                            setActiveTab={setActiveTab}
-                            setActiveProjectId={setActiveProjectId}
                         />
                     )}
                 </main>
 
                 {/* 作業員別日報出力モーダル */}
                 <ExportReportModal
-                    isOpen={!!workerOps.exportModalWorker}
-                    workerName={workerOps.exportModalWorker}
+                    isOpen={!!exportModalWorker}
+                    workerName={exportModalWorker}
                     exportWeekStart={exportWeekStart}
                     setExportWeekStart={setExportWeekStart}
-                    onClose={() => workerOps.setExportModalWorker(null)}
+                    onClose={() => setExportModalWorker(null)}
                     onExport={exportWorkerReport}
                     isLoading={isLoading}
                 />
@@ -580,14 +593,14 @@ const App = () => {
 
                 {/* 作業員詳細編集モーダル */}
                 <WorkerEditModal
-                    isOpen={workerOps.isWorkerModalOpen}
-                    editingWorker={workerOps.editingWorker}
-                    setEditingWorker={workerOps.setEditingWorker}
+                    isOpen={isWorkerModalOpen}
+                    editingWorker={editingWorker}
+                    setEditingWorker={setEditingWorker}
                     onClose={() => {
-                        workerOps.setIsWorkerModalOpen(false);
-                        workerOps.setEditingWorker(null);
+                        setIsWorkerModalOpen(false);
+                        setEditingWorker(null);
                     }}
-                    onSave={workerOps.saveWorker}
+                    onSave={saveWorker}
                 />
             </div>
         </div>

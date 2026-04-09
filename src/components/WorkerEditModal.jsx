@@ -56,6 +56,18 @@ const WorkerEditModal = ({ isOpen, editingWorker, setEditingWorker, onClose, onS
                     </div>
                 </div>
 
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-1">退社日</label>
+                        <input
+                            type="date"
+                            value={editingWorker.resignation_date || ''}
+                            onChange={(e) => setEditingWorker({ ...editingWorker, resignation_date: e.target.value })}
+                            className="w-full border border-slate-200 p-2.5 rounded-lg text-sm text-slate-700 outline-none focus:border-blue-500"
+                        />
+                    </div>
+                </div>
+
                 <div className="mb-4">
                     <label className="block text-xs font-bold text-slate-500 mb-1">連絡先 (電話番号等)</label>
                     <input

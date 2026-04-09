@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Search, Loader2, Database, Plus, Edit3, Trash2, X, Check, ChevronLeft, ChevronRight } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { useToast } from '../../components/Toast';
 
 const initialFormData = {
     date: '',
@@ -15,6 +16,7 @@ const initialFormData = {
 };
 
 const PurchaseLedgerTab = () => {
+    const { showToast } = useToast();
     const [data, setData] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -144,7 +146,7 @@ const PurchaseLedgerTab = () => {
 
     const handleSaveNewRecord = async () => {
         if (!addFormData.date || !addFormData.project_name || !addFormData.item_name) {
-            alert('月/日、工事名、名称は必須項目です。');
+            showToast('月/日、工事名、名称は必須項目です。', 'error');
             return;
         }
 
@@ -171,7 +173,7 @@ const PurchaseLedgerTab = () => {
             setAddFormData(initialFormData);
         } catch (err) {
             console.error(err);
-            alert('登録に失敗しました: ' + err.message);
+            showToast('登録に失敗しました: ' + err.message, 'error');
         } finally {
             setIsSaving(false);
         }
@@ -234,7 +236,7 @@ const PurchaseLedgerTab = () => {
             setEditingRowId(null);
         } catch (err) {
             console.error(err);
-            alert('更新に失敗しました: ' + err.message);
+            showToast('更新に失敗しました: ' + err.message, 'error');
         } finally {
             setIsSaving(false);
         }
@@ -261,7 +263,7 @@ const PurchaseLedgerTab = () => {
             }
         } catch (err) {
             console.error(err);
-            alert('削除に失敗しました: ' + err.message);
+            showToast('削除に失敗しました: ' + err.message, 'error');
         } finally {
             setIsSaving(false);
         }
@@ -492,4 +494,5 @@ const PurchaseLedgerTab = () => {
     );
 };
 
-export default PurchaseLedgerTab;
+export default React.memo(PurchaseLedgerTab);
+

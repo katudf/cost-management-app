@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './lib/supabase';
 import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2, PlusCircle } from 'lucide-react';
+import { useToast } from './components/Toast';
 
 const WorkerApp = () => {
+    const { showToast } = useToast();
     const [workers, setWorkers] = useState([]);
     const [loggedInWorker, setLoggedInWorker] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -37,9 +39,9 @@ const WorkerApp = () => {
                 }
 
                 // Fetch workers for login screen
-                const { data: wData } = await supabase.from('Workers').select('id, name').order('display_order', { ascending: true, nullsFirst: false });
+                const { data: wData } = await supabase.from('Workers').select('id, name, resignation_date').order('display_order', { ascending: true, nullsFirst: false });
                 if (wData) {
-                    setWorkers(wData.filter(w => w.name && w.name.trim() !== ''));
+                    setWorkers(wData.filter(w => w.name && w.name.trim() !== '' && !w.resignation_date));
                 }
 
                 // Fetch active projects
@@ -214,7 +216,7 @@ const WorkerApp = () => {
             }
         } catch (error) {
             console.error("Failed to add new task:", error);
-            window.alert('作業項目の追加に失敗しました。');
+            showToast('作業項目の追加に失敗しました。', 'error');
         } finally {
             setIsLoading(false);
         }
@@ -299,7 +301,7 @@ const WorkerApp = () => {
             setTimeout(() => setSaveMessage(''), 5000);
         } catch (error) {
             console.error('Submit error:', error);
-            window.alert('保存に失敗しました。電波の良いところで再度お試しください。');
+            showToast('保存に失敗しました。電波の良いところで再度お試しください。', 'error');
         } finally {
             setIsSaving(false);
         }

@@ -143,7 +143,8 @@ CREATE TABLE public.Workers (
   contactInfo text,
   cpdsNumber text,
   kana text,
-  display_order int8
+  display_order int8,
+  resignation_date date
 );
                                                                                                                                                 |
 | -- Table: TaskRecords

@@ -42,7 +42,7 @@ const App = () => {
     
     const workerOps = useWorkers({ workers, setWorkers, showToast });
     const projectOps = useProjects({ projects, setProjects, activeProjectId, setActiveProjectId, showToast, workers });
-    const dashboardStats = useDashboardStats({ projects, activeProject: projectOps.activeProject, hourlyWage });
+    const dashboardStats = useDashboardStats({ projects, projectOps.activeProject: projectOps.activeProject, hourlyWage });
 
     useEffect(() => {
         fetchAllData(null, setActiveProjectId);
@@ -255,6 +255,11 @@ const App = () => {
         }
     };
 
+    const dashboardStats.toggleFilterStatus = (status) => {
+        setFilterStatuses(prev =>
+            prev.includes(status) ? prev.filter(s => s !== status) : [...prev, status]
+        );
+    };
 
     if (isLoading && projects.length === 0) {
         return <div className="min-h-screen flex items-center justify-center bg-slate-50"><Loader2 className="w-8 h-8 animate-spin text-blue-500" /></div>;
@@ -270,28 +275,25 @@ const App = () => {
                                 <BarChart3 className="text-blue-600" /> 工事管理システム
                             </h1>
                             <div className="flex flex-wrap items-center gap-2">
-                                {activeTab !== 'assignment' && activeTab !== 'workers' && (
-                                    <div className="relative flex items-center">
-                                        <FolderGit2 className="absolute left-3 text-slate-400 w-4 h-4" />
-                                        <select
-                                            value={activeProjectId || ''}
-                                            onChange={(e) => {
-                                                setActiveProjectId(Number(e.target.value));
-                                                if (activeTab === 'dashboard') setActiveTab('master');
-                                            }}
-                                            className="pl-9 pr-8 py-2 bg-white border border-slate-300 rounded-lg shadow-sm font-bold text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 appearance-none hover:border-slate-400 transition"
-                                        >
-                                            {projects.length === 0 && <option value="">現場なし</option>}
-                                            {projects.map(p => (
-                                                <option key={p.id} value={p.id}>{p.siteName || '無題の現場'}</option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                )}
+                                <div className="relative flex items-center">
+                                    <FolderGit2 className="absolute left-3 text-slate-400 w-4 h-4" />
+                                    <select
+                                        value={activeProjectId || ''}
+                                        onChange={(e) => {
+                                            setActiveProjectId(Number(e.target.value));
+                                            if (activeTab === 'dashboard') setActiveTab('summary');
+                                        }}
+                                        className="pl-9 pr-8 py-2 bg-white border border-slate-300 rounded-lg shadow-sm font-bold text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 appearance-none hover:border-slate-400 transition"
+                                    >
+                                        {projects.length === 0 && <option value="">現場なし</option>}
+                                        {projects.map(p => (
+                                            <option key={p.id} value={p.id}>{p.siteName || '無題の現場'}</option>
+                                        ))}
+                                    </select>
+                                </div>
                                 {activeTab === 'master' && (
-                                    <button onClick={projectOps.addNewProject} title="新しい現場を追加" className="px-3 py-2 text-slate-500 flex items-center gap-2 hover:text-blue-600 hover:bg-white rounded-lg transition shadow-sm border border-transparent hover:border-blue-200 text-sm font-bold">
-                                        <PlusCircle size={18} />
-                                        新しい現場を追加
+                                    <button onClick={projectOps.addNewProject} title="新しい現場を追加" className="p-2 text-slate-500 hover:text-blue-600 hover:bg-white rounded-lg transition shadow-sm border border-transparent hover:border-blue-200">
+                                        <PlusCircle size={20} />
                                     </button>
                                 )}
                             </div>
@@ -299,6 +301,8 @@ const App = () => {
                         <nav className="bg-white p-2 rounded-lg shadow-sm border flex gap-1 mt-2 md:mt-0 overflow-x-auto">
                             {[
                                 { key: 'dashboard', label: 'ホーム', Icon: Home },
+                                { key: 'summary', label: '管理シート', Icon: Table },
+                                { key: 'input', label: '実績入力', Icon: Clipboard },
                                 { key: 'master', label: '工事設定', Icon: Settings },
                                 { key: 'workers', label: '作業員', Icon: Users },
                                 { key: 'assignment', label: '配置表', Icon: Calendar },
@@ -356,7 +360,7 @@ const App = () => {
                                 )}
                             </div>
 
-                            {/* 全体サマリー統計 (コメントアウト中)
+                            {/* 全体サマリー統計 */}
                             {projects.length > 0 && (() => {
                                 const activeProjects = dashboardStats.allProjectsSummary.filter(p => (p.status || '予定') === '施工中');
                                 const plannedCount = dashboardStats.allProjectsSummary.filter(p => (p.status || '予定') === '予定').length;
@@ -406,7 +410,6 @@ const App = () => {
                                     </div>
                                 );
                             })()}
-                            */}
 
                             {projects.length === 0 ? (
                                 <div className="text-center py-20 bg-white rounded-xl border border-dashed border-slate-300">
@@ -425,7 +428,7 @@ const App = () => {
                                             key={proj.id}
                                             onClick={() => {
                                                 setActiveProjectId(proj.id);
-                                                setActiveTab('master');
+                                                setActiveTab('summary');
                                             }}
                                             className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-xl hover:-translate-y-1 hover:border-blue-300 transition-all cursor-pointer overflow-hidden flex flex-col h-full group"
                                         >
@@ -479,39 +482,52 @@ const App = () => {
                         </div>
                     )}
 
+                    {activeTab === 'summary' && (
+                        <DashboardTab
+                            projectOps.activeProject={projectOps.activeProject}
+                            dashboardStats.summaryData={dashboardStats.summaryData}
+                            projectOps.updateLayer={projectOps.updateLayer}
+                            projectOps.saveProgressDB={projectOps.saveProgressDB}
+                            handleExportToExcel={() => exportToExcel(projectOps.activeProject, dashboardStats.summaryData)}
+                            isLoading={isLoading}
+                            setActiveTab={setActiveTab}
+                        />
+                    )}
 
+                    {activeTab === 'input' && (
+                        <InputTab
+                            projectOps.activeProject={projectOps.activeProject}
+                            isLoading={isLoading}
+                            projectOps.addRecord={projectOps.addRecord}
+                            projectOps.updateRecordField={projectOps.updateRecordField}
+                            projectOps.removeRecord={projectOps.removeRecord}
+                            workers={workers}
+                            workerOps.focusedWorkerRow={workerOps.focusedWorkerRow}
+                            workerOps.setFocusedWorkerRow={workerOps.setFocusedWorkerRow}
+                            projectOps.addSubcontractorRecord={projectOps.addSubcontractorRecord}
+                            projectOps.updateSubcontractorRecordField={projectOps.updateSubcontractorRecordField}
+                            projectOps.removeSubcontractorRecord={projectOps.removeSubcontractorRecord}
+                        />
+                    )}
 
                     {activeTab === 'master' && (
                         <MasterTab
-                            activeProject={projectOps.activeProject}
+                            projectOps.activeProject={projectOps.activeProject}
                             isLoading={isLoading}
                             handleExcelImport={handleExcelImport}
                             fileInputRef={fileInputRef}
-                            removeProject={projectOps.removeProject}
-                            updateLayer={projectOps.updateLayer}
-                            handleSiteNameBlur={projectOps.handleSiteNameBlur}
-                            handleProjectStatusChange={projectOps.handleProjectStatusChange}
-                            handleForemanChange={projectOps.handleForemanChange}
-                            handleProjectDateChange={projectOps.handleProjectDateChange}
+                            projectOps.removeProject={projectOps.removeProject}
+                            projectOps.updateLayer={projectOps.updateLayer}
+                            projectOps.handleSiteNameBlur={projectOps.handleSiteNameBlur}
+                            projectOps.handleProjectStatusChange={projectOps.handleProjectStatusChange}
+                            projectOps.handleForemanChange={projectOps.handleForemanChange}
+                            projectOps.handleProjectDateChange={projectOps.handleProjectDateChange}
                             workers={workers}
-                            updateMasterItemLocal={projectOps.updateMasterItemLocal}
-                            saveMasterItemDB={projectOps.saveMasterItemDB}
-                            removeMasterItem={projectOps.removeMasterItem}
-                            addMasterItem={projectOps.addMasterItem}
+                            projectOps.updateMasterItemLocal={projectOps.updateMasterItemLocal}
+                            projectOps.saveMasterItemDB={projectOps.saveMasterItemDB}
+                            projectOps.removeMasterItem={projectOps.removeMasterItem}
+                            projectOps.addMasterItem={projectOps.addMasterItem}
                             HOURLY_WAGE={hourlyWage}
-                            // Props for DashboardTab
-                            summaryData={dashboardStats.summaryData}
-                            saveProgressDB={projectOps.saveProgressDB}
-                            handleExportToExcel={() => exportToExcel(projectOps.activeProject, dashboardStats.summaryData)}
-                            // Props for InputTab
-                            addRecord={projectOps.addRecord}
-                            updateRecordField={projectOps.updateRecordField}
-                            removeRecord={projectOps.removeRecord}
-                            focusedWorkerRow={workerOps.focusedWorkerRow}
-                            setFocusedWorkerRow={workerOps.setFocusedWorkerRow}
-                            addSubcontractorRecord={projectOps.addSubcontractorRecord}
-                            updateSubcontractorRecordField={projectOps.updateSubcontractorRecordField}
-                            removeSubcontractorRecord={projectOps.removeSubcontractorRecord}
                         />
                     )}
 
@@ -519,12 +535,12 @@ const App = () => {
                         <WorkersTab
                             isLoading={isLoading}
                             workers={workers}
-                            addWorker={workerOps.addWorker}
-                            handleWorkerReorder={workerOps.handleWorkerReorder}
-                            openEditWorkerModal={workerOps.openEditWorkerModal}
-                            removeWorker={workerOps.removeWorker}
-                            workerSummaryData={dashboardStats.workerSummaryData}
-                            setExportModalWorker={workerOps.setExportModalWorker}
+                            workerOps.addWorker={workerOps.addWorker}
+                            workerOps.moveWorkerOrder={workerOps.moveWorkerOrder}
+                            workerOps.openEditWorkerModal={workerOps.openEditWorkerModal}
+                            workerOps.removeWorker={workerOps.removeWorker}
+                            dashboardStats.workerSummaryData={dashboardStats.workerSummaryData}
+                            workerOps.setExportModalWorker={workerOps.setExportModalWorker}
                         />
                     )}
 
@@ -547,9 +563,6 @@ const App = () => {
                         <AssignmentChartTab
                             projects={projects}
                             workers={workers}
-                            allProjectsSummary={dashboardStats.allProjectsSummary || []}
-                            setActiveTab={setActiveTab}
-                            setActiveProjectId={setActiveProjectId}
                         />
                     )}
                 </main>
@@ -581,8 +594,8 @@ const App = () => {
                 {/* 作業員詳細編集モーダル */}
                 <WorkerEditModal
                     isOpen={workerOps.isWorkerModalOpen}
-                    editingWorker={workerOps.editingWorker}
-                    setEditingWorker={workerOps.setEditingWorker}
+                    workerOps.editingWorker={workerOps.editingWorker}
+                    workerOps.setEditingWorker={workerOps.setEditingWorker}
                     onClose={() => {
                         workerOps.setIsWorkerModalOpen(false);
                         workerOps.setEditingWorker(null);
