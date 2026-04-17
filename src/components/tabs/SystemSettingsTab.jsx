@@ -202,7 +202,7 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, geminiApiKey, setGeminiA
                 <div className="flex items-center gap-4 pt-4 border-t border-slate-100">
                     <button
                         onClick={handleSave}
-                        disabled={isSaving || (localWage === hourlyWage && localGeminiKey === geminiApiKey)}
+                        disabled={isSaving || localWage === hourlyWage}
                         className="bg-blue-600 text-white px-6 py-2.5 rounded-lg font-bold flex items-center gap-2 hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <Save size={18} />
