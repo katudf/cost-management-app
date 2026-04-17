@@ -11,6 +11,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
     const { showToast } = useToast();
     const [isLoading, setIsLoading] = useState(true);
     const [assignments, setAssignments] = useState([]);
+    const [taskRecords, setTaskRecords] = useState([]);
 
     // 退社済みの作業員を除外
     const activeWorkers = useMemo(() => {
@@ -109,6 +110,9 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         return groups;
     }, [dateColumns]);
 
+    // 今日の日付文字列
+    const todayStr = useMemo(() => toDateStr(new Date()), []);
+
     // データ取得
     const fetchAssignments = useCallback(async () => {
         setIsLoading(true);
@@ -122,6 +126,19 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                 .gte('date', startStr)
                 .lte('date', endStr);
             setAssignments(aData || []);
+
+            // 過去日付の日報実績を取得
+            if (todayStr > startStr) {
+                const pastEndStr = todayStr < endStr ? todayStr : endStr;
+                const { data: trData } = await supabase
+                    .from('TaskRecords')
+                    .select('id, project_id, worker_name, date')
+                    .gte('date', startStr)
+                    .lt('date', pastEndStr);
+                setTaskRecords(trData || []);
+            } else {
+                setTaskRecords([]);
+            }
 
             const { data: pData } = await supabase
                 .from('Projects')
@@ -147,7 +164,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         } finally {
             setIsLoading(false);
         }
-    }, [startDate]);
+    }, [startDate, todayStr]);
 
     useEffect(() => {
         fetchAssignments();
@@ -345,6 +362,26 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         });
         return lookup;
     }, [assignments]);
+
+    // 日報実績ルックアップ（worker.id + date → 現場IDの配列）
+    const taskRecordLookup = useMemo(() => {
+        const workerNameToId = {};
+        (workers || []).forEach(w => { workerNameToId[w.name] = w.id; });
+        const lookup = {};
+        taskRecords.forEach(tr => {
+            const wId = workerNameToId[tr.worker_name];
+            if (!wId) return;
+            const key = `${wId}_${tr.date}`;
+            if (!lookup[key]) lookup[key] = new Set();
+            lookup[key].add(tr.project_id);
+        });
+        // Set → Array に変換
+        const result = {};
+        Object.keys(lookup).forEach(key => {
+            result[key] = Array.from(lookup[key]);
+        });
+        return result;
+    }, [taskRecords, workers]);
 
     // === キーボードとUIからのアクションハンドラ (コピー・ペースト・削除) ===
     const handleActionDelete = useCallback(async () => {
@@ -1242,11 +1279,37 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                 {dateColumns.map((col, i) => {
                                     const lookupKey = `${worker.id}_${col.dateStr}`;
                                     const cellAssignments = assignmentLookup[lookupKey] || [];
+                                    const isPastDate = col.dateStr < todayStr;
+                                    const actualProjectIds = isPastDate ? (taskRecordLookup[lookupKey] || []) : [];
                                     const isWeekend = col.dow === 0 || col.dow === 6;
                                     const isEditing = editCell && editCell.workerId === worker.id && (
                                         editCell.dragDates ? editCell.dragDates.includes(col.dateStr) : editCell.dateStr === col.dateStr
                                     );
                                     const isDragSelected = isDragging && dragWorkerId === worker.id && dragCells.includes(col.dateStr);
+
+                                    // 過去日付の場合は日報実績を優先表示
+                                    const displayItems = isPastDate && actualProjectIds.length > 0
+                                        ? actualProjectIds.map(pid => {
+                                            const pInfo = projectMap[pid];
+                                            return {
+                                                key: `actual-${pid}`,
+                                                displayName: shortenName(pInfo?.name || '不明'),
+                                                bgColor: pInfo?.color || '#94A3B8',
+                                                fullName: pInfo?.name || '不明',
+                                                isActual: true
+                                            };
+                                        })
+                                        : cellAssignments.map((a, ai) => {
+                                            const pInfo = a.projectId ? projectMap[a.projectId] : null;
+                                            const schedType = !a.projectId && a.title ? SCHEDULE_TYPES.find(s => s.title === a.title) : null;
+                                            return {
+                                                key: ai,
+                                                displayName: a.title || shortenName(pInfo?.name || ''),
+                                                bgColor: schedType?.color || pInfo?.color || '#94A3B8',
+                                                fullName: pInfo?.name || a.title || '',
+                                                isActual: false
+                                            };
+                                        });
 
                                     return (
                                         <td
@@ -1283,27 +1346,21 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                                 }
                                             }}
                                         >
-                                            {cellAssignments.length > 0 ? (
+                                            {displayItems.length > 0 ? (
                                                 <div className="flex flex-col gap-0.5 p-0.5" style={{ overflow: 'hidden' }}>
-                                                    {cellAssignments.map((a, ai) => {
-                                                        const pInfo = a.projectId ? projectMap[a.projectId] : null;
-                                                        const schedType = !a.projectId && a.title ? SCHEDULE_TYPES.find(s => s.title === a.title) : null;
-                                                        const displayName = a.title || shortenName(pInfo?.name || '');
-                                                        const bgColor = schedType?.color || pInfo?.color || '#94A3B8';
-                                                        return (
-                                                            <div
-                                                                key={ai}
-                                                                className="text-[9px] font-bold rounded px-0.5 py-0.5 text-white truncate"
-                                                                style={{
-                                                                    backgroundColor: bgColor,
-                                                                    textShadow: '0 1px 1px rgba(0,0,0,0.3)'
-                                                                }}
-                                                                title={pInfo?.name || a.title || ''}
-                                                            >
-                                                                {displayName}
-                                                            </div>
-                                                        );
-                                                    })}
+                                                    {displayItems.map((item) => (
+                                                        <div
+                                                            key={item.key}
+                                                            className={`text-[9px] font-bold rounded px-0.5 py-0.5 text-white truncate ${item.isActual ? 'ring-1 ring-inset ring-white/40' : ''}`}
+                                                            style={{
+                                                                backgroundColor: item.bgColor,
+                                                                textShadow: '0 1px 1px rgba(0,0,0,0.3)'
+                                                            }}
+                                                            title={item.fullName + (item.isActual ? '（実績）' : '')}
+                                                        >
+                                                            {item.displayName}
+                                                        </div>
+                                                    ))}
                                                 </div>
                                             ) : (
                                                 <div className="h-6"></div>
