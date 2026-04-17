@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { Settings, Save, CheckCircle2, Award, Plus, Edit3, Trash2, X, ChevronDown, ChevronRight, Activity } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../components/Toast';
@@ -13,10 +13,27 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, geminiApiKey, setGeminiA
     const [certForm, setCertForm] = useState({ id: null, workerId: '', name: '', registrationNumber: '', acquisitionDate: '', expiryDate: '' });
     const [expandedWorkers, setExpandedWorkers] = useState({});
     const [apiUsage, setApiUsage] = useState(null);
+    const [certNameMaster, setCertNameMaster] = useState([]);
+    const [isCustomCertName, setIsCustomCertName] = useState(false);
+    const [viewMode, setViewMode] = useState('worker'); // 'worker' or 'cert'
 
     useEffect(() => {
         setApiUsage(getDailyApiUsage());
     }, []);
+
+    // 資格名マスター取得
+    const fetchCertNameMaster = useCallback(async () => {
+        try {
+            const { data } = await supabase.from('CertificationNames').select('*').order('name', { ascending: true });
+            setCertNameMaster(data || []);
+        } catch (e) {
+            console.error('資格名マスター取得エラー:', e);
+        }
+    }, []);
+
+    useEffect(() => {
+        fetchCertNameMaster();
+    }, [fetchCertNameMaster]);
 
     const certsByWorker = useMemo(() => {
         const groups = {};
@@ -33,6 +50,27 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, geminiApiKey, setGeminiA
         return Object.values(groups).sort((a, b) => a.workerName.localeCompare(b.workerName, 'ja'));
     }, [workers]);
 
+    const certsByName = useMemo(() => {
+        const groups = {};
+        workers.forEach(w => {
+            (w.certifications || []).forEach(cert => {
+                if (!groups[cert.name]) {
+                    groups[cert.name] = {
+                        name: cert.name,
+                        holders: []
+                    };
+                }
+                groups[cert.name].holders.push({
+                    ...cert,
+                    workerName: w.name,
+                    workerId: w.id
+                });
+            });
+        });
+        // 資格名でソート
+        return Object.values(groups).sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+    }, [workers]);
+
     const toggleWorker = (workerId) => {
         setExpandedWorkers(prev => ({
             ...prev,
@@ -44,9 +82,25 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, geminiApiKey, setGeminiA
         setIsSaving(true);
         setIsLoading(true);
         try {
+            const trimmedName = certForm.name.trim();
+
+            // 重複チェック
+            const targetWorker = workers.find(w => w.id === Number(certForm.workerId));
+            if (targetWorker && targetWorker.certifications) {
+                const isDuplicate = targetWorker.certifications.some(c => 
+                    c.name === trimmedName && c.id !== certForm.id
+                );
+                if (isDuplicate) {
+                    showToast(`「${targetWorker.name}」さんは既に「${trimmedName}」を登録済みです。`, 'error');
+                    setIsSaving(false);
+                    setIsLoading(false);
+                    return;
+                }
+            }
+
             const payload = {
                 workerId: Number(certForm.workerId),
-                name: certForm.name.trim(),
+                name: trimmedName,
                 registrationNumber: certForm.registrationNumber || null,
                 acquisitionDate: certForm.acquisitionDate || null,
                 expiryDate: certForm.expiryDate || null
@@ -60,7 +114,14 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, geminiApiKey, setGeminiA
                 if (error) throw error;
             }
 
+            // 資格名マスターに未登録なら自動追加
+            if (trimmedName && !certNameMaster.some(m => m.name === trimmedName)) {
+                await supabase.from('CertificationNames').insert([{ name: trimmedName }]);
+                await fetchCertNameMaster();
+            }
+
             setCertForm({ id: null, workerId: '', name: '', registrationNumber: '', acquisitionDate: '', expiryDate: '' });
+            setIsCustomCertName(false);
             if (fetchAllData) await fetchAllData();
         } catch (error) {
             console.error('資格保存エラー:', error);
@@ -227,6 +288,20 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, geminiApiKey, setGeminiA
                         <Award className="text-blue-500" />
                         資格情報マスター
                     </h3>
+                    <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
+                        <button
+                            onClick={() => setViewMode('worker')}
+                            className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${viewMode === 'worker' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                            作業員別
+                        </button>
+                        <button
+                            onClick={() => setViewMode('cert')}
+                            className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${viewMode === 'cert' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                            資格別
+                        </button>
+                    </div>
                 </div>
 
                 <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 mb-6 shadow-sm">
@@ -250,13 +325,45 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, geminiApiKey, setGeminiA
                         </div>
                         <div>
                             <label className="block text-xs font-bold text-slate-500 mb-1">資格名 <span className="text-red-500">*</span></label>
-                            <input
-                                type="text"
-                                value={certForm.name}
-                                onChange={(e) => setCertForm({ ...certForm, name: e.target.value })}
-                                className="w-full border-2 border-slate-200 p-2.5 rounded-lg text-sm bg-white font-bold text-slate-700 outline-none focus:border-blue-500 transition"
-                                placeholder="例: 職長・安全衛生責任者"
-                            />
+                            {isCustomCertName ? (
+                                <div className="flex gap-1">
+                                    <input
+                                        type="text"
+                                        value={certForm.name}
+                                        onChange={(e) => setCertForm({ ...certForm, name: e.target.value })}
+                                        className="w-full border-2 border-slate-200 p-2.5 rounded-lg text-sm bg-white font-bold text-slate-700 outline-none focus:border-blue-500 transition"
+                                        placeholder="新しい資格名を入力"
+                                        autoFocus
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => { setIsCustomCertName(false); setCertForm({ ...certForm, name: '' }); }}
+                                        className="px-2 py-1 text-xs text-slate-500 bg-white border border-slate-200 rounded-lg hover:bg-slate-100 transition whitespace-nowrap"
+                                        title="一覧から選択に戻る"
+                                    >
+                                        戻る
+                                    </button>
+                                </div>
+                            ) : (
+                                <select
+                                    value={certForm.name}
+                                    onChange={(e) => {
+                                        if (e.target.value === '__custom__') {
+                                            setIsCustomCertName(true);
+                                            setCertForm({ ...certForm, name: '' });
+                                        } else {
+                                            setCertForm({ ...certForm, name: e.target.value });
+                                        }
+                                    }}
+                                    className="w-full border-2 border-slate-200 p-2.5 rounded-lg text-sm bg-white font-bold text-slate-700 outline-none focus:border-blue-500 transition cursor-pointer"
+                                >
+                                    <option value="">選択してください</option>
+                                    {certNameMaster.map(cn => (
+                                        <option key={cn.id} value={cn.name}>{cn.name}</option>
+                                    ))}
+                                    <option value="__custom__">＋ 新しい資格名を入力...</option>
+                                </select>
+                            )}
                         </div>
                         <div>
                             <label className="block text-xs font-bold text-slate-500 mb-1">登録番号</label>
@@ -311,8 +418,8 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, geminiApiKey, setGeminiA
                     <table className="w-full text-left">
                         <thead>
                             <tr className="bg-slate-100 text-slate-600 text-xs uppercase tracking-wider">
-                                <th className="p-4 font-bold border-b border-slate-200">作業員名</th>
-                                <th className="p-4 font-bold border-b border-slate-200">資格名</th>
+                                <th className="p-4 font-bold border-b border-slate-200">{viewMode === 'worker' ? '作業員名' : '資格名'}</th>
+                                <th className="p-4 font-bold border-b border-slate-200">{viewMode === 'worker' ? '資格名' : '保持者'}</th>
                                 <th className="p-4 font-bold border-b border-slate-200">登録番号</th>
                                 <th className="p-4 font-bold border-b border-slate-200">取得日</th>
                                 <th className="p-4 font-bold border-b border-slate-200">有効期限</th>
@@ -320,81 +427,50 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, geminiApiKey, setGeminiA
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                            {certsByWorker.length === 0 ? (
-                                <tr>
-                                    <td colSpan="5" className="p-8 text-center text-slate-400 font-bold text-sm bg-white">
-                                        登録されている資格情報はありません
-                                    </td>
-                                </tr>
-                            ) : (
-                                certsByWorker.map(group => {
-                                    const firstCert = group.certs[0];
-                                    const hasMore = group.certs.length > 1;
-                                    const isExpanded = expandedWorkers[group.workerId];
+                            {viewMode === 'worker' ? (
+                                certsByWorker.length === 0 ? (
+                                    <tr>
+                                        <td colSpan="6" className="p-8 text-center text-slate-400 font-bold text-sm bg-white">
+                                            登録されている資格情報はありません
+                                        </td>
+                                    </tr>
+                                ) : (
+                                    certsByWorker.map(group => {
+                                        const firstCert = group.certs[0];
+                                        const hasMore = group.certs.length > 1;
+                                        const isExpanded = expandedWorkers[group.workerId];
 
-                                    return (
-                                        <React.Fragment key={group.workerId}>
-                                            <tr className={`bg-white transition ${certForm.id === firstCert.id ? 'bg-blue-50/50' : 'hover:bg-slate-50'}`}>
-                                                <td className="p-4 font-bold text-sm text-slate-800">
-                                                    <div 
-                                                        className={`flex items-center gap-2 ${hasMore ? 'cursor-pointer hover:text-blue-600 group' : ''}`}
-                                                        onClick={() => hasMore && toggleWorker(group.workerId)}
-                                                        title={hasMore ? 'クリックして他の資格を表示/非表示' : ''}
-                                                    >
-                                                        {hasMore && (
-                                                            <span className="text-slate-400 group-hover:text-blue-500 transition-colors">
-                                                                {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-                                                            </span>
-                                                        )}
-                                                        {!hasMore && <div className="w-[18px]" />}
-                                                        {group.workerName}
-                                                        {hasMore && (
-                                                            <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full border border-slate-200 group-hover:bg-blue-50 group-hover:text-blue-600 group-hover:border-blue-200 transition">
-                                                                他{group.certs.length - 1}件
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                </td>
-                                                <td className="p-4 font-bold text-sm text-slate-800">{firstCert.name}</td>
-                                                <td className="p-4 text-sm text-slate-500 font-mono">{firstCert.registrationNumber || '-'}</td>
-                                                <td className="p-4 text-sm text-slate-500 font-mono">{firstCert.acquisitionDate ? firstCert.acquisitionDate.replace(/-/g, '/') : '-'}</td>
-                                                <td className="p-4 text-sm text-slate-500 font-mono">{firstCert.expiryDate ? firstCert.expiryDate.replace(/-/g, '/') : '-'}</td>
-                                                <td className="p-4 text-center">
-                                                    <div className="flex items-center justify-center gap-2">
-                                                        <button
-                                                            onClick={() => setCertForm({ id: firstCert.id, workerId: firstCert.workerId || group.workerId, name: firstCert.name, registrationNumber: firstCert.registrationNumber || '', acquisitionDate: firstCert.acquisitionDate || '', expiryDate: firstCert.expiryDate || '' })}
-                                                            disabled={isSaving}
-                                                            className="bg-white border border-slate-200 text-blue-600 hover:text-blue-700 hover:border-blue-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50"
-                                                            title="編集"
+                                        return (
+                                            <React.Fragment key={group.workerId}>
+                                                <tr className={`bg-white transition ${certForm.id === firstCert.id ? 'bg-blue-50/50' : 'hover:bg-slate-50'}`}>
+                                                    <td className="p-4 font-bold text-sm text-slate-800">
+                                                        <div 
+                                                            className={`flex items-center gap-2 ${hasMore ? 'cursor-pointer hover:text-blue-600 group' : ''}`}
+                                                            onClick={() => hasMore && toggleWorker(group.workerId)}
+                                                            title={hasMore ? 'クリックして他の資格を表示/非表示' : ''}
                                                         >
-                                                            <Edit3 size={16} />
-                                                        </button>
-                                                        <button
-                                                            onClick={() => handleDeleteCert(firstCert.id)}
-                                                            disabled={isSaving}
-                                                            className="bg-white border border-slate-200 text-red-500 hover:text-red-600 hover:border-red-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50"
-                                                            title="削除"
-                                                        >
-                                                            <Trash2 size={16} />
-                                                        </button>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                            {isExpanded && group.certs.slice(1).map(cert => (
-                                                <tr key={cert.id} className={`bg-slate-50/50 transition ${certForm.id === cert.id ? 'bg-blue-100/50' : 'hover:bg-slate-100/50'}`}>
-                                                    <td className="p-4 font-bold text-sm text-slate-400 text-right pr-6 align-middle">
-                                                        <div className="flex justify-end">
-                                                            <div className="border-l-2 border-b-2 border-slate-300 w-3 h-3 rounded-bl-sm mr-2 mb-1 opacity-70"></div>
+                                                            {hasMore && (
+                                                                <span className="text-slate-400 group-hover:text-blue-500 transition-colors">
+                                                                    {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+                                                                </span>
+                                                            )}
+                                                            {!hasMore && <div className="w-[18px]" />}
+                                                            {group.workerName}
+                                                            {hasMore && (
+                                                                <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full border border-slate-200 group-hover:bg-blue-50 group-hover:text-blue-600 group-hover:border-blue-200 transition">
+                                                                    他{group.certs.length - 1}件
+                                                                </span>
+                                                            )}
                                                         </div>
                                                     </td>
-                                                    <td className="p-4 font-bold text-sm text-slate-700">{cert.name}</td>
-                                                    <td className="p-4 text-sm text-slate-500 font-mono">{cert.registrationNumber || '-'}</td>
-                                                    <td className="p-4 text-sm text-slate-500 font-mono">{cert.acquisitionDate ? cert.acquisitionDate.replace(/-/g, '/') : '-'}</td>
-                                                    <td className="p-4 text-sm text-slate-500 font-mono">{cert.expiryDate ? cert.expiryDate.replace(/-/g, '/') : '-'}</td>
+                                                    <td className="p-4 font-bold text-sm text-slate-800">{firstCert.name}</td>
+                                                    <td className="p-4 text-sm text-slate-500 font-mono">{firstCert.registrationNumber || '-'}</td>
+                                                    <td className="p-4 text-sm text-slate-500 font-mono">{firstCert.acquisitionDate ? firstCert.acquisitionDate.replace(/-/g, '/') : '-'}</td>
+                                                    <td className="p-4 text-sm text-slate-500 font-mono">{firstCert.expiryDate ? firstCert.expiryDate.replace(/-/g, '/') : '-'}</td>
                                                     <td className="p-4 text-center">
                                                         <div className="flex items-center justify-center gap-2">
                                                             <button
-                                                                onClick={() => setCertForm({ id: cert.id, workerId: cert.workerId || group.workerId, name: cert.name, registrationNumber: cert.registrationNumber || '', acquisitionDate: cert.acquisitionDate || '', expiryDate: cert.expiryDate || '' })}
+                                                                onClick={() => setCertForm({ id: firstCert.id, workerId: firstCert.workerId || group.workerId, name: firstCert.name, registrationNumber: firstCert.registrationNumber || '', acquisitionDate: firstCert.acquisitionDate || '', expiryDate: firstCert.expiryDate || '' })}
                                                                 disabled={isSaving}
                                                                 className="bg-white border border-slate-200 text-blue-600 hover:text-blue-700 hover:border-blue-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50"
                                                                 title="編集"
@@ -402,7 +478,7 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, geminiApiKey, setGeminiA
                                                                 <Edit3 size={16} />
                                                             </button>
                                                             <button
-                                                                onClick={() => handleDeleteCert(cert.id)}
+                                                                onClick={() => handleDeleteCert(firstCert.id)}
                                                                 disabled={isSaving}
                                                                 className="bg-white border border-slate-200 text-red-500 hover:text-red-600 hover:border-red-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50"
                                                                 title="削除"
@@ -412,10 +488,141 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, geminiApiKey, setGeminiA
                                                         </div>
                                                     </td>
                                                 </tr>
-                                            ))}
-                                        </React.Fragment>
-                                    );
-                                })
+                                                {isExpanded && group.certs.slice(1).map(cert => (
+                                                    <tr key={cert.id} className={`bg-slate-50/50 transition ${certForm.id === cert.id ? 'bg-blue-100/50' : 'hover:bg-slate-100/50'}`}>
+                                                        <td className="p-4 font-bold text-sm text-slate-400 text-right pr-6 align-middle">
+                                                            <div className="flex justify-end">
+                                                                <div className="border-l-2 border-b-2 border-slate-300 w-3 h-3 rounded-bl-sm mr-2 mb-1 opacity-70"></div>
+                                                            </div>
+                                                        </td>
+                                                        <td className="p-4 font-bold text-sm text-slate-700">{cert.name}</td>
+                                                        <td className="p-4 text-sm text-slate-500 font-mono">{cert.registrationNumber || '-'}</td>
+                                                        <td className="p-4 text-sm text-slate-500 font-mono">{cert.acquisitionDate ? cert.acquisitionDate.replace(/-/g, '/') : '-'}</td>
+                                                        <td className="p-4 text-sm text-slate-500 font-mono">{cert.expiryDate ? cert.expiryDate.replace(/-/g, '/') : '-'}</td>
+                                                        <td className="p-4 text-center">
+                                                            <div className="flex items-center justify-center gap-2">
+                                                                <button
+                                                                    onClick={() => setCertForm({ id: cert.id, workerId: cert.workerId || group.workerId, name: cert.name, registrationNumber: cert.registrationNumber || '', acquisitionDate: cert.acquisitionDate || '', expiryDate: cert.expiryDate || '' })}
+                                                                    disabled={isSaving}
+                                                                    className="bg-white border border-slate-200 text-blue-600 hover:text-blue-700 hover:border-blue-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50"
+                                                                    title="編集"
+                                                                >
+                                                                    <Edit3 size={16} />
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => handleDeleteCert(cert.id)}
+                                                                    disabled={isSaving}
+                                                                    className="bg-white border border-slate-200 text-red-500 hover:text-red-600 hover:border-red-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50"
+                                                                    title="削除"
+                                                                >
+                                                                    <Trash2 size={16} />
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </React.Fragment>
+                                        );
+                                    })
+                                )
+                            ) : (
+                                // 資格別表示モード
+                                certsByName.length === 0 ? (
+                                    <tr>
+                                        <td colSpan="6" className="p-8 text-center text-slate-400 font-bold text-sm bg-white">
+                                            登録されている資格情報はありません
+                                        </td>
+                                    </tr>
+                                ) : (
+                                    certsByName.map(group => {
+                                        const firstHolder = group.holders[0];
+                                        const hasMore = group.holders.length > 1;
+                                        const isExpanded = expandedWorkers[`cert_${group.name}`];
+
+                                        return (
+                                            <React.Fragment key={group.name}>
+                                                <tr className="bg-white hover:bg-slate-50 transition">
+                                                    <td className="p-4 font-bold text-sm text-slate-800">
+                                                        <div 
+                                                            className={`flex items-center gap-2 ${hasMore ? 'cursor-pointer hover:text-blue-600 group' : ''}`}
+                                                            onClick={() => hasMore && toggleWorker(`cert_${group.name}`)}
+                                                        >
+                                                            {hasMore && (
+                                                                <span className="text-slate-400 group-hover:text-blue-500 transition-colors">
+                                                                    {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+                                                                </span>
+                                                            )}
+                                                            {!hasMore && <div className="w-[18px]" />}
+                                                            {group.name}
+                                                            {hasMore && (
+                                                                <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full border border-slate-200 group-hover:bg-blue-50 group-hover:text-blue-600 group-hover:border-blue-200 transition">
+                                                                    {group.holders.length}名
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-4 font-bold text-sm text-slate-800">{firstHolder.workerName}</td>
+                                                    <td className="p-4 text-sm text-slate-500 font-mono">{firstHolder.registrationNumber || '-'}</td>
+                                                    <td className="p-4 text-sm text-slate-500 font-mono">{firstHolder.acquisitionDate ? firstHolder.acquisitionDate.replace(/-/g, '/') : '-'}</td>
+                                                    <td className="p-4 text-sm text-slate-500 font-mono">{firstHolder.expiryDate ? firstHolder.expiryDate.replace(/-/g, '/') : '-'}</td>
+                                                    <td className="p-4 text-center">
+                                                        <div className="flex items-center justify-center gap-2">
+                                                            <button
+                                                                onClick={() => setCertForm({ id: firstHolder.id, workerId: firstHolder.workerId, name: group.name, registrationNumber: firstHolder.registrationNumber || '', acquisitionDate: firstHolder.acquisitionDate || '', expiryDate: firstHolder.expiryDate || '' })}
+                                                                disabled={isSaving}
+                                                                className="bg-white border border-slate-200 text-blue-600 hover:text-blue-700 hover:border-blue-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50"
+                                                                title="編集"
+                                                            >
+                                                                <Edit3 size={16} />
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleDeleteCert(firstHolder.id)}
+                                                                disabled={isSaving}
+                                                                className="bg-white border border-slate-200 text-red-500 hover:text-red-600 hover:border-red-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50"
+                                                                title="削除"
+                                                            >
+                                                                <Trash2 size={16} />
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                                {isExpanded && group.holders.slice(1).map(holder => (
+                                                    <tr key={holder.id} className="bg-slate-50/50 hover:bg-slate-100/50 transition">
+                                                        <td className="p-4 font-bold text-sm text-slate-400 text-right pr-6 align-middle">
+                                                            <div className="flex justify-end">
+                                                                <div className="border-l-2 border-b-2 border-slate-300 w-3 h-3 rounded-bl-sm mr-2 mb-1 opacity-70"></div>
+                                                            </div>
+                                                        </td>
+                                                        <td className="p-4 font-bold text-sm text-slate-700">{holder.workerName}</td>
+                                                        <td className="p-4 text-sm text-slate-500 font-mono">{holder.registrationNumber || '-'}</td>
+                                                        <td className="p-4 text-sm text-slate-500 font-mono">{holder.acquisitionDate ? holder.acquisitionDate.replace(/-/g, '/') : '-'}</td>
+                                                        <td className="p-4 text-sm text-slate-500 font-mono">{holder.expiryDate ? holder.expiryDate.replace(/-/g, '/') : '-'}</td>
+                                                        <td className="p-4 text-center">
+                                                            <div className="flex items-center justify-center gap-2">
+                                                                <button
+                                                                    onClick={() => setCertForm({ id: holder.id, workerId: holder.workerId, name: group.name, registrationNumber: holder.registrationNumber || '', acquisitionDate: holder.acquisitionDate || '', expiryDate: holder.expiryDate || '' })}
+                                                                    disabled={isSaving}
+                                                                    className="bg-white border border-slate-200 text-blue-600 hover:text-blue-700 hover:border-blue-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50"
+                                                                    title="編集"
+                                                                >
+                                                                    <Edit3 size={16} />
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => handleDeleteCert(holder.id)}
+                                                                    disabled={isSaving}
+                                                                    className="bg-white border border-slate-200 text-red-500 hover:text-red-600 hover:border-red-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50"
+                                                                    title="削除"
+                                                                >
+                                                                    <Trash2 size={16} />
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </React.Fragment>
+                                        );
+                                    })
+                                )
                             )}
                         </tbody>
                     </table>
