@@ -1,4 +1,28 @@
 import * as xlsx from 'xlsx-js-style';
+import { getSeasonConfig, calculateNinku, formatTimeDisplay } from './workTimeUtils';
+
+/**
+ * A4横向き・1ページに収まる印刷設定を適用する共通ヘルパー
+ */
+const applyA4LandscapePrintSettings = (ws) => {
+    // 用紙: A4 (paperSize=9), 横向き, 1ページ幅に収める
+    ws['!pageSetup'] = {
+        paperSize: 9,            // A4
+        orientation: 'landscape', // 横向き
+        fitToWidth: 1,           // 幅を1ページに収める
+        fitToHeight: 0,          // 高さは制限なし（複数ページ可）
+        scale: 0,                // fitToPage使用時はscale=0
+    };
+    // 余白 (インチ単位、狭めに設定)
+    ws['!margins'] = {
+        left: 0.4,
+        right: 0.4,
+        top: 0.4,
+        bottom: 0.4,
+        header: 0.2,
+        footer: 0.2,
+    };
+};
 
 /**
  * 現場サマリーをExcelに出力する
@@ -39,21 +63,20 @@ export const exportToExcel = (activeProject, summaryData) => {
     // Excel書き込みデータ作成（詳細用）
     const ws2Data = [
         siteNameRow,
-        ["作業項目", "作業内容", "作業員", "時間", "日付", "作成日時"]
+        ["作業項目", "作業内容", "作業員", "開始", "終了", "実働時間", "時間外", "日付"]
     ];
     activeProject.records.forEach(r => {
         const taskName = activeProject.masterData.find(m => m.id === r.taskId)?.task || '不明';
-        const date = new Date(r.timestamp);
-        const dateStr = date.toLocaleDateString('ja-JP');
-        const timeStr = date.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
 
         ws2Data.push([
             taskName,
             r.memo || '',
             r.worker || '未設定',
-            r.hours,
-            r.date || dateStr,
-            `${dateStr} ${timeStr}`
+            r.start_time ? formatTimeDisplay(r.start_time) : '',
+            r.end_time ? formatTimeDisplay(r.end_time) : '',
+            r.hours || 0,
+            r.overtime_hours || 0,
+            r.date || '',
         ]);
     });
 
@@ -70,7 +93,7 @@ export const exportToExcel = (activeProject, summaryData) => {
     };
     const headerStyle = {
         font: { bold: true },
-        fill: { fgColor: { rgb: "EFEFEF" } }, // 薄いグレー
+        fill: { fgColor: { rgb: "EFEFEF" } },
         border: borderStyle
     };
     const dataStyle = {
@@ -103,51 +126,57 @@ export const exportToExcel = (activeProject, summaryData) => {
         }
     };
 
-    // 行のスタイルを残りのシートにも適用
     applyStyleToSheet(ws1, 7);
-    applyStyleToSheet(ws2, 6);
+    applyStyleToSheet(ws2, 8);
 
-    // 作業員別の集計データ作成（追加要件：延べ作業時間と人工の集計）
+    // 作業員別の集計データ作成（季節別の定時労働時間で人工数を算出）
     const workerHours = {};
     activeProject.records.forEach(r => {
         const workerName = r.worker || '未設定';
         if (!workerHours[workerName]) {
-            workerHours[workerName] = 0;
+            workerHours[workerName] = { hours: 0, overtime: 0 };
         }
-        workerHours[workerName] += Number(r.hours || 0);
+        workerHours[workerName].hours += Number(r.hours || 0);
+        workerHours[workerName].overtime += Number(r.overtime_hours || 0);
     });
 
     const ws3Data = [
         siteNameRow,
-        ["作業員名", "延べ作業時間 (h)", "延べ人工 (8h/人工)"]
+        ["作業員名", "延べ実労働時間 (h)", "うち時間外 (h)", "延べ人工 (7.5h/人工)"]
     ];
 
     let totalWorkerHours = 0;
-    // 作業時間が多い順にソートして出力
-    const sortedWorkers = Object.keys(workerHours).sort((a, b) => workerHours[b] - workerHours[a]);
+    let totalWorkerOvertime = 0;
+    const sortedWorkers = Object.keys(workerHours).sort((a, b) => workerHours[b].hours - workerHours[a].hours);
 
     sortedWorkers.forEach(worker => {
-        const hours = workerHours[worker];
+        const { hours, overtime } = workerHours[worker];
         totalWorkerHours += hours;
-        // 人工は小数第2位までに丸める
-        const ninku = parseFloat((hours / 8).toFixed(2));
-        ws3Data.push([worker, hours, ninku]);
+        totalWorkerOvertime += overtime;
+        // 人工数は季節のデフォルト（7.5h）で算出
+        const ninku = parseFloat((hours / 7.5).toFixed(2));
+        ws3Data.push([worker, parseFloat(hours.toFixed(1)), parseFloat(overtime.toFixed(1)), ninku]);
     });
 
-    // 合計行
     ws3Data.push([
         "【合計】",
-        totalWorkerHours,
-        parseFloat((totalWorkerHours / 8).toFixed(2))
+        parseFloat(totalWorkerHours.toFixed(1)),
+        parseFloat(totalWorkerOvertime.toFixed(1)),
+        parseFloat((totalWorkerHours / 7.5).toFixed(2))
     ]);
 
     const ws3 = xlsx.utils.aoa_to_sheet(ws3Data);
-    applyStyleToSheet(ws3, 3);
+    applyStyleToSheet(ws3, 4);
 
     // 列幅の簡易調整
     ws1['!cols'] = [{ wch: 20 }, { wch: 15 }, { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 10 }];
-    ws2['!cols'] = [{ wch: 20 }, { wch: 30 }, { wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 15 }];
-    ws3['!cols'] = [{ wch: 20 }, { wch: 20 }, { wch: 20 }];
+    ws2['!cols'] = [{ wch: 20 }, { wch: 30 }, { wch: 15 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 15 }];
+    ws3['!cols'] = [{ wch: 20 }, { wch: 22 }, { wch: 16 }, { wch: 22 }];
+
+    // A4横向き印刷設定
+    applyA4LandscapePrintSettings(ws1);
+    applyA4LandscapePrintSettings(ws2);
+    applyA4LandscapePrintSettings(ws3);
 
     xlsx.utils.book_append_sheet(wb, ws1, "現場サマリー");
     xlsx.utils.book_append_sheet(wb, ws2, "作業項目別詳細");
@@ -160,13 +189,7 @@ export const exportToExcel = (activeProject, summaryData) => {
 
 /**
  * 就労日報のExcel出力を生成
- * （DB取得済みのデータを受け取り、Excelファイルを生成する）
- * @param {string} workerName 
- * @param {string} weekPrefix 
- * @param {Array} days 
- * @param {Array} recordsData 
- * @param {Array} projects 
- * @param {Array} subcontractorsData 
+ * 時刻入力方式対応版: 開始〜終了時刻、実労働時間、時間外、人工数を表示
  */
 export const generateWorkerReportExcel = (workerName, weekPrefix, days, recordsData, projects, subcontractorsData) => {
     const sheetData = [];
@@ -180,6 +203,7 @@ export const generateWorkerReportExcel = (workerName, weekPrefix, days, recordsD
     });
     sheetData.push(dateRow);
 
+    // 日付ごと・現場ごとのグループ化（時刻情報含む）
     const dateProjectMap = {};
     days.forEach(d => {
         const dayRecords = (recordsData || []).filter(r => r.date === d);
@@ -188,15 +212,29 @@ export const generateWorkerReportExcel = (workerName, weekPrefix, days, recordsD
             const pid = r.ProjectTasks?.projectId || r.project_id;
             if (!projGroups[pid]) {
                 const proj = projects.find(p => p.id === pid);
-                projGroups[pid] = { siteName: proj?.siteName || '不明な現場', items: [], sumHours: 0, sumOvertime: 0 };
+                projGroups[pid] = {
+                    siteName: proj?.siteName || proj?.name || '不明な現場',
+                    items: [],
+                    sumHours: 0,
+                    sumOvertime: 0,
+                    timeSlots: [],  // 開始〜終了時刻の配列
+                };
             }
             projGroups[pid].items.push(r.ProjectTasks?.name || '不明な作業');
             projGroups[pid].sumHours += Number(r.hours || 0);
             projGroups[pid].sumOvertime += Number(r.overtime_hours || 0);
+            // 時刻情報を記録
+            if (r.start_time && r.end_time) {
+                projGroups[pid].timeSlots.push({
+                    start: formatTimeDisplay(r.start_time),
+                    end: formatTimeDisplay(r.end_time),
+                });
+            }
         });
         dateProjectMap[d] = Object.values(projGroups);
     });
 
+    // 現場ブロック（最大3現場分）
     for (let g = 0; g < 3; g++) {
         const genbaNameRow = [`現場${g + 1}`, "現場名"];
         const timeRow = ["", "時間"];
@@ -206,12 +244,30 @@ export const generateWorkerReportExcel = (workerName, weekPrefix, days, recordsD
             const group = dateProjectMap[d][g];
             if (group) {
                 genbaNameRow.push(group.siteName);
-                let otText = '';
-                if (group.sumOvertime > 0) {
-                    otText = `\n(+外${group.sumOvertime}h)`;
+
+                // 時刻スロット表示: "08:00~12:00\n14:00~17:30" 形式
+                let timeText = '';
+                if (group.timeSlots.length > 0) {
+                    const slotTexts = group.timeSlots.map(s => `${s.start}~${s.end}`);
+                    // 重複除去
+                    const uniqueSlots = [...new Set(slotTexts)];
+                    timeText = uniqueSlots.join('\n');
                 }
-                timeRow.push(`${group.sumHours}h${otText}`);
-                contentRow.push(group.items.join('\n'));
+
+                // 実働時間・時間外サマリー
+                let summaryText = `実働${group.sumHours.toFixed(1)}h`;
+                if (group.sumOvertime > 0) {
+                    summaryText += ` (外${group.sumOvertime.toFixed(1)}h)`;
+                }
+                // 人工数（日付ベースの季節設定で算出）
+                const ninku = calculateNinku(group.sumHours, d);
+                summaryText += ` [${ninku}人工]`;
+
+                timeRow.push(timeText ? `${timeText}\n${summaryText}` : summaryText);
+
+                // 作業内容（重複除去）
+                const uniqueItems = [...new Set(group.items)];
+                contentRow.push(uniqueItems.join('\n'));
             } else {
                 genbaNameRow.push("");
                 timeRow.push("");
@@ -223,6 +279,7 @@ export const generateWorkerReportExcel = (workerName, weekPrefix, days, recordsD
         sheetData.push(contentRow);
     }
 
+    // 協力会社
     for (let c = 0; c < 3; c++) {
         const compRow = c === 0 ? ["協力会社", `会社名①`] : ["", `会社名${c === 1 ? '②' : '③'}`];
         days.forEach(d => {
@@ -237,19 +294,35 @@ export const generateWorkerReportExcel = (workerName, weekPrefix, days, recordsD
         sheetData.push(compRow);
     }
 
+    // 使用材料
     const pRow1 = ["使用材料", "材料名"];
     const pRow2 = ["", "数量"];
     for (let i = 0; i < 7; i++) { pRow1.push(""); pRow2.push(""); }
     sheetData.push(pRow1);
     sheetData.push(pRow2);
 
+    // 作業手当（時間外の集計）
     const otRow = ["作業手当", "時間(H)"];
     days.forEach(d => {
         const dayRecords = (recordsData || []).filter(r => r.date === d);
         const dayOt = dayRecords.reduce((sum, r) => sum + Number(r.overtime_hours || 0), 0);
-        otRow.push(dayOt > 0 ? `${dayOt}H` : "");
+        otRow.push(dayOt > 0 ? `${dayOt.toFixed(1)}H` : "");
     });
     sheetData.push(otRow);
+
+    // 日計行（1日の全現場合計）
+    const dailyTotalRow = ["日計", "実働/人工"];
+    days.forEach(d => {
+        const dayRecords = (recordsData || []).filter(r => r.date === d);
+        const dayTotal = dayRecords.reduce((sum, r) => sum + Number(r.hours || 0), 0);
+        if (dayTotal > 0) {
+            const dayNinku = calculateNinku(dayTotal, d);
+            dailyTotalRow.push(`${dayTotal.toFixed(1)}h (${dayNinku}人工)`);
+        } else {
+            dailyTotalRow.push("");
+        }
+    });
+    sheetData.push(dailyTotalRow);
 
     const sigRow = ["", "承認サイン"];
     for (let i = 0; i < 7; i++) { sigRow.push(""); }
@@ -259,18 +332,19 @@ export const generateWorkerReportExcel = (workerName, weekPrefix, days, recordsD
 
     const ws = xlsx.utils.aoa_to_sheet(sheetData);
 
+    // セルマージの定義（行数が1行増えて20行になった）
     ws['!merges'] = [
-        { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } },
-        { s: { r: 0, c: 5 }, e: { r: 0, c: 8 } },
-        { s: { r: 2, c: 0 }, e: { r: 4, c: 0 } },
-        { s: { r: 5, c: 0 }, e: { r: 7, c: 0 } },
-        { s: { r: 8, c: 0 }, e: { r: 10, c: 0 } },
-        { s: { r: 11, c: 0 }, e: { r: 13, c: 0 } },
-        { s: { r: 14, c: 0 }, e: { r: 15, c: 0 } },
-        { s: { r: 16, c: 0 }, e: { r: 17, c: 0 } },
-        { s: { r: 18, c: 1 }, e: { r: 18, c: 8 } }
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } },      // タイトル
+        { s: { r: 0, c: 5 }, e: { r: 0, c: 8 } },      // 作業者名
+        { s: { r: 2, c: 0 }, e: { r: 4, c: 0 } },      // 現場1
+        { s: { r: 5, c: 0 }, e: { r: 7, c: 0 } },      // 現場2
+        { s: { r: 8, c: 0 }, e: { r: 10, c: 0 } },     // 現場3
+        { s: { r: 11, c: 0 }, e: { r: 13, c: 0 } },    // 協力会社
+        { s: { r: 14, c: 0 }, e: { r: 15, c: 0 } },    // 使用材料
+        { s: { r: 19, c: 1 }, e: { r: 19, c: 8 } }     // 備考
     ];
 
+    const totalRows = sheetData.length;
     const range = xlsx.utils.decode_range(ws['!ref']);
     for (let R = range.s.r; R <= range.e.r; ++R) {
         for (let C = range.s.c; C <= range.e.c; ++C) {
@@ -281,7 +355,7 @@ export const generateWorkerReportExcel = (workerName, weekPrefix, days, recordsD
                 cell = ws[cellRefBase];
             }
 
-            if (R < 18) {
+            if (R < totalRows - 1) {
                 cell.s = {
                     border: {
                         top: { style: "thin" }, bottom: { style: "thin" },
@@ -289,7 +363,7 @@ export const generateWorkerReportExcel = (workerName, weekPrefix, days, recordsD
                     },
                     alignment: { vertical: "center", horizontal: "center", wrapText: true }
                 };
-            } else if (R === 18) {
+            } else {
                 cell.s = { font: { sz: 9 } };
             }
 
@@ -300,9 +374,13 @@ export const generateWorkerReportExcel = (workerName, weekPrefix, days, recordsD
         }
     }
 
-    ws['!cols'] = [{ wch: 6 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 15 }];
+    ws['!cols'] = [{ wch: 6 }, { wch: 10 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }];
+
+    // A4横向き印刷設定
+    applyA4LandscapePrintSettings(ws);
 
     const wb = xlsx.utils.book_new();
     xlsx.utils.book_append_sheet(wb, ws, "就労日報");
     xlsx.writeFile(wb, `${workerName}_就労日報_${weekPrefix}.xlsx`);
 };
+

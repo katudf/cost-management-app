@@ -1,0 +1,5 @@
+- [x] 実装計画の作成と承認
+- [x] AdminApp.jsx の修正 (コンテナ幅制限の緩和)
+- [x] AssignmentChartTab.jsx の修正 (表示日数の増加)
+- [x] 動作確認
+- [x] Walkthroughの作成

@@ -1,0 +1,6 @@
+- [x] 実装計画の作成と承認
+- [/] ConfirmModal.jsx の作成 (新規コンポーネント)
+- [ ] useProjects.js の修正 (モーダル状態の追加と削除ロジックの変更)
+- [ ] MasterTab.jsx の修正 (モーダルの配置とイベント紐付け)
+- [ ] 動作確認
+- [ ] Walkthroughの作成

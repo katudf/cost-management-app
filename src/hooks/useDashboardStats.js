@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { calculateProjectsSummary } from '../utils/projectUtils';
 
 export function useDashboardStats({ projects, activeProject, hourlyWage }) {
-    const [filterStatuses, setFilterStatuses] = useState(['予定', '施工中', '完了']);
+    const [filterStatuses, setFilterStatuses] = useState(['見積', '予定', '施工中', '完了']);
     const [sortOption, setSortOption] = useState('created_desc');
 
     const toggleFilterStatus = (status) => {
@@ -56,7 +56,7 @@ export function useDashboardStats({ projects, activeProject, hourlyWage }) {
         const totalActual = items.reduce((sum, i) => sum + i.actual, 0);
         const totalTarget = items.reduce((sum, i) => sum + i.target, 0);
         const totalPredictedProfitLoss = items.reduce((sum, i) => sum + i.predictedProfitLoss, 0);
-        const subcontractorCost = (activeProject.subcontractors || []).reduce((sum, s) => sum + (Number(s.worker_count) * Number(s.unit_price || 25000)), 0);
+        const subcontractorCost = (activeProject.subcontractors || []).reduce((sum, s) => sum + (Number(s.worker_count) * Number(s.unit_price || 0)), 0);
 
         return {
             items,

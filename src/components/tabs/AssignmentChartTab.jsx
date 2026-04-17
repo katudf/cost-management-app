@@ -7,7 +7,7 @@ import { toDateStr, addDays, getDayOfWeek, getMonday } from '../../utils/dateUti
 import { DEFAULT_COLORS, SCHEDULE_TYPES } from '../../utils/constants';
 
 
-const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTab, setActiveProjectId }) => {
+const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTab, setActiveProjectId, setProjects }) => {
     const { showToast } = useToast();
     const [isLoading, setIsLoading] = useState(true);
     const [assignments, setAssignments] = useState([]);
@@ -40,11 +40,43 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
     // クリップボード (コピペ用)
     const [clipboard, setClipboard] = useState(null);
 
+    const [draggingGantt, setDraggingGantt] = useState(null);
 
+    // ===== 日付・稼働日数ロジック (休日考慮) =====
+    const isHoliday = useCallback((dateObj) => {
+        const dow = dateObj.getDay();
+        if (dow === 0 || dow === 6) return true;
+        const dStr = toDateStr(dateObj);
+        return companyHolidays.some(h => h.date === dStr && h.description !== '会議' && h.description !== '社員旅行');
+    }, [companyHolidays]);
+
+    const countWorkingDays = useCallback((startStr, endStr) => {
+        let count = 0;
+        const start = new Date(startStr + 'T00:00:00');
+        const end = new Date(endStr + 'T00:00:00');
+        if (start > end) return 0;
+        
+        let p = new Date(start);
+        while (p <= end) {
+            if (!isHoliday(p)) count++;
+            p.setDate(p.getDate() + 1);
+        }
+        return count;
+    }, [isHoliday]);
+
+    const addWorkingDays = useCallback((startStr, daysToAdd) => {
+        let p = new Date(startStr + 'T00:00:00');
+        let remaining = daysToAdd;
+        while (remaining > 0) {
+            p.setDate(p.getDate() + 1);
+            if (!isHoliday(p)) remaining--;
+        }
+        return toDateStr(p);
+    }, [isHoliday]);
 
     // 表示期間
     const [startDate, setStartDate] = useState(() => getMonday(new Date()));
-    const totalDays = 28;
+    const totalDays = 56;
 
     // 日付配列
     const dateColumns = useMemo(() => {
@@ -94,6 +126,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
             const { data: pData } = await supabase
                 .from('Projects')
                 .select('id, name, startDate, endDate, bar_color, status, display_order')
+                .in('status', ['予定', '施工中'])
                 .not('startDate', 'is', null)
                 .not('endDate', 'is', null)
                 .order('display_order', { ascending: true, nullsFirst: false })
@@ -194,6 +227,89 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         return () => window.removeEventListener('mouseup', handleMouseUp);
     }, [isDragging, dragCells, dragWorkerId, dragSourceCell]);
 
+    // === ガントチャート (案件バー) ドラッグ & リサイズ ===
+    const handleGanttPointerDown = useCallback((e, proj, mode) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const origWorkingDays = countWorkingDays(proj.startDate, proj.endDate);
+        setDraggingGantt({
+            projectId: proj.id,
+            mode,
+            initialStartStr: proj.startDate,
+            initialEndStr: proj.endDate,
+            origWorkingDays,
+            startX: e.clientX,
+            tempStartStr: proj.startDate,
+            tempEndStr: proj.endDate
+        });
+    }, [countWorkingDays]);
+
+    useEffect(() => {
+        if (!draggingGantt) return;
+
+        const handlePointerMove = (e) => {
+            e.preventDefault();
+            const dx = e.clientX - draggingGantt.startX;
+            const diffDays = Math.round(dx / 48); // 1セル=48px
+            
+            let newStartStr = draggingGantt.initialStartStr;
+            let newEndStr = draggingGantt.initialEndStr;
+
+            if (draggingGantt.mode === 'move') {
+                newStartStr = toDateStr(addDays(new Date(draggingGantt.initialStartStr), diffDays));
+                newEndStr = addWorkingDays(newStartStr, Math.max(0, draggingGantt.origWorkingDays - 1));
+            } else if (draggingGantt.mode === 'start') {
+                newStartStr = toDateStr(addDays(new Date(draggingGantt.initialStartStr), diffDays));
+                if (newStartStr > newEndStr) newStartStr = newEndStr;
+            } else if (draggingGantt.mode === 'end') {
+                newEndStr = toDateStr(addDays(new Date(draggingGantt.initialEndStr), diffDays));
+                if (newEndStr < newStartStr) newEndStr = newStartStr;
+            }
+
+            setDraggingGantt(prev => ({
+                ...prev,
+                tempStartStr: newStartStr,
+                tempEndStr: newEndStr
+            }));
+        };
+
+        const handlePointerUp = async (e) => {
+            e.preventDefault();
+            const { projectId, tempStartStr, tempEndStr, initialStartStr, initialEndStr } = draggingGantt;
+            setDraggingGantt(null);
+
+            if (tempStartStr !== initialStartStr || tempEndStr !== initialEndStr) {
+                // Optimistic Update
+                setBarProjects(prev => prev.map(p => 
+                    p.id === projectId ? { ...p, startDate: tempStartStr, endDate: tempEndStr } : p
+                ));
+
+                // Global Status Sync (工事設定タブへの反映用)
+                if (setProjects) {
+                    setProjects(prev => prev.map(p => 
+                        p.id === projectId ? { ...p, startDate: tempStartStr, endDate: tempEndStr } : p
+                    ));
+                }
+
+                try {
+                    const { error } = await supabase.from('Projects').update({ startDate: tempStartStr, endDate: tempEndStr }).eq('id', projectId);
+                    if (error) throw error;
+                    showToast('工期を更新しました', 'success');
+                } catch(error) {
+                    console.error('工期更新エラー:', error);
+                    showToast('工期の更新に失敗しました', 'error');
+                }
+            }
+        };
+
+        window.addEventListener('pointermove', handlePointerMove);
+        window.addEventListener('pointerup', handlePointerUp);
+        return () => {
+            window.removeEventListener('pointermove', handlePointerMove);
+            window.removeEventListener('pointerup', handlePointerUp);
+        };
+    }, [draggingGantt, addWorkingDays, showToast]);
+
 
     // prj map
     const projectMap = useMemo(() => {
@@ -209,7 +325,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
 
     const allProjects = useMemo(() => {
         return projects
-            .filter(p => p.status !== '完了')
+            .filter(p => p.status === '予定' || p.status === '施工中')
             .map((p, idx) => ({
                 id: p.id,
                 name: p.siteName || '無題',
@@ -230,199 +346,212 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         return lookup;
     }, [assignments]);
 
-    // === キーボードショートカット (コピー・ペースト・削除) ===
+    // === キーボードとUIからのアクションハンドラ (コピー・ペースト・削除) ===
+    const handleActionDelete = useCallback(async () => {
+        if (!editCell) return;
+        const targetDates = editCell.dragDates || [editCell.dateStr];
+        const workerId = editCell.workerId;
+        const toDelete = [];
+        targetDates.forEach(dateStr => {
+            const existing = assignmentLookup[`${workerId}_${dateStr}`] || [];
+            toDelete.push(...existing);
+        });
+        if (toDelete.length === 0) return;
+
+        const idsToDelete = toDelete.map(a => a.id);
+        setAssignments(prev => prev.filter(a => !idsToDelete.includes(a.id)));
+        try {
+            await supabase.from('Assignments').delete().in('id', idsToDelete);
+            showToast(`${toDelete.length}件の配置を削除しました`, 'success');
+        } catch (err) {
+            console.error('一括削除エラー', err);
+            showToast('削除に失敗しました', 'error');
+        }
+        setEditCell(null);
+        setDragCells([]);
+    }, [editCell, assignmentLookup, setAssignments, showToast]);
+
+    const handleActionCopy = useCallback(() => {
+        if (!editCell) return;
+        const targetDates = editCell.dragDates || [editCell.dateStr];
+        const workerId = editCell.workerId;
+        const baseDate = new Date(targetDates[0]);
+        const copiedData = [];
+        
+        targetDates.forEach(dateStr => {
+            const existing = assignmentLookup[`${workerId}_${dateStr}`] || [];
+            const currentDate = new Date(dateStr);
+            const dayOffset = Math.round((currentDate - baseDate) / (1000 * 60 * 60 * 24));
+            
+            existing.forEach(a => {
+                copiedData.push({
+                    dayOffset,
+                    projectId: a.projectId,
+                    title: a.title,
+                    assignment_order: a.assignment_order
+                });
+            });
+        });
+
+        if (copiedData.length > 0) {
+            setClipboard({ type: 'copy', data: copiedData });
+            showToast(`選択範囲（${copiedData.length}件）をコピーしました`, 'success');
+        }
+    }, [editCell, assignmentLookup, setClipboard, showToast]);
+
+    const handleActionCut = useCallback(async () => {
+        if (!editCell) return;
+        const targetDates = editCell.dragDates || [editCell.dateStr];
+        const workerId = editCell.workerId;
+        const baseDate = new Date(targetDates[0]);
+        const copiedData = [];
+        const toDelete = [];
+        
+        targetDates.forEach(dateStr => {
+            const existing = assignmentLookup[`${workerId}_${dateStr}`] || [];
+            const currentDate = new Date(dateStr);
+            const dayOffset = Math.round((currentDate - baseDate) / (1000 * 60 * 60 * 24));
+            
+            existing.forEach(a => {
+                copiedData.push({
+                    dayOffset,
+                    projectId: a.projectId,
+                    title: a.title,
+                    assignment_order: a.assignment_order
+                });
+                toDelete.push(a);
+            });
+        });
+
+        if (copiedData.length > 0) {
+            setClipboard({ type: 'cut', data: copiedData });
+            
+            const idsToDelete = toDelete.map(a => a.id);
+            setAssignments(prev => prev.filter(a => !idsToDelete.includes(a.id)));
+            try {
+                await supabase.from('Assignments').delete().in('id', idsToDelete);
+                showToast(`${copiedData.length}件をカットしました`, 'success');
+            } catch (err) {
+                console.error('カットエラー', err);
+            }
+            setEditCell(null);
+            setDragCells([]);
+        }
+    }, [editCell, assignmentLookup, setClipboard, setAssignments, showToast]);
+
+    const handleActionPaste = useCallback(async () => {
+        if (!editCell || !clipboard || !clipboard.data || clipboard.data.length === 0) return;
+
+        const targetDates = editCell.dragDates || [editCell.dateStr];
+        const workerId = editCell.workerId;
+        const baseDateStr = targetDates[0];
+        const baseDate = new Date(baseDateStr);
+        
+        const newRecords = [];
+        const tempIds = [];
+
+        // 1件から複数件への「1対多展開」判定
+        const isSingleDayCopy = clipboard.data.every(item => item.dayOffset === 0);
+        const isMultiDayPasteTarget = targetDates.length > 1;
+
+        if (isSingleDayCopy && isMultiDayPasteTarget) {
+            targetDates.forEach(tDateStr => {
+                clipboard.data.forEach(item => {
+                    const tempId = `temp-${Date.now()}-${Math.random()}`;
+                    tempIds.push(tempId);
+                    newRecords.push({
+                        id: tempId,
+                        workerId: workerId,
+                        projectId: item.projectId,
+                        date: tDateStr,
+                        title: item.title,
+                        assignment_order: item.assignment_order
+                    });
+                });
+            });
+        } else {
+            clipboard.data.forEach(item => {
+                const targetDate = new Date(baseDate);
+                targetDate.setDate(targetDate.getDate() + item.dayOffset);
+                const targetDateStr = targetDate.toISOString().split('T')[0];
+
+                const tempId = `temp-${Date.now()}-${Math.random()}`;
+                tempIds.push(tempId);
+                newRecords.push({
+                    id: tempId,
+                    workerId: workerId,
+                    projectId: item.projectId,
+                    date: targetDateStr,
+                    title: item.title,
+                    assignment_order: item.assignment_order
+                });
+            });
+        }
+
+        setAssignments(prev => [...prev, ...newRecords]);
+        try {
+            const inserts = newRecords.map(r => ({
+                workerId: r.workerId,
+                projectId: r.projectId,
+                date: r.date,
+                title: r.title,
+                assignment_order: r.assignment_order
+            }));
+
+            const { data, error } = await supabase.from('Assignments').insert(inserts).select();
+            if (error) throw error;
+            if (data) {
+                setAssignments(prev => {
+                    let updated = [...prev];
+                    data.forEach((d, i) => {
+                        if (tempIds[i]) {
+                            updated = updated.map(a => a.id === tempIds[i] ? d : a);
+                        }
+                    });
+                    return updated;
+                });
+            }
+            showToast(`${newRecords.length}件の配置を展開しました`, 'success');
+            setEditCell(null);
+            setDragCells([]);
+        } catch (err) {
+            console.error('ペーストエラー', err);
+            setAssignments(prev => prev.filter(a => !tempIds.includes(a.id)));
+            showToast('ペーストに失敗しました', 'error');
+        }
+    }, [editCell, clipboard, setAssignments, showToast]);
+
     useEffect(() => {
         const handleKeyDown = async (e) => {
             // 入力中（input, textarea）などの場合は無視
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-
             if (!editCell) return; // セルが選択（ポップアップが開いている）されていないと無効
             
-            const targetDates = editCell.dragDates || [editCell.dateStr];
-            const workerId = editCell.workerId;
-            
-            // Delete / Backspace : 削除
             if (e.key === 'Delete' || e.key === 'Backspace') {
                 e.preventDefault();
-                // 削除対象のassignmentを取得
-                const toDelete = [];
-                targetDates.forEach(dateStr => {
-                    const existing = assignmentLookup[`${workerId}_${dateStr}`] || [];
-                    toDelete.push(...existing);
-                });
-                if (toDelete.length === 0) return;
-
-                const idsToDelete = toDelete.map(a => a.id);
-                setAssignments(prev => prev.filter(a => !idsToDelete.includes(a.id)));
-                try {
-                    await supabase.from('Assignments').delete().in('id', idsToDelete);
-                    showToast(`${toDelete.length}件の配置を削除しました`, 'success');
-                } catch (err) {
-                    console.error('一括削除エラー', err);
-                    showToast('削除に失敗しました', 'error');
-                }
-                setEditCell(null);
-                setDragCells([]);
+                handleActionDelete();
                 return;
             }
-
-            // Ctrl + C : コピー
             if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
                 e.preventDefault();
-                const baseDate = new Date(targetDates[0]);
-                const copiedData = [];
-                
-                targetDates.forEach(dateStr => {
-                    const existing = assignmentLookup[`${workerId}_${dateStr}`] || [];
-                    const currentDate = new Date(dateStr);
-                    const dayOffset = Math.round((currentDate - baseDate) / (1000 * 60 * 60 * 24));
-                    
-                    existing.forEach(a => {
-                        copiedData.push({
-                            dayOffset,
-                            projectId: a.projectId,
-                            title: a.title,
-                            assignment_order: a.assignment_order
-                        });
-                    });
-                });
-
-                if (copiedData.length > 0) {
-                    setClipboard({ type: 'copy', data: copiedData });
-                    showToast(`選択範囲（${copiedData.length}件）をコピーしました`, 'success');
-                }
+                handleActionCopy();
                 return;
             }
-
-            // Ctrl + X : カット
             if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'x') {
                 e.preventDefault();
-                const baseDate = new Date(targetDates[0]);
-                const copiedData = [];
-                const toDelete = [];
-                
-                targetDates.forEach(dateStr => {
-                    const existing = assignmentLookup[`${workerId}_${dateStr}`] || [];
-                    const currentDate = new Date(dateStr);
-                    const dayOffset = Math.round((currentDate - baseDate) / (1000 * 60 * 60 * 24));
-                    
-                    existing.forEach(a => {
-                        copiedData.push({
-                            dayOffset,
-                            projectId: a.projectId,
-                            title: a.title,
-                            assignment_order: a.assignment_order
-                        });
-                        toDelete.push(a);
-                    });
-                });
-
-                if (copiedData.length > 0) {
-                    setClipboard({ type: 'cut', data: copiedData });
-                    
-                    const idsToDelete = toDelete.map(a => a.id);
-                    setAssignments(prev => prev.filter(a => !idsToDelete.includes(a.id)));
-                    try {
-                        await supabase.from('Assignments').delete().in('id', idsToDelete);
-                        showToast(`${copiedData.length}件をカットしました`, 'success');
-                    } catch (err) {
-                        console.error('カットエラー', err);
-                    }
-                    setEditCell(null);
-                    setDragCells([]);
-                }
+                handleActionCut();
                 return;
             }
-
-            // Ctrl + V : ペースト
             if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
                 e.preventDefault();
-                if (!clipboard || !clipboard.data || clipboard.data.length === 0) return;
-
-                const baseDateStr = targetDates[0];
-                const baseDate = new Date(baseDateStr);
-                
-                const newRecords = [];
-                const tempIds = [];
-
-                // 1件から複数件への「1対多展開」判定
-                const isSingleDayCopy = clipboard.data.every(item => item.dayOffset === 0);
-                const isMultiDayPasteTarget = targetDates.length > 1;
-
-                if (isSingleDayCopy && isMultiDayPasteTarget) {
-                    // 1対多の展開モード: 選択範囲のすべての日付に対してコピー内容を複製する
-                    targetDates.forEach(tDateStr => {
-                        clipboard.data.forEach(item => {
-                            const tempId = `temp-${Date.now()}-${Math.random()}`;
-                            tempIds.push(tempId);
-                            newRecords.push({
-                                id: tempId,
-                                workerId: workerId,
-                                projectId: item.projectId,
-                                date: tDateStr,
-                                title: item.title,
-                                assignment_order: item.assignment_order
-                            });
-                        });
-                    });
-                } else {
-                    // 従来(1対1/多対多)モード: ペースト起点(baseDateStr)からの相対日数で展開する
-                    clipboard.data.forEach(item => {
-                        const targetDate = new Date(baseDate);
-                        targetDate.setDate(targetDate.getDate() + item.dayOffset);
-                        const targetDateStr = targetDate.toISOString().split('T')[0];
-
-                        const tempId = `temp-${Date.now()}-${Math.random()}`;
-                        tempIds.push(tempId);
-                        newRecords.push({
-                            id: tempId,
-                            workerId: workerId,
-                            projectId: item.projectId,
-                            date: targetDateStr,
-                            title: item.title,
-                            assignment_order: item.assignment_order
-                        });
-                    });
-                }
-
-                setAssignments(prev => [...prev, ...newRecords]);
-                try {
-                    const inserts = newRecords.map(r => ({
-                        workerId: r.workerId,
-                        projectId: r.projectId,
-                        date: r.date,
-                        title: r.title,
-                        assignment_order: r.assignment_order
-                    }));
-
-                    const { data, error } = await supabase.from('Assignments').insert(inserts).select();
-                    if (error) throw error;
-                    if (data) {
-                        setAssignments(prev => {
-                            let updated = [...prev];
-                            data.forEach((d, i) => {
-                                if (tempIds[i]) {
-                                    updated = updated.map(a => a.id === tempIds[i] ? d : a);
-                                }
-                            });
-                            return updated;
-                        });
-                    }
-                    showToast(`${newRecords.length}件の配置を展開しました`, 'success');
-                    setEditCell(null);
-                    setDragCells([]);
-                } catch (err) {
-                    console.error('ペーストエラー', err);
-                    setAssignments(prev => prev.filter(a => !tempIds.includes(a.id)));
-                    showToast('ペーストに失敗しました', 'error');
-                }
+                handleActionPaste();
                 return;
             }
         };
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [editCell, clipboard, assignmentLookup, setAssignments, showToast]);
+    }, [editCell, handleActionDelete, handleActionCopy, handleActionCut, handleActionPaste]);
 
     const shortenName = (name) => {
         if (!name) return '';
@@ -629,18 +758,41 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
             const [draggedItem] = next.splice(dragIdx, 1);
             next.splice(targetIdx, 0, draggedItem);
 
-            // 並び順(display_order)を再計算
-            const updatedProjects = next.map((p, idx) => ({ ...p, display_order: idx + 1 }));
+            // データベースの非同期更新（一意制約の競合を回避するため、MAX値を取得して新しい順序を振る）
+            const performAsyncDBUpdate = async () => {
+                try {
+                    const { data: maxData } = await supabase
+                        .from('Projects')
+                        .select('display_order')
+                        .not('display_order', 'is', null)
+                        .order('display_order', { ascending: false })
+                        .limit(1);
+                    
+                    const currentMax = maxData && maxData.length > 0 && maxData[0].display_order ? maxData[0].display_order : 0;
+                    
+                    const newProjectsData = next.map((p, idx) => ({ ...p, display_order: currentMax + idx + 1 }));
 
-            // DB一括更新(非同期)
-            Promise.all(
-                updatedProjects.map(p => supabase.from('Projects').update({ display_order: p.display_order }).eq('id', p.id))
-            ).catch(err => {
-                console.error('案件並び順更新エラー:', err);
-                showToast('並び順の保存に失敗しました。', 'error');
-            });
+                    const promises = newProjectsData.map(p => 
+                        supabase.from('Projects').update({ display_order: p.display_order }).eq('id', p.id)
+                    );
+                    await Promise.all(promises);
 
-            return updatedProjects;
+                    // 状態の display_order を更新
+                    setBarProjects(current => {
+                        return current.map(p => {
+                            const found = newProjectsData.find(np => np.id === p.id);
+                            return found ? { ...p, display_order: found.display_order } : p;
+                        });
+                    });
+                } catch (err) {
+                    console.error('案件並び順更新エラー:', err);
+                    showToast('並び順の保存に失敗しました。', 'error');
+                }
+            };
+            
+            performAsyncDBUpdate();
+
+            return next;
         });
     };
 
@@ -809,9 +961,9 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                     </button>
 
                     <button
-                        onClick={() => movePeriod(-4)}
+                        onClick={() => movePeriod(-8)}
                         className="p-1.5 rounded-md hover:bg-slate-100 text-slate-500 transition"
-                        title="前の4週"
+                        title="前の8週"
                     >
                         <ChevronLeft size={20} />
                     </button>
@@ -825,9 +977,9 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                         {periodLabel}
                     </span>
                     <button
-                        onClick={() => movePeriod(4)}
+                        onClick={() => movePeriod(8)}
                         className="p-1.5 rounded-md hover:bg-slate-100 text-slate-500 transition"
-                        title="次の4週"
+                        title="次の8週"
                     >
                         <ChevronRight size={20} />
                     </button>
@@ -898,15 +1050,20 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                     {/* 案件バーチャート */}
                     <tbody>
                         {barProjects.map((proj) => {
-                            const bar = getBarSpan(proj);
+                            const isDraggingThis = draggingGantt && draggingGantt.projectId === proj.id;
+                            const effStart = isDraggingThis ? draggingGantt.tempStartStr : proj.startDate;
+                            const effEnd = isDraggingThis ? draggingGantt.tempEndStr : proj.endDate;
+                            const bar = getBarSpan({ startDate: effStart, endDate: effEnd });
+
                             return (
                                 <tr key={proj.id} className="hover:bg-slate-50 transition-colors">
                                     <td 
                                         className="sticky left-0 z-10 bg-white text-xs font-bold p-2 border border-slate-200 truncate cursor-grab hover:text-blue-600 transition"
                                         onMouseEnter={(e) => handleProjectNameMouseEnter(e, proj)}
                                         onMouseLeave={() => setHoverProjectStats(null)}
-                                        draggable={true}
+                                        draggable={!isDraggingThis}
                                         onDragStart={(e) => {
+                                            if (isDraggingThis) { e.preventDefault(); return; }
                                             e.dataTransfer.setData('projectid', proj.id.toString());
                                             e.dataTransfer.effectAllowed = 'copyMove';
                                         }}
@@ -940,20 +1097,32 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                                 className="border border-slate-200 p-0 relative"
                                                 style={{
                                                     backgroundColor: isInBar
-                                                        ? proj.color + 'CC'
+                                                        ? proj.color + (isDraggingThis ? '99' : 'CC')
                                                         : isHolidayOrWeekend ? '#F9FAFB' : 'white'
                                                 }}
                                             >
                                                 {isBarStart && (
                                                     <div
-                                                        className="absolute inset-y-0 left-0 flex items-center text-[9px] font-bold text-white px-1 whitespace-nowrap overflow-hidden"
+                                                        className={`absolute inset-y-0 left-0 flex items-center text-[9px] font-bold text-white px-1 whitespace-nowrap overflow-hidden transition-none ${isDraggingThis ? 'opacity-90 scale-[1.02] shadow-md z-[30]' : 'shadow-sm z-5'}`}
                                                         style={{
                                                             width: `${bar.span * 48}px`,
-                                                            zIndex: 5,
-                                                            textShadow: '0 1px 2px rgba(0,0,0,0.5)'
+                                                            textShadow: '0 1px 2px rgba(0,0,0,0.5)',
+                                                            userSelect: 'none'
                                                         }}
                                                     >
-                                                        {proj.name}
+                                                        <span className="relative z-10 pointer-events-none truncate">{proj.name}</span>
+                                                        <div 
+                                                            className="absolute left-0 top-0 bottom-0 w-3 cursor-w-resize z-20 hover:bg-white/40 border-l-2 border-white/50"
+                                                            onPointerDown={(e) => handleGanttPointerDown(e, proj, 'start')}
+                                                        ></div>
+                                                        <div 
+                                                            className="absolute left-3 right-3 top-0 bottom-0 cursor-move z-20 hover:bg-white/10"
+                                                            onPointerDown={(e) => handleGanttPointerDown(e, proj, 'move')}
+                                                        ></div>
+                                                        <div 
+                                                            className="absolute right-0 top-0 bottom-0 w-3 cursor-e-resize z-20 hover:bg-white/40 border-r-2 border-white/50"
+                                                            onPointerDown={(e) => handleGanttPointerDown(e, proj, 'end')}
+                                                        ></div>
                                                     </div>
                                                 )}
                                                 <div className="h-6"></div>
@@ -1161,6 +1330,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                 {/* 編集ポップアップおよびツールチップ群 */}
                 {editCell && (
                     <div
+                        ref={popupRef}
                         className="absolute z-50 flex flex-col gap-2"
                         style={{
                             top: `${editCell.top + 4}px`,
@@ -1169,7 +1339,6 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                     >
                         {/* メイン編集ポップアップ */}
                         <div
-                            ref={popupRef}
                             className="bg-white rounded-xl shadow-2xl border border-slate-200 w-64 overflow-hidden"
                         >
                             {/* ヘッダー */}
@@ -1293,25 +1462,25 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                         </div>
                     </div>
                     
-                    {/* 分離されたショートカットヒント（独立したツールチップ） */}
-                    <div className="bg-slate-800/95 backdrop-blur-sm text-slate-200 px-3 py-2 rounded-lg shadow-lg border border-slate-700 pointer-events-none text-[10px] flex gap-4 justify-between min-w-[200px]">
+                    {/* 分離されたショートカットヒント兼アクションボタン */}
+                    <div className="bg-slate-800/95 backdrop-blur-sm text-slate-200 px-3 py-2 rounded-lg shadow-lg border border-slate-700 text-[10px] flex gap-4 justify-between min-w-[200px]">
                         <div className="flex gap-2">
-                            <div className="flex flex-col gap-1">
+                            <div className="flex flex-col gap-1 items-center">
                                 <span className="text-slate-400">コピー:</span>
-                                <kbd className="font-mono text-[9px] bg-slate-900 border border-slate-600 rounded px-1 py-0.5">Ctrl+C</kbd>
+                                <button onClick={handleActionCopy} className="font-mono text-[9px] bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 hover:bg-slate-700 hover:text-white transition cursor-pointer">Ctrl+C</button>
                             </div>
-                            <div className="flex flex-col gap-1">
+                            <div className="flex flex-col gap-1 items-center">
                                 <span className="text-slate-400">カット:</span>
-                                <kbd className="font-mono text-[9px] bg-slate-900 border border-slate-600 rounded px-1 py-0.5">Ctrl+X</kbd>
+                                <button onClick={handleActionCut} className="font-mono text-[9px] bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 hover:bg-slate-700 hover:text-white transition cursor-pointer">Ctrl+X</button>
                             </div>
-                            <div className="flex flex-col gap-1">
+                            <div className="flex flex-col gap-1 items-center">
                                 <span className="text-slate-400">ペースト:</span>
-                                <kbd className="font-mono text-[9px] bg-slate-900 border border-slate-600 rounded px-1 py-0.5">Ctrl+V</kbd>
+                                <button onClick={handleActionPaste} className={`font-mono text-[9px] bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 transition ${clipboard?.data?.length > 0 ? 'hover:bg-slate-700 hover:text-white cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}>Ctrl+V</button>
                             </div>
                         </div>
-                        <div className="flex flex-col gap-1 border-l border-slate-600 pl-4">
+                        <div className="flex flex-col gap-1 items-center border-l border-slate-600 pl-4">
                             <span className="text-slate-400">一括削除:</span>
-                            <kbd className="font-mono text-[9px] bg-red-900/50 text-red-200 border border-red-800 rounded px-1 py-0.5">Delete</kbd>
+                            <button onClick={handleActionDelete} className="font-mono text-[9px] bg-red-900/50 text-red-200 border border-red-800 rounded px-1.5 py-0.5 hover:bg-red-800 hover:text-white transition cursor-pointer">Delete</button>
                         </div>
                     </div>
                     </div>

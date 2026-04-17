@@ -1,8 +1,13 @@
 import React from 'react';
-import { FileText } from 'lucide-react';
+import { FileText, FileSpreadsheet, Printer } from 'lucide-react';
 
-const ExportReportModal = ({ isOpen, workerName, exportWeekStart, setExportWeekStart, onClose, onExport, isLoading }) => {
-    if (!isOpen || !workerName) return null;
+const ExportReportModal = ({ isOpen, workerName, workerNames, exportWeekStart, setExportWeekStart, onClose, onExport, onExportPDF, isLoading }) => {
+    if (!isOpen) return null;
+
+    const names = workerNames || (workerName ? [workerName] : []);
+    if (names.length === 0) return null;
+
+    const isBatch = names.length > 1;
 
     return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
@@ -11,9 +16,27 @@ const ExportReportModal = ({ isOpen, workerName, exportWeekStart, setExportWeekS
                     <FileText className="text-blue-500" />
                     就労日報の出力
                 </h3>
-                <p className="text-slate-600 mb-6 font-bold text-sm">
-                    対象作業員: <span className="text-blue-600 text-base">{workerName}</span> さん
-                </p>
+
+                {isBatch ? (
+                    <div className="mb-6">
+                        <p className="text-slate-600 font-bold text-sm mb-2">
+                            対象作業員: <span className="text-blue-600 text-base">{names.length}名</span>
+                        </p>
+                        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 max-h-[120px] overflow-y-auto">
+                            <div className="flex flex-wrap gap-1.5">
+                                {names.map((name, i) => (
+                                    <span key={i} className="text-xs bg-blue-50 text-blue-700 px-2 py-1 rounded-full border border-blue-200 font-bold">
+                                        {name}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                ) : (
+                    <p className="text-slate-600 mb-6 font-bold text-sm">
+                        対象作業員: <span className="text-blue-600 text-base">{names[0]}</span> さん
+                    </p>
+                )}
 
                 <div className="mb-6">
                     <label className="block text-xs font-bold text-slate-500 mb-2">出力する週（月曜始まり）</label>
@@ -37,11 +60,20 @@ const ExportReportModal = ({ isOpen, workerName, exportWeekStart, setExportWeekS
                         className="px-4 py-2 rounded-lg font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition"
                     >キャンセル</button>
                     <button
+                        onClick={onExportPDF}
+                        disabled={isLoading}
+                        className="px-4 py-2 rounded-lg font-bold text-white bg-rose-600 hover:bg-rose-700 transition disabled:opacity-50 flex items-center gap-1.5"
+                    >
+                        <Printer size={16} />
+                        {isLoading ? '出力中...' : isBatch ? `PDF一括出力` : 'PDF出力'}
+                    </button>
+                    <button
                         onClick={onExport}
                         disabled={isLoading}
-                        className="px-4 py-2 rounded-lg font-bold text-white bg-blue-600 hover:bg-blue-700 transition disabled:opacity-50"
+                        className="px-4 py-2 rounded-lg font-bold text-white bg-blue-600 hover:bg-blue-700 transition disabled:opacity-50 flex items-center gap-1.5"
                     >
-                        {isLoading ? '出力中...' : 'Excel出力'}
+                        <FileSpreadsheet size={16} />
+                        {isLoading ? '出力中...' : isBatch ? `Excel一括出力` : 'Excel出力'}
                     </button>
                 </div>
             </div>

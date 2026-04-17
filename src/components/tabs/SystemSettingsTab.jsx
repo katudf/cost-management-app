@@ -1,15 +1,22 @@
-import React, { useState, useMemo } from 'react';
-import { Settings, Save, CheckCircle2, Award, Plus, Edit3, Trash2, X, ChevronDown, ChevronRight } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Settings, Save, CheckCircle2, Award, Plus, Edit3, Trash2, X, ChevronDown, ChevronRight, Activity } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../components/Toast';
+import { getDailyApiUsage } from '../../utils/aiOptimizeUtils';
+import HolidayCalendar from '../HolidayCalendar';
 
-const SystemSettingsTab = ({ hourlyWage, setHourlyWage, isLoading, setIsLoading, workers = [], fetchAllData }) => {
+const SystemSettingsTab = ({ hourlyWage, setHourlyWage, geminiApiKey, setGeminiApiKey, isLoading, setIsLoading, workers = [], fetchAllData }) => {
     const { showToast } = useToast();
     const [localWage, setLocalWage] = useState(hourlyWage);
     const [isSaving, setIsSaving] = useState(false);
     const [showSuccess, setShowSuccess] = useState(false);
     const [certForm, setCertForm] = useState({ id: null, workerId: '', name: '', registrationNumber: '', acquisitionDate: '', expiryDate: '' });
     const [expandedWorkers, setExpandedWorkers] = useState({});
+    const [apiUsage, setApiUsage] = useState(null);
+
+    useEffect(() => {
+        setApiUsage(getDailyApiUsage());
+    }, []);
 
     const certsByWorker = useMemo(() => {
         const groups = {};
@@ -134,10 +141,68 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, isLoading, setIsLoading,
                     </p>
                 </div>
 
+                <div className="mb-6 pt-6 border-t border-slate-100">
+                    <label className="block text-sm font-bold text-slate-700 mb-2">
+                        Gemini API キー (Excel自動最適化機能用)
+                    </label>
+                    <div className="flex flex-col gap-4">
+                        <div className="flex items-center gap-4">
+                            {geminiApiKey ? (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-green-50 text-green-700 font-bold border border-green-200">
+                                    <CheckCircle2 size={16} /> 設定済み
+                                </span>
+                            ) : (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-slate-100 text-slate-500 font-bold border border-slate-200">
+                                    未設定
+                                </span>
+                            )}
+                            <p className="text-xs text-slate-500">
+                                ※APIキーはセキュリティのため <code>.env</code> ファイル（<code>VITE_GEMINI_API_KEY</code>）にて管理されます。<br/>
+                                ※設定すると、対象のExcelインポート時に見積項目名の自動短縮や不要項目の除外機能が利用可能になります。
+                            </p>
+                        </div>
+
+                        {apiUsage && (
+                            <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 flex flex-col gap-3">
+                                <h4 className="font-bold text-slate-700 text-sm flex items-center gap-2">
+                                    <Activity size={16} className="text-blue-500" />
+                                    本日のAPI利用状況 (ローカル集計)
+                                </h4>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="bg-white p-3 rounded border border-slate-100 flex flex-col">
+                                        <span className="text-xs font-bold text-slate-500 mb-1">リクエスト回数</span>
+                                        <div className="flex items-end gap-1">
+                                            <span className={`text-xl font-bold ${apiUsage.requestCount >= apiUsage.limitRequests * 0.8 ? 'text-red-500' : 'text-slate-800'}`}>
+                                                {apiUsage.requestCount.toLocaleString()}
+                                            </span>
+                                            <span className="text-xs text-slate-400 mb-1">/ {apiUsage.limitRequests.toLocaleString()} 回</span>
+                                        </div>
+                                        <div className="w-full bg-slate-100 h-1.5 mt-2 rounded-full overflow-hidden">
+                                            <div className={`h-full ${apiUsage.requestCount >= apiUsage.limitRequests * 0.8 ? 'bg-red-500' : 'bg-blue-500'}`} style={{ width: `${Math.min(100, (apiUsage.requestCount / apiUsage.limitRequests) * 100)}%` }} />
+                                        </div>
+                                    </div>
+                                    <div className="bg-white p-3 rounded border border-slate-100 flex flex-col">
+                                        <span className="text-xs font-bold text-slate-500 mb-1">消費トークン数</span>
+                                        <div className="flex items-end gap-1">
+                                            <span className={`text-xl font-bold ${apiUsage.totalTokens >= apiUsage.limitTokens * 0.8 ? 'text-red-500' : 'text-slate-800'}`}>
+                                                {apiUsage.totalTokens.toLocaleString()}
+                                            </span>
+                                            <span className="text-xs text-slate-400 mb-1">/ {(apiUsage.limitTokens / 10000).toLocaleString()}万</span>
+                                        </div>
+                                        <div className="w-full bg-slate-100 h-1.5 mt-2 rounded-full overflow-hidden">
+                                            <div className={`h-full ${apiUsage.totalTokens >= apiUsage.limitTokens * 0.8 ? 'bg-red-500' : 'bg-blue-500'}`} style={{ width: `${Math.min(100, (apiUsage.totalTokens / apiUsage.limitTokens) * 100)}%` }} />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
                 <div className="flex items-center gap-4 pt-4 border-t border-slate-100">
                     <button
                         onClick={handleSave}
-                        disabled={isSaving || localWage === hourlyWage}
+                        disabled={isSaving || (localWage === hourlyWage && localGeminiKey === geminiApiKey)}
                         className="bg-blue-600 text-white px-6 py-2.5 rounded-lg font-bold flex items-center gap-2 hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <Save size={18} />
@@ -151,6 +216,9 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, isLoading, setIsLoading,
                     )}
                 </div>
             </div>
+
+            {/* 会社休日カレンダー */}
+            <HolidayCalendar />
 
             {/* 資格情報マスター */}
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 max-w-4xl mt-6">

@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Users, Settings, Plus, Calendar, BarChart3, User, ChevronRight } from 'lucide-react';
+import { Users, Settings, Plus, Calendar, BarChart3, User, ChevronRight, FileText } from 'lucide-react';
 import { calculateAge } from '../../utils/dateUtils';
 import WorkerDetailsModal from '../WorkerDetailsModal';
 
@@ -15,6 +15,7 @@ const WorkersTab = ({
 }) => {
     const [selectedWorkerForDetails, setSelectedWorkerForDetails] = useState(null);
     const [showResigned, setShowResigned] = useState(false);
+    const [checkedWorkers, setCheckedWorkers] = useState({});
 
     const filteredWorkers = useMemo(() => {
         if (showResigned) return workers;
@@ -28,6 +29,29 @@ const WorkersTab = ({
             return !worker || !worker.resignation_date;
         });
     }, [workerSummaryData, workers, showResigned]);
+
+    const allChecked = filteredSummaryData.length > 0 && filteredSummaryData.every(d => checkedWorkers[d.name]);
+    const checkedCount = filteredSummaryData.filter(d => checkedWorkers[d.name]).length;
+
+    const handleToggleAll = () => {
+        if (allChecked) {
+            setCheckedWorkers({});
+        } else {
+            const next = {};
+            filteredSummaryData.forEach(d => { next[d.name] = true; });
+            setCheckedWorkers(next);
+        }
+    };
+
+    const handleToggleWorker = (name) => {
+        setCheckedWorkers(prev => ({ ...prev, [name]: !prev[name] }));
+    };
+
+    const handleBatchExport = () => {
+        const selected = filteredSummaryData.filter(d => checkedWorkers[d.name]).map(d => d.name);
+        if (selected.length === 0) return;
+        setExportModalWorker(selected.length === 1 ? selected[0] : selected);
+    };
 
     return (
         <div className={`p-6 bg-slate-50 min-h-[500px] ${isLoading ? 'opacity-50 pointer-events-none' : ''}`}>
@@ -124,31 +148,59 @@ const WorkersTab = ({
                     </p>
                 </div>
 
-                {/* 右側：稼働実績の集計 */}
+                {/* 右側：日報出力 */}
                 <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 h-fit">
-                    <h3 className="font-bold text-slate-700 flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
-                        <BarChart3 size={18} className="text-slate-400" />
-                        作業員別 稼働時間集計 (全期間)
-                    </h3>
+                    <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-100">
+                        <h3 className="font-bold text-slate-700 flex items-center gap-2">
+                            <BarChart3 size={18} className="text-slate-400" />
+                            作業員別 日報出力
+                        </h3>
+                        <button
+                            onClick={handleBatchExport}
+                            disabled={checkedCount === 0}
+                            className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-blue-700 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                            <FileText size={16} />
+                            {checkedCount > 0 ? `${checkedCount}名分を出力` : '出力する作業員を選択'}
+                        </button>
+                    </div>
 
                     <div className="overflow-x-auto">
                         <table className="w-full text-left">
                             <thead>
                                 <tr className="bg-slate-100 text-slate-600 text-xs tracking-wider uppercase">
-                                    <th className="p-3 font-bold rounded-l-lg">作業員名</th>
-                                    <th className="p-3 font-bold">稼働した現場</th>
-                                    <th className="p-3 font-bold text-right">総稼働時間</th>
-                                    <th className="p-3 font-bold text-center rounded-r-lg">日報</th>
+                                    <th className="p-3 font-bold rounded-l-lg w-10 text-center">
+                                        <input
+                                            type="checkbox"
+                                            checked={allChecked}
+                                            onChange={handleToggleAll}
+                                            className="w-4 h-4 rounded accent-blue-600 cursor-pointer"
+                                            title="全選択/全解除"
+                                        />
+                                    </th>
+                                    <th className="p-3 font-bold rounded-r-lg">作業員名</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
                                 {filteredSummaryData.length === 0 ? (
                                     <tr>
-                                        <td colSpan="3" className="p-8 text-center text-slate-400 font-bold">まだ作業実績がありません</td>
+                                        <td colSpan="2" className="p-8 text-center text-slate-400 font-bold">まだ作業実績がありません</td>
                                     </tr>
                                 ) : (
                                     filteredSummaryData.map((data, idx) => (
-                                        <tr key={idx} className="hover:bg-slate-50 transition">
+                                        <tr
+                                            key={idx}
+                                            className={`transition cursor-pointer ${checkedWorkers[data.name] ? 'bg-blue-50 hover:bg-blue-100' : 'hover:bg-slate-50'}`}
+                                            onClick={() => handleToggleWorker(data.name)}
+                                        >
+                                            <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={!!checkedWorkers[data.name]}
+                                                    onChange={() => handleToggleWorker(data.name)}
+                                                    className="w-4 h-4 rounded accent-blue-600 cursor-pointer"
+                                                />
+                                            </td>
                                             <td className="p-3 font-bold text-slate-800 flex items-center gap-2 whitespace-nowrap">
                                                 <User size={16} className="text-slate-400" /> {data.name}
                                                 {workers.find(w => w.name === data.name)?.birthDate && (
@@ -156,29 +208,6 @@ const WorkersTab = ({
                                                         ({calculateAge(workers.find(w => w.name === data.name).birthDate)}歳)
                                                     </span>
                                                 )}
-                                            </td>
-                                            <td className="p-3">
-                                                <div className="flex flex-wrap gap-1">
-                                                    {data.projects.map((site, sIdx) => (
-                                                        <span key={sIdx} className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full border border-blue-100">
-                                                            {site}
-                                                        </span>
-                                                    ))}
-                                                    {data.projects.length === 0 && <span className="text-[10px] text-slate-400">-</span>}
-                                                </div>
-                                            </td>
-                                            <td className="p-3 text-right">
-                                                <div className="font-mono font-bold text-lg text-slate-700">
-                                                    {data.totalHours.toFixed(1)} <span className="text-xs text-slate-500 font-sans">h</span>
-                                                </div>
-                                            </td>
-                                            <td className="p-3 text-center">
-                                                <button
-                                                    onClick={() => setExportModalWorker(data.name)}
-                                                    className="text-[11px] bg-slate-100 hover:bg-blue-50 text-slate-600 hover:text-blue-700 font-bold py-1.5 px-3 border border-slate-300 hover:border-blue-400 rounded-lg transition"
-                                                >
-                                                    出力
-                                                </button>
                                             </td>
                                         </tr>
                                     ))
@@ -193,4 +222,3 @@ const WorkersTab = ({
 };
 
 export default React.memo(WorkersTab);
-

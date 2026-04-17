@@ -1,0 +1,5 @@
+- [x] 実装計画の作成と承認
+- [/] useProjects.js の修正 (バリデーションロジックの追加)
+- [ ] MasterTab.jsx の修正 (ハンドラの整理)
+- [ ] 動作確認
+- [ ] Walkthroughの作成

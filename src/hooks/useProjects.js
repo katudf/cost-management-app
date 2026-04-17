@@ -3,6 +3,9 @@ import { supabase } from '../lib/supabase';
 
 export function useProjects({ projects, setProjects, activeProjectId, setActiveProjectId, showToast, workers }) {
     
+    const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+    const [pendingDeleteId, setPendingDeleteId] = useState(null);
+
     const activeProject = useMemo(() => {
         return projects.find(p => p.id === activeProjectId) || projects[0] || {
             id: 'loading', siteName: '読込中...', masterData: [], records: [], progressData: {}
@@ -22,7 +25,7 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
         }
         const nextOrder = projects.length > 0 ? Math.max(...projects.map(p => p.order || 0)) + 1 : 0;
         const tempName = `__NEW_PROJECT__${Date.now()}`;
-        const { data, error } = await supabase.from('Projects').insert([{ name: tempName, order: nextOrder, status: '予定' }]).select();
+        const { data, error } = await supabase.from('Projects').insert([{ name: tempName, order: nextOrder, status: '見積' }]).select();
         if (error) {
             console.error(error); showToast('現場の作成に失敗しました: ' + error.message, 'error');
             return;
@@ -30,33 +33,41 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
         const newProj = data[0];
 
         setProjects(prev => [...prev, {
-            id: newProj.id, order: newProj.order, siteName: '', status: newProj.status || '予定', masterData: [], records: [], progressData: {}
+            id: newProj.id, order: newProj.order, siteName: '', status: newProj.status || '見積', masterData: [], records: [], progressData: {}
         }]);
         setActiveProjectId(newProj.id);
     };
 
-    const removeProject = async (id) => {
+    const removeProject = (id) => {
         if (projects.length <= 1) {
             showToast("最後の現場は削除できません！", 'error');
             return;
         }
-        if (window.confirm("本当にこの現場のデータをすべて削除しますか？")) {
-            await supabase.from('SubcontractorRecords').delete().eq('project_id', id);
-            await supabase.from('TaskRecords').delete().eq('project_id', id);
-            await supabase.from('ProjectTasks').delete().eq('projectId', id);
+        setPendingDeleteId(id);
+        setIsDeleteModalOpen(true);
+    };
 
-            const { error } = await supabase.from('Projects').delete().eq('id', id);
-            if (error) {
-                console.error(error);
-                showToast("削除に失敗しました: " + error.message, 'error');
-                return;
-            }
+    const confirmRemoveProject = async () => {
+        if (!pendingDeleteId) return;
+        const id = pendingDeleteId;
 
-            setProjects(prev => prev.filter(p => p.id !== id));
-            if (activeProjectId === id) {
-                setActiveProjectId(projects.find(p => p.id !== id).id);
-            }
+        await supabase.from('SubcontractorRecords').delete().eq('project_id', id);
+        await supabase.from('TaskRecords').delete().eq('project_id', id);
+        await supabase.from('ProjectTasks').delete().eq('projectId', id);
+
+        const { error } = await supabase.from('Projects').delete().eq('id', id);
+        if (error) {
+            console.error(error);
+            showToast("削除に失敗しました: " + error.message, 'error');
+            return;
         }
+
+        setProjects(prev => prev.filter(p => p.id !== id));
+        if (activeProjectId === id) {
+            setActiveProjectId(projects.find(p => p.id !== id).id);
+        }
+        setIsDeleteModalOpen(false);
+        setPendingDeleteId(null);
     };
 
     const handleSiteNameBlur = async (id, newName) => {
@@ -90,6 +101,17 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
     };
 
     const handleProjectDateChange = async (id, field, value) => {
+        // バリデーション
+        if (value) {
+            const currentStart = field === 'startDate' ? value : activeProject.startDate;
+            const currentEnd = field === 'endDate' ? value : activeProject.endDate;
+
+            if (currentStart && currentEnd && currentStart > currentEnd) {
+                showToast('工期設定エラー：終了日は開始日より後の日付を指定してください。', 'error');
+                return;
+            }
+        }
+
         updateLayer(p => ({ [field]: value }));
         await supabase.from('Projects').update({ [field]: value }).eq('id', id);
     };
@@ -205,7 +227,7 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
             date: new Date().toISOString().split('T')[0],
             company_name: '',
             worker_count: 1,
-            unit_price: 25000,
+            unit_price: 0,
             worker_name: ''
         };
 
@@ -237,6 +259,9 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
         handleForemanChange,
         handleProjectStatusChange,
         handleProjectDateChange,
+        isDeleteModalOpen,
+        setIsDeleteModalOpen,
+        confirmRemoveProject,
         updateMasterItemLocal,
         saveMasterItemDB,
         addMasterItem,

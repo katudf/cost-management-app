@@ -1,0 +1,7 @@
+- [x] 実装計画の作成と承認
+- [x] useProjects.js の修正 (デフォルトステータスの変更)
+- [x] MasterTab.jsx の修正 (セレクトボックスの選択肢追加)
+- [x] AdminApp.jsx の修正 (フィルターとバッジスタイルの追加)
+- [x] AssignmentChartTab.jsx の修正 (配置表の表示フィルタリング)
+- [/] 動作確認
+- [ ] Walkthroughの作成

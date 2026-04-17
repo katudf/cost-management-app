@@ -12,6 +12,8 @@ import { calculateAge } from './utils/dateUtils';
 import { calculateProjectsSummary } from './utils/projectUtils';
 import { parseExcelForImport } from './utils/excelImportUtils';
 import { exportToExcel, generateWorkerReportExcel } from './utils/excelExportUtils';
+import { generateWorkerReportPDF } from './utils/pdfExportUtils';
+import { optimizeItemsWithGemini } from './utils/aiOptimizeUtils';
 import ImportModal from './components/ImportModal';
 import WorkerEditModal from './components/WorkerEditModal';
 import ExportReportModal from './components/ExportReportModal';
@@ -38,8 +40,8 @@ const App = () => {
         return new Date(today.setDate(diff)).toISOString().split('T')[0];
     });
 
-    const { projects, setProjects, workers, setWorkers, hourlyWage, setHourlyWage, isLoading, setIsLoading, fetchAllData } = useSupabaseData(showToast);
-    
+    const { projects, setProjects, workers, setWorkers, hourlyWage, setHourlyWage, geminiApiKey, setGeminiApiKey, isLoading, setIsLoading, fetchAllData } = useSupabaseData(showToast);
+
     const workerOps = useWorkers({ workers, setWorkers, showToast });
     const projectOps = useProjects({ projects, setProjects, activeProjectId, setActiveProjectId, showToast, workers });
     const dashboardStats = useDashboardStats({ projects, activeProject: projectOps.activeProject, hourlyWage });
@@ -57,88 +59,60 @@ const App = () => {
     // --- Excelインポート ---
     const fileInputRef = useRef(null);
 
-    const handleExcelImport = (e) => {
+    const handleExcelImport = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
 
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            try {
-                const data = event.target.result;
-                const workbook = xlsx.read(data, { type: 'binary' });
+        try {
+            const { projectName: extractedProjectName, masterData: newMasterData } = await parseExcelForImport(file, hourlyWage);
 
-                let newMasterData = [];
-                let extractedProjectName = null;
+            if (newMasterData.length > 0) {
+                const finalSiteName = extractedProjectName || file.name.replace(/\.[^/.]+$/, "");
+                const duplicateProject = projects.find(p => p.siteName === finalSiteName);
 
-                workbook.SheetNames.forEach(sheetName => {
-                    const sheet = workbook.Sheets[sheetName];
-                    const rows = xlsx.utils.sheet_to_json(sheet, { header: 1 });
-
-                    rows.forEach(row => {
-                        if (!extractedProjectName) {
-                            for (let i = 0; i < row.length; i++) {
-                                const cell = row[i];
-                                if (typeof cell === 'string' && cell.replace(/\s+/g, '') === '工事名') {
-                                    for (let j = i + 1; j < row.length; j++) {
-                                        if (row[j] && typeof row[j] === 'string' && row[j].trim() !== '') {
-                                            extractedProjectName = row[j].trim();
-                                            break;
-                                        }
-                                    }
-                                    break;
-                                }
-                            }
-                        }
-
-                        const name = row[2];      // C列
-                        const spec = row[24];     // Y列
-                        const quantity = row[40]; // AO列
-                        const unit = row[43];     // AR列
-                        const amount = row[49];   // AX列
-
-                        if (
-                            name && typeof name === 'string' &&
-                            !name.includes('合　計') && !name.includes('小　計') &&
-                            !name.includes('諸経費') && !name.includes('値引') &&
-                            typeof quantity === 'number'
-                        ) {
-                            const taskName = `${name}${spec ? ` [${spec}]` : ''} (${quantity}${unit || ''})`;
-                            let targetHours = 0;
-                            let estimatedAmount = 0;
-                            if (typeof amount === 'number' && amount > 0) {
-                                estimatedAmount = amount;
-                                targetHours = Math.round(amount / hourlyWage);
-                            }
-
-                            newMasterData.push({ task: taskName, target: targetHours, estimatedAmount: estimatedAmount }); // DB用なのでID持たせず
-                        }
-                    });
+                setImportModalInfo({
+                    type: duplicateProject ? 'duplicate' : 'normal',
+                    data: newMasterData,
+                    count: newMasterData.length,
+                    fileName: finalSiteName,
+                    duplicateId: duplicateProject?.id,
+                    aiOptimized: false,
+                    canOptimize: !!geminiApiKey,
+                    isEmpty: !duplicateProject && !(projectOps.activeProject.masterData && projectOps.activeProject.masterData.length > 0)
                 });
 
-                if (newMasterData.length > 0) {
-                    const finalSiteName = extractedProjectName || file.name.replace(/\.[^/.]+$/, "");
-                    const duplicateProject = projects.find(p => p.siteName === finalSiteName);
+                if (duplicateProject) setAliasName(`${finalSiteName} (コピー)`);
 
-                    if (duplicateProject) {
-                        setImportModalInfo({ type: 'duplicate', data: newMasterData, count: newMasterData.length, fileName: finalSiteName, duplicateId: duplicateProject.id });
-                        setAliasName(`${finalSiteName} (コピー)`);
-                    } else if (projectOps.activeProject.masterData && projectOps.activeProject.masterData.length > 0) {
-                        setImportModalInfo({ type: 'normal', data: newMasterData, count: newMasterData.length, fileName: finalSiteName });
-                    } else {
-                        // 空の場合はそのまま上書き
-                        handleImportChoice('overwrite_empty', { finalSiteName, data: newMasterData, projId: activeProjectId });
-                    }
-                } else {
-                    showToast('取り込めるデータが見つかりませんでした。', 'error');
-                }
-            } catch (error) {
-                console.error('Excelパースエラー:', error);
-                showToast('エラーが発生しました。', 'error');
-            } finally {
-                if (fileInputRef.current) fileInputRef.current.value = '';
+            } else {
+                showToast('取り込めるデータが見つかりませんでした。', 'error');
             }
-        };
-        reader.readAsBinaryString(file);
+        } catch (error) {
+            console.error('Excelパースエラー:', error);
+            showToast('エラーが発生しました。', 'error');
+        } finally {
+            if (fileInputRef.current) fileInputRef.current.value = '';
+        }
+    };
+
+    const handleOptimizeRequest = async () => {
+        if (!geminiApiKey || !importModalInfo) return;
+        setIsLoading(true);
+        showToast("AIが項目を最適化しています...", "success");
+        try {
+            const processedData = await optimizeItemsWithGemini(importModalInfo.data, geminiApiKey);
+            setImportModalInfo({ ...importModalInfo, data: processedData, aiOptimized: true });
+        } catch (error) {
+            console.error('AI Optimize Error:', error);
+            let userMessage = error.message;
+            if (userMessage.includes('503') || userMessage.toLowerCase().includes('high demand') || userMessage.toLowerCase().includes('overloaded')) {
+                userMessage = "現在AIサーバー(Google)が混雑しており利用できません。時間をおいて再度お試しいただくか、今回はAIを使わずにそのままインポート処理を進めてください。";
+            } else if (userMessage.includes('404')) {
+                userMessage = "AIモデルが見つかりません。設定されたモデルが廃止されたか一時的に利用できない可能性があります。";
+            }
+            showToast(`【エラー】${userMessage}`, 'error');
+        } finally {
+            setIsLoading(false);
+        }
     };
 
     const handleImportChoice = async (choice, directParams = null) => {
@@ -152,17 +126,17 @@ const App = () => {
             const nextOrder = projects.length > 0 ? Math.max(...projects.map(p => p.order || 0)) + 1 : 0;
 
             if (choice === 'create_new') {
-                const { data, error } = await supabase.from('Projects').insert([{ name: siteNameToUse, order: nextOrder, status: '予定' }]).select();
+                const { data, error } = await supabase.from('Projects').insert([{ name: siteNameToUse, order: nextOrder, status: '見積' }]).select();
                 if (error) throw error;
                 targetProjectId = data[0].id;
             } else if (choice === 'create_alias') {
-                const { data, error } = await supabase.from('Projects').insert([{ name: aliasName || 'エクセル取込現場', order: nextOrder, status: '予定' }]).select();
+                const { data, error } = await supabase.from('Projects').insert([{ name: aliasName || 'エクセル取込現場', order: nextOrder, status: '見積' }]).select();
                 if (error) throw error;
                 targetProjectId = data[0].id;
             } else if (choice === 'overwrite' || choice === 'overwrite_empty') {
                 targetProjectId = directParams ? directParams.projId : activeProjectId;
                 if (!targetProjectId) {
-                    const { data, error } = await supabase.from('Projects').insert([{ name: siteNameToUse, order: nextOrder, status: '予定' }]).select();
+                    const { data, error } = await supabase.from('Projects').insert([{ name: siteNameToUse, order: nextOrder, status: '見積' }]).select();
                     if (error) throw error;
                     targetProjectId = data[0].id;
                 } else {
@@ -176,8 +150,11 @@ const App = () => {
                 await supabase.from('ProjectTasks').delete().eq('projectId', targetProjectId);
             }
 
+            // info.dataから isExcluded !== true のものだけを抽出し、taskプロパティに直して保存
+            const validData = info.data.filter(m => !m.isExcluded);
+
             // タスクの挿入
-            const tasksToInsert = info.data.map((m, idx) => ({
+            const tasksToInsert = validData.map((m, idx) => ({
                 projectId: targetProjectId,
                 name: m.task,
                 target_hours: m.target,
@@ -186,10 +163,12 @@ const App = () => {
                 progress_percentage: 0
             }));
 
-            await supabase.from('ProjectTasks').insert(tasksToInsert);
+            if (tasksToInsert.length > 0) {
+                await supabase.from('ProjectTasks').insert(tasksToInsert);
+            }
 
-            // DBから最新を再フェッチ
-            await fetchAllData(targetProjectId);
+            // DBから最新を再フェッチし、インポートした現場をアクティブにする
+            await fetchAllData(targetProjectId, setActiveProjectId);
 
         } catch (e) {
             console.error(e);
@@ -209,7 +188,9 @@ const App = () => {
     };
 
     const exportWorkerReport = async () => {
-        if (!workerOps.exportModalWorker || !exportWeekStart) return;
+        const modalVal = workerOps.exportModalWorker;
+        if (!modalVal || !exportWeekStart) return;
+        const workerNames = Array.isArray(modalVal) ? modalVal : [modalVal];
         setIsLoading(true);
 
         try {
@@ -219,37 +200,85 @@ const App = () => {
                 d.setDate(d.getDate() + i);
                 return d.toISOString().split('T')[0];
             });
+            const weekPrefix = exportWeekStart.replace(/-/g, '').slice(0, 8);
 
-            const workerName = workerOps.exportModalWorker;
-            const weekPrefix = exportWeekStart.replace(/-/g, '').slice(0, 8); // e.g., 20260302
-
-            // Fetch records for this week
-            const { data: recordsData } = await supabase.from('TaskRecords')
-                .select('*, ProjectTasks(name, projectId)')
-                .eq('worker_name', workerName)
-                .gte('date', days[0])
-                .lte('date', days[6]);
-
-            // Check if foreman in any selected projects
-            const foremanProjects = projects.filter(p => p.foreman_worker_id === workers.find(w => w.name === workerName)?.id);
-            const foremanProjectIds = foremanProjects.map(p => p.id);
-            let subcontractorsData = [];
-            if (foremanProjectIds.length > 0) {
-                const { data: subData } = await supabase.from('SubcontractorRecords')
-                    .select('*')
-                    .in('project_id', foremanProjectIds)
+            for (const workerName of workerNames) {
+                const { data: recordsData } = await supabase.from('TaskRecords')
+                    .select('*, ProjectTasks(name, projectId)')
+                    .eq('worker_name', workerName)
                     .gte('date', days[0])
                     .lte('date', days[6]);
-                if (subData) subcontractorsData = subData;
+
+                const foremanProjects = projects.filter(p => p.foreman_worker_id === workers.find(w => w.name === workerName)?.id);
+                const foremanProjectIds = foremanProjects.map(p => p.id);
+                let subcontractorsData = [];
+                if (foremanProjectIds.length > 0) {
+                    const { data: subData } = await supabase.from('SubcontractorRecords')
+                        .select('*')
+                        .in('project_id', foremanProjectIds)
+                        .gte('date', days[0])
+                        .lte('date', days[6]);
+                    if (subData) subcontractorsData = subData;
+                }
+
+                generateWorkerReportExcel(workerName, weekPrefix, days, recordsData, projects, subcontractorsData);
             }
 
-            generateWorkerReportExcel(workerName, weekPrefix, days, recordsData, projects, subcontractorsData);
-
             workerOps.setExportModalWorker(null);
+            if (workerNames.length > 1) showToast(`${workerNames.length}名分のExcelを出力しました`, 'success');
 
         } catch (e) {
             console.error(e);
             showToast("出力処理中にエラーが発生しました。", 'error');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    // PDF出力
+    const exportWorkerReportPDF = async () => {
+        const modalVal = workerOps.exportModalWorker;
+        if (!modalVal || !exportWeekStart) return;
+        const workerNames = Array.isArray(modalVal) ? modalVal : [modalVal];
+        setIsLoading(true);
+        try {
+            const startDate = new Date(exportWeekStart);
+            const days = Array.from({ length: 7 }, (_, i) => {
+                const d = new Date(startDate);
+                d.setDate(d.getDate() + i);
+                return d.toISOString().split('T')[0];
+            });
+            const weekPrefix = exportWeekStart.replace(/-/g, '').slice(0, 8);
+
+            // 会社休日の取得
+            const { data: holidayData } = await supabase.from('CompanyHolidays').select('date');
+
+            for (const workerName of workerNames) {
+                const { data: recordsData } = await supabase.from('TaskRecords')
+                    .select('*, ProjectTasks(name, projectId)')
+                    .eq('worker_name', workerName)
+                    .gte('date', days[0])
+                    .lte('date', days[6]);
+
+                const foremanProjects = projects.filter(p => p.foreman_worker_id === workers.find(w => w.name === workerName)?.id);
+                let subcontractorsData = [];
+                if (foremanProjects.length > 0) {
+                    const { data: subData } = await supabase.from('SubcontractorRecords')
+                        .select('*')
+                        .in('project_id', foremanProjects.map(p => p.id))
+                        .gte('date', days[0])
+                        .lte('date', days[6]);
+                    if (subData) subcontractorsData = subData;
+                }
+
+                generateWorkerReportPDF(workerName, weekPrefix, days, recordsData, projects, subcontractorsData, holidayData || []);
+            }
+
+            workerOps.setExportModalWorker(null);
+            if (workerNames.length > 1) showToast(`${workerNames.length}名分のPDFを出力しました`, 'success');
+        } catch (e) {
+            console.error(e);
+            showToast('PDF出力中にエラーが発生しました。', 'error');
         } finally {
             setIsLoading(false);
         }
@@ -262,7 +291,7 @@ const App = () => {
 
     return (
         <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-900">
-            <div className="max-w-6xl mx-auto">
+            <div className={`${activeTab === 'assignment' ? 'max-w-none px-4' : 'max-w-6xl'} mx-auto`}>
                 <header className="mb-6">
                     <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
                         <div className="flex-1">
@@ -302,7 +331,7 @@ const App = () => {
                                 { key: 'master', label: '工事設定', Icon: Settings },
                                 { key: 'workers', label: '作業員', Icon: Users },
                                 { key: 'assignment', label: '配置表', Icon: Calendar },
-                                { key: 'settings', label: 'システム設定', Icon: Settings },
+                                { key: 'settings', label: '設定', Icon: Settings },
                                 { key: 'purchase_ledger', label: '材料', Icon: FileText },
                             ].map(({ key, label, Icon }) => (
                                 <button key={key} onClick={() => setActiveTab(key)} className={`px-4 py-2 rounded-md transition font-bold whitespace-nowrap flex items-center gap-1.5 ${activeTab === key ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 text-slate-600'}`}>
@@ -326,7 +355,7 @@ const App = () => {
                                     <div className="flex flex-wrap items-center gap-4 bg-white p-2 rounded-lg shadow-sm border border-slate-200">
                                         <div className="flex items-center gap-2 text-sm font-bold text-slate-600 md:border-r pr-4">
                                             <span className="text-slate-400">表示対象:</span>
-                                            {['予定', '施工中', '完了'].map(status => (
+                                            {['見積', '予定', '施工中', '完了'].map(status => (
                                                 <label key={status} className="flex items-center gap-1 cursor-pointer hover:bg-slate-50 px-1 rounded transition">
                                                     <input
                                                         type="checkbox"
@@ -430,8 +459,8 @@ const App = () => {
                                             className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-xl hover:-translate-y-1 hover:border-blue-300 transition-all cursor-pointer overflow-hidden flex flex-col h-full group"
                                         >
                                             <div className="p-5 border-b border-slate-100 flex-1 relative">
-                                                <div className={`absolute top-3 right-3 text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm border ${(proj.status || '予定') === '予定' ? 'bg-blue-50 text-blue-600 border-blue-200' : (proj.status || '予定') === '施工中' ? 'bg-green-50 text-green-600 border-green-200' : 'bg-slate-100 text-slate-500 border-slate-300'}`}>
-                                                    {proj.status || '予定'}
+                                                <div className={`absolute top-3 right-3 text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm border ${(proj.status || '見積') === '見積' ? 'bg-orange-50 text-orange-600 border-orange-200' : (proj.status || '見積') === '予定' ? 'bg-blue-50 text-blue-600 border-blue-200' : (proj.status || '見積') === '施工中' ? 'bg-green-50 text-green-600 border-green-200' : 'bg-slate-100 text-slate-500 border-slate-300'}`}>
+                                                    {proj.status || '見積'}
                                                 </div>
                                                 <h3 className="font-bold text-lg text-slate-800 line-clamp-2 leading-tight flex items-start group-hover:text-blue-700 transition-colors pr-12">
                                                     {proj.siteName}
@@ -512,6 +541,10 @@ const App = () => {
                             addSubcontractorRecord={projectOps.addSubcontractorRecord}
                             updateSubcontractorRecordField={projectOps.updateSubcontractorRecordField}
                             removeSubcontractorRecord={projectOps.removeSubcontractorRecord}
+                            // Deletion Modal Props
+                            isDeleteModalOpen={projectOps.isDeleteModalOpen}
+                            setIsDeleteModalOpen={projectOps.setIsDeleteModalOpen}
+                            confirmRemoveProject={projectOps.confirmRemoveProject}
                         />
                     )}
 
@@ -532,6 +565,8 @@ const App = () => {
                         <SystemSettingsTab
                             hourlyWage={hourlyWage}
                             setHourlyWage={setHourlyWage}
+                            geminiApiKey={geminiApiKey}
+                            setGeminiApiKey={setGeminiApiKey}
                             isLoading={isLoading}
                             setIsLoading={setIsLoading}
                             workers={workers}
@@ -550,6 +585,7 @@ const App = () => {
                             allProjectsSummary={dashboardStats.allProjectsSummary || []}
                             setActiveTab={setActiveTab}
                             setActiveProjectId={setActiveProjectId}
+                            setProjects={setProjects}
                         />
                     )}
                 </main>
@@ -557,11 +593,13 @@ const App = () => {
                 {/* 作業員別日報出力モーダル */}
                 <ExportReportModal
                     isOpen={!!workerOps.exportModalWorker}
-                    workerName={workerOps.exportModalWorker}
+                    workerName={typeof workerOps.exportModalWorker === 'string' ? workerOps.exportModalWorker : null}
+                    workerNames={Array.isArray(workerOps.exportModalWorker) ? workerOps.exportModalWorker : null}
                     exportWeekStart={exportWeekStart}
                     setExportWeekStart={setExportWeekStart}
                     onClose={() => workerOps.setExportModalWorker(null)}
                     onExport={exportWorkerReport}
+                    onExportPDF={exportWorkerReportPDF}
                     isLoading={isLoading}
                 />
 
@@ -576,6 +614,7 @@ const App = () => {
                         setImportModalInfo(null);
                         setAliasName("");
                     }}
+                    onOptimize={handleOptimizeRequest}
                 />
 
                 {/* 作業員詳細編集モーダル */}

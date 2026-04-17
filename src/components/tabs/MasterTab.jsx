@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { Settings, Loader2, Upload, Trash, PlusCircle, Trash2, Clipboard, Table as TableIcon, ExternalLink } from 'lucide-react';
+import { DEFAULT_COLORS } from '../../utils/constants';
 import DashboardTab from './DashboardTab';
 import InputTab from './InputTab';
+import ConfirmModal from '../ConfirmModal';
 
 const MasterTab = ({
     activeProject,
@@ -32,7 +34,11 @@ const MasterTab = ({
     setFocusedWorkerRow,
     addSubcontractorRecord,
     updateSubcontractorRecordField,
-    removeSubcontractorRecord
+    removeSubcontractorRecord,
+    // Deletion Modal Props
+    isDeleteModalOpen,
+    setIsDeleteModalOpen,
+    confirmRemoveProject
 }) => {
     const [subActiveTab, setSubActiveTab] = useState('settings');
 
@@ -59,7 +65,7 @@ const MasterTab = ({
                     </button>
                 ))}
                 <a
-                    href="http://localhost:5173/?mode=worker"
+                    href="/?mode=worker"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all text-slate-500 hover:bg-slate-50 hover:text-slate-700"
@@ -107,10 +113,11 @@ const MasterTab = ({
                                 <div>
                                     <label className="text-xs font-bold text-blue-600 block mb-2 uppercase">現場ステータス</label>
                                     <select
-                                        value={activeProject.status || '予定'}
+                                        value={activeProject.status || '見積'}
                                         onChange={(e) => handleProjectStatusChange(activeProject.id, e.target.value)}
                                         className="w-full bg-white p-3 rounded-lg border-2 border-blue-200 font-bold text-lg outline-none focus:border-blue-500"
                                     >
+                                        <option value="見積">見積</option>
                                         <option value="予定">予定</option>
                                         <option value="施工中">施工中</option>
                                         <option value="完了">完了</option>
@@ -137,7 +144,6 @@ const MasterTab = ({
                                         type="date"
                                         value={activeProject.startDate || ''}
                                         onChange={(e) => {
-                                            updateLayer(p => ({ startDate: e.target.value || null }));
                                             handleProjectDateChange(activeProject.id, 'startDate', e.target.value || null);
                                         }}
                                         className="w-full bg-white p-3 rounded-lg border-2 border-blue-200 font-bold text-lg outline-none focus:border-blue-500"
@@ -149,7 +155,6 @@ const MasterTab = ({
                                         type="date"
                                         value={activeProject.endDate || ''}
                                         onChange={(e) => {
-                                            updateLayer(p => ({ endDate: e.target.value || null }));
                                             handleProjectDateChange(activeProject.id, 'endDate', e.target.value || null);
                                         }}
                                         className="w-full bg-white p-3 rounded-lg border-2 border-blue-200 font-bold text-lg outline-none focus:border-blue-500"
@@ -158,7 +163,7 @@ const MasterTab = ({
                                 <div>
                                     <label className="text-xs font-bold text-blue-600 block mb-2 uppercase">配置表カラー</label>
                                     <div className="bg-white p-3 rounded-lg border-2 border-blue-200 flex items-center gap-2 flex-wrap">
-                                        {['#FF6B6B','#4ECDC4','#45B7D1','#96CEB4','#FFEAA7','#DDA0DD','#F7DC6F','#BB8FCE','#F0B27A'].map(c => (
+                                        {DEFAULT_COLORS.map(c => (
                                             <button
                                                 key={c}
                                                 onClick={() => {
@@ -268,9 +273,16 @@ const MasterTab = ({
                     />
                 )}
             </div>
+
+            <ConfirmModal
+                isOpen={isDeleteModalOpen}
+                onClose={() => setIsDeleteModalOpen(false)}
+                onConfirm={confirmRemoveProject}
+                title="現場の削除"
+                message={`「${activeProject.siteName || '無題の現場'}」のデータをすべて削除しますか？\nこの操作は取り消せません。`}
+            />
         </div>
     );
 };
 
 export default React.memo(MasterTab);
-

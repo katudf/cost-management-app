@@ -7,7 +7,7 @@ export default defineConfig({
     plugins: [
         react(),
         nodePolyfills({
-            include: ['stream'], // xlsx-js-style needs stream
+            include: ['stream', 'util'], // xlsx-js-style needs stream and util
             globals: {
                 Buffer: true,
             },

@@ -5,6 +5,7 @@ export function useSupabaseData(showToast) {
     const [projects, setProjects] = useState([]);
     const [workers, setWorkers] = useState([]);
     const [hourlyWage, setHourlyWage] = useState(3500);
+    const [geminiApiKey, setGeminiApiKey] = useState(import.meta.env.VITE_GEMINI_API_KEY || '');
     const [isLoading, setIsLoading] = useState(true);
 
     const fetchAllData = useCallback(async (forceActiveId = null, setActiveProjectId) => {
@@ -93,8 +94,8 @@ export function useSupabaseData(showToast) {
 
             // ActiveProjectの復元
             if (loadedProjects.length > 0 && setActiveProjectId) {
-                if (forceActiveId && loadedProjects.some(lp => lp.id === forceActiveId)) {
-                    setActiveProjectId(forceActiveId);
+                if (forceActiveId && loadedProjects.some(lp => lp.id === Number(forceActiveId))) {
+                    setActiveProjectId(Number(forceActiveId));
                 } else {
                     const savedId = localStorage.getItem('cost-app-activeProjectId');
                     if (savedId && loadedProjects.some(lp => lp.id === Number(JSON.parse(savedId)))) {
@@ -121,6 +122,8 @@ export function useSupabaseData(showToast) {
         setWorkers,
         hourlyWage,
         setHourlyWage,
+        geminiApiKey,
+        setGeminiApiKey,
         isLoading,
         setIsLoading,
         fetchAllData
