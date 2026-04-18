@@ -1,6 +1,6 @@
 import React from 'react';
 import { User, Edit3, Trash2 } from 'lucide-react';
-import { calculateAge } from '../utils/dateUtils';
+import { calculateAge, calculateTenure } from '../utils/dateUtils';
 
 const WorkerDetailsModal = ({ isOpen, worker, onClose, onEdit, onDelete }) => {
     if (!isOpen || !worker) return null;
@@ -32,25 +32,35 @@ const WorkerDetailsModal = ({ isOpen, worker, onClose, onEdit, onDelete }) => {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                     <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">入社日</label>
+                        <label className="block text-xs font-bold text-slate-500 mb-1">生年月日</label>
                         <div className="w-full border border-transparent p-2.5 rounded-lg text-sm text-slate-700 bg-slate-50">
-                            {worker.hireDate ? worker.hireDate.replace(/-/g, '/') : '未設定'}
+                            {worker.birthDate ? `${worker.birthDate.replace(/-/g, '/')} (${calculateAge(worker.birthDate)}歳)` : '未設定'}
                         </div>
                     </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-1">入社日</label>
+                        <div className="w-full border border-transparent p-2.5 rounded-lg text-sm text-slate-700 bg-slate-50">
+                            {worker.hireDate ? `${worker.hireDate.replace(/-/g, '/')} (勤続: ${calculateTenure(worker.hireDate, worker.resignation_date)})` : '未設定'}
+                        </div>
+                    </div>
+                </div>
+
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                     <div>
                         <label className="block text-xs font-bold text-slate-500 mb-1">退社日</label>
                         <div className={`w-full border border-transparent p-2.5 rounded-lg text-sm font-bold bg-slate-50 ${worker.resignation_date ? 'text-red-600' : 'text-slate-400'}`}>
                             {worker.resignation_date ? worker.resignation_date.replace(/-/g, '/') : '未設定'}
                         </div>
                     </div>
-                </div>
-
-                <div className="mb-4">
-                    <label className="block text-xs font-bold text-slate-500 mb-1">連絡先 (電話番号等)</label>
-                    <div className="w-full border border-transparent p-2.5 rounded-lg text-sm text-slate-700 bg-slate-50">
-                        {worker.contactInfo || '未設定'}
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-1">連絡先 (電話番号等)</label>
+                        <div className="w-full border border-transparent p-2.5 rounded-lg text-sm text-slate-700 bg-slate-50">
+                            {worker.contactInfo || '未設定'}
+                        </div>
                     </div>
                 </div>
+
 
                 <div className="mb-4">
                     <label className="block text-xs font-bold text-slate-500 mb-1">住所</label>

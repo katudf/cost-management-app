@@ -10,6 +10,34 @@ export const calculateAge = (birthDateString) => {
     return age;
 };
 
+export const calculateTenure = (hireDateString, resignationDateString) => {
+    if (!hireDateString) return '-';
+    const hireDate = new Date(hireDateString);
+    const endDate = resignationDateString ? new Date(resignationDateString) : new Date();
+    
+    let years = endDate.getFullYear() - hireDate.getFullYear();
+    let months = endDate.getMonth() - hireDate.getMonth();
+    
+    if (months < 0 || (months === 0 && endDate.getDate() < hireDate.getDate())) {
+        years--;
+        months += 12;
+    }
+    
+    // 日単位の調整
+    if (endDate.getDate() < hireDate.getDate()) {
+        months--;
+        if (months < 0) {
+            years--;
+            months = 11;
+        }
+    }
+
+    if (years === 0) return `${months}ヶ月`;
+    if (months === 0) return `${years}年`;
+    return `${years}年${months}ヶ月`;
+};
+
+
 // === 日付ヘルパー関数 (AssignmentChartTab / ScheduleViewApp 共通) ===
 
 export const toDateStr = (d) => {
