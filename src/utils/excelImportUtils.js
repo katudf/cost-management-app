@@ -16,7 +16,18 @@ export const parseExcelForImport = (file, hourlyWage) => {
                 const workbook = xlsx.read(data, { type: 'binary' });
 
                 let extractedProjectName = null;
+                let extractedCustomerName = null;
                 const newMasterData = [];
+
+                // 最初のシートから顧客名を取得 (D13)
+                const firstSheetName = workbook.SheetNames[0];
+                if (firstSheetName) {
+                    const firstSheet = workbook.Sheets[firstSheetName];
+                    const customerCell = firstSheet['D13'];
+                    if (customerCell && customerCell.v) {
+                        extractedCustomerName = String(customerCell.v).trim();
+                    }
+                }
 
                 workbook.SheetNames.forEach(sheetName => {
                     const sheet = workbook.Sheets[sheetName];
@@ -65,7 +76,7 @@ export const parseExcelForImport = (file, hourlyWage) => {
                     });
                 });
 
-                resolve({ projectName: extractedProjectName, masterData: newMasterData });
+                resolve({ projectName: extractedProjectName, customerName: extractedCustomerName, masterData: newMasterData });
             } catch (error) {
                 console.error('Excelパースエラー:', error);
                 reject(error);

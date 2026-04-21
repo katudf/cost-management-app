@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
-import { Settings, Loader2, Upload, Trash, PlusCircle, Trash2, Clipboard, Table as TableIcon, ExternalLink } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Settings, Loader2, Upload, Trash, PlusCircle, Trash2, Clipboard, Table as TableIcon, ExternalLink, PauseCircle, X } from 'lucide-react';
 import { DEFAULT_COLORS } from '../../utils/constants';
+import { supabase } from '../../lib/supabase';
+import { useToast } from '../Toast';
 import DashboardTab from './DashboardTab';
 import InputTab from './InputTab';
 import ConfirmModal from '../ConfirmModal';
@@ -17,6 +19,7 @@ const MasterTab = ({
     handleForemanChange,
     handleProjectDateChange,
     workers,
+    customers = [],
     updateMasterItemLocal,
     saveMasterItemDB,
     removeMasterItem,
@@ -41,6 +44,65 @@ const MasterTab = ({
     confirmRemoveProject
 }) => {
     const [subActiveTab, setSubActiveTab] = useState('settings');
+    const { showToast } = useToast();
+    const [suspensions, setSuspensions] = useState([]);
+    const [newSuspension, setNewSuspension] = useState({ start_date: '', end_date: '', reason: '' });
+
+    // 休工期間データの取得
+    const fetchSuspensions = useCallback(async () => {
+        if (!activeProject?.id) return;
+        const { data, error } = await supabase
+            .from('ProjectSuspensions')
+            .select('*')
+            .eq('project_id', activeProject.id)
+            .order('start_date', { ascending: true });
+        if (!error) setSuspensions(data || []);
+    }, [activeProject?.id]);
+
+    useEffect(() => {
+        fetchSuspensions();
+    }, [fetchSuspensions]);
+
+    // 休工期間の追加
+    const addSuspension = async () => {
+        if (!newSuspension.start_date || !newSuspension.end_date) {
+            showToast('開始日と終了日を入力してください', 'error');
+            return;
+        }
+        if (newSuspension.start_date > newSuspension.end_date) {
+            showToast('終了日は開始日以降にしてください', 'error');
+            return;
+        }
+        const { error } = await supabase
+            .from('ProjectSuspensions')
+            .insert({
+                project_id: activeProject.id,
+                start_date: newSuspension.start_date,
+                end_date: newSuspension.end_date,
+                reason: newSuspension.reason || ''
+            });
+        if (error) {
+            showToast('休工期間の追加に失敗しました', 'error');
+        } else {
+            showToast('休工期間を追加しました', 'success');
+            setNewSuspension({ start_date: '', end_date: '', reason: '' });
+            fetchSuspensions();
+        }
+    };
+
+    // 休工期間の削除
+    const removeSuspension = async (id) => {
+        const { error } = await supabase
+            .from('ProjectSuspensions')
+            .delete()
+            .eq('id', id);
+        if (error) {
+            showToast('削除に失敗しました', 'error');
+        } else {
+            showToast('休工期間を削除しました', 'success');
+            fetchSuspensions();
+        }
+    };
 
     return (
         <div className="flex flex-col h-full bg-slate-50">
@@ -81,20 +143,6 @@ const MasterTab = ({
                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
                             <h2 className="text-lg font-bold flex items-center gap-2 text-slate-700"><Settings size={20} /> 見積仕様・目標工数設定</h2>
                             <div className="flex flex-wrap items-center gap-2">
-                                <input
-                                    type="file"
-                                    accept=".xlsx, .xls"
-                                    onChange={handleExcelImport}
-                                    ref={fileInputRef}
-                                    className="hidden"
-                                    id="excel-upload"
-                                />
-                                <label
-                                    htmlFor="excel-upload"
-                                    className="cursor-pointer text-blue-600 bg-blue-50 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-blue-100 transition border border-blue-200"
-                                >
-                                    {isLoading ? <Loader2 className="animate-spin w-4 h-4" /> : <Upload size={16} />} Excelからインポート
-                                </label>
                                 <button onClick={() => removeProject(activeProject.id)} className="text-red-500 bg-red-50 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-red-100 transition border border-red-200">
                                     <Trash size={16} /> 現場を削除
                                 </button>
@@ -137,7 +185,33 @@ const MasterTab = ({
                                     </select>
                                 </div>
                             </div>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                <div>
+                                    <label className="text-xs font-bold text-blue-600 block mb-2 uppercase">顧客名</label>
+                                    <select
+                                        value={activeProject.customerId || ''}
+                                        onChange={(e) => handleProjectDateChange(activeProject.id, 'customerId', e.target.value ? Number(e.target.value) : null)}
+                                        className="w-full bg-white p-3 rounded-lg border-2 border-blue-200 font-bold text-lg outline-none focus:border-blue-500"
+                                    >
+                                        <option value="">(未設定）</option>
+                                        {customers.map(c => (
+                                            <option key={c.id} value={c.id}>{c.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="flex items-end pb-3">
+                                    <label className="flex items-center gap-2 cursor-pointer group">
+                                        <input
+                                            type="checkbox"
+                                            checked={activeProject.is_prime_contractor || false}
+                                            onChange={(e) => handleProjectDateChange(activeProject.id, 'is_prime_contractor', e.target.checked)}
+                                            className="w-5 h-5 rounded border-2 border-blue-200 text-blue-600 focus:ring-blue-500 transition cursor-pointer"
+                                        />
+                                        <span className="text-sm font-bold text-slate-700 group-hover:text-blue-600 transition">元請</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
                                     <label className="text-xs font-bold text-blue-600 block mb-2 uppercase">工期 開始日</label>
                                     <input
@@ -160,26 +234,69 @@ const MasterTab = ({
                                         className="w-full bg-white p-3 rounded-lg border-2 border-blue-200 font-bold text-lg outline-none focus:border-blue-500"
                                     />
                                 </div>
-                                <div>
-                                    <label className="text-xs font-bold text-blue-600 block mb-2 uppercase">配置表カラー</label>
-                                    <div className="bg-white p-3 rounded-lg border-2 border-blue-200 flex items-center gap-2 flex-wrap">
-                                        {DEFAULT_COLORS.map(c => (
-                                            <button
-                                                key={c}
-                                                onClick={() => {
-                                                    updateLayer(p => ({ bar_color: c }));
-                                                    handleProjectDateChange(activeProject.id, 'bar_color', c);
-                                                }}
-                                                className="w-7 h-7 rounded-md transition-all hover:scale-110"
-                                                style={{
-                                                    backgroundColor: c,
-                                                    outline: activeProject.bar_color === c ? '3px solid #3B82F6' : '2px solid transparent',
-                                                    outlineOffset: '1px'
-                                                }}
-                                                title={c}
-                                            />
+                            </div>
+
+                            {/* 休工期間セクション */}
+                            <div className="mt-6 pt-4 border-t-2 border-blue-100">
+                                <h3 className="text-xs font-bold text-orange-600 mb-3 uppercase flex items-center gap-1.5">
+                                    <PauseCircle size={14} /> 休工期間
+                                </h3>
+                                {suspensions.length > 0 && (
+                                    <div className="space-y-2 mb-4">
+                                        {suspensions.map(s => (
+                                            <div key={s.id} className="flex items-center gap-3 bg-orange-50 p-3 rounded-lg border border-orange-200">
+                                                <div className="flex-1 flex items-center gap-2 text-sm font-bold text-orange-800">
+                                                    <span>{s.start_date?.replace(/-/g, '/')}</span>
+                                                    <span className="text-orange-400">〜</span>
+                                                    <span>{s.end_date?.replace(/-/g, '/')}</span>
+                                                    {s.reason && <span className="text-xs text-orange-500 font-normal ml-2">({s.reason})</span>}
+                                                </div>
+                                                <button
+                                                    onClick={() => removeSuspension(s.id)}
+                                                    className="p-1 text-orange-300 hover:text-red-500 hover:bg-red-50 rounded transition"
+                                                    title="この休工期間を削除"
+                                                >
+                                                    <X size={16} />
+                                                </button>
+                                            </div>
                                         ))}
                                     </div>
+                                )}
+                                <div className="flex items-end gap-3">
+                                    <div>
+                                        <label className="text-[10px] font-bold text-orange-500 block mb-1">開始日</label>
+                                        <input
+                                            type="date"
+                                            value={newSuspension.start_date}
+                                            onChange={(e) => setNewSuspension(prev => ({ ...prev, start_date: e.target.value }))}
+                                            className="bg-white p-2 rounded-lg border-2 border-orange-200 text-sm font-bold outline-none focus:border-orange-400"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] font-bold text-orange-500 block mb-1">終了日</label>
+                                        <input
+                                            type="date"
+                                            value={newSuspension.end_date}
+                                            onChange={(e) => setNewSuspension(prev => ({ ...prev, end_date: e.target.value }))}
+                                            className="bg-white p-2 rounded-lg border-2 border-orange-200 text-sm font-bold outline-none focus:border-orange-400"
+                                        />
+                                    </div>
+                                    <div className="flex-1">
+                                        <label className="text-[10px] font-bold text-orange-500 block mb-1">理由（任意）</label>
+                                        <input
+                                            type="text"
+                                            value={newSuspension.reason}
+                                            onChange={(e) => setNewSuspension(prev => ({ ...prev, reason: e.target.value }))}
+                                            placeholder="例: 他現場対応"
+                                            className="w-full bg-white p-2 rounded-lg border-2 border-orange-200 text-sm outline-none focus:border-orange-400"
+                                        />
+                                    </div>
+                                    <button
+                                        onClick={addSuspension}
+                                        className="px-4 py-2 bg-orange-500 text-white rounded-lg font-bold text-sm hover:bg-orange-600 transition flex items-center gap-1 whitespace-nowrap"
+                                    >
+                                        <PlusCircle size={14} /> 追加
+                                    </button>
                                 </div>
                             </div>
                         </div>

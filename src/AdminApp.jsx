@@ -5,7 +5,7 @@ import { useWorkers } from './hooks/useWorkers';
 import { useDashboardStats } from './hooks/useDashboardStats';
 
 import { useToast } from './components/Toast';
-import { Table, Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar } from 'lucide-react';
+import { Table, Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, Upload } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { DEFAULT_MASTER_DATA } from './utils/constants';
 import { calculateAge } from './utils/dateUtils';
@@ -33,6 +33,8 @@ const App = () => {
 
 
     const [activeProjectId, setActiveProjectId] = useState(null);
+    const [dashboardPages, setDashboardPages] = useState({ 見積: 1, 予定: 1, 施工中: 1, 完了: 1 });
+
     const [exportWeekStart, setExportWeekStart] = useState(() => {
         const today = new Date();
         const day = today.getDay();
@@ -40,11 +42,21 @@ const App = () => {
         return new Date(today.setDate(diff)).toISOString().split('T')[0];
     });
 
-    const { projects, setProjects, workers, setWorkers, hourlyWage, setHourlyWage, geminiApiKey, setGeminiApiKey, isLoading, setIsLoading, fetchAllData } = useSupabaseData(showToast);
+    const { projects, setProjects, workers, setWorkers, customers, setCustomers, hourlyWage, setHourlyWage, geminiApiKey, setGeminiApiKey, isLoading, setIsLoading, fetchAllData } = useSupabaseData(showToast);
 
     const workerOps = useWorkers({ workers, setWorkers, showToast });
     const projectOps = useProjects({ projects, setProjects, activeProjectId, setActiveProjectId, showToast, workers });
     const dashboardStats = useDashboardStats({ projects, activeProject: projectOps.activeProject, hourlyWage });
+
+    const groupedProjects = useMemo(() => {
+        const groups = { 見積: [], 予定: [], 施工中: [], 完了: [] };
+        (dashboardStats.displayProjects || []).forEach(p => {
+            const st = p.status || '見積';
+            if (groups[st]) groups[st].push(p);
+        });
+        return groups;
+    }, [dashboardStats.displayProjects]);
+
 
     useEffect(() => {
         fetchAllData(null, setActiveProjectId);
@@ -64,10 +76,11 @@ const App = () => {
         if (!file) return;
 
         try {
-            const { projectName: extractedProjectName, masterData: newMasterData } = await parseExcelForImport(file, hourlyWage);
+            const parseRes = await parseExcelForImport(file, hourlyWage);
+            const newMasterData = parseRes.masterData;
 
             if (newMasterData.length > 0) {
-                const finalSiteName = extractedProjectName || file.name.replace(/\.[^/.]+$/, "");
+                const finalSiteName = parseRes.projectName || file.name.replace(/\.[^/.]+$/, "");
                 const duplicateProject = projects.find(p => p.siteName === finalSiteName);
 
                 setImportModalInfo({
@@ -75,6 +88,7 @@ const App = () => {
                     data: newMasterData,
                     count: newMasterData.length,
                     fileName: finalSiteName,
+                    customerName: parseRes.customerName,
                     duplicateId: duplicateProject?.id,
                     aiOptimized: false,
                     canOptimize: !!geminiApiKey,
@@ -125,28 +139,45 @@ const App = () => {
             let siteNameToUse = info.fileName || info.finalSiteName || 'エクセル取込現場';
             const nextOrder = projects.length > 0 ? Math.max(...projects.map(p => p.order || 0)) + 1 : 0;
 
+            // 顧客の登録・紐付け処理
+            let customerId = null;
+            if (info.customerName) {
+                const { data: existingCustomer } = await supabase.from('Customers').select('id').eq('name', info.customerName).maybeSingle();
+                if (existingCustomer) {
+                    customerId = existingCustomer.id;
+                } else {
+                    const { data: newCustomer, error: insertError } = await supabase.from('Customers').insert([{ name: info.customerName }]).select();
+                    if (!insertError && newCustomer && newCustomer.length > 0) {
+                        customerId = newCustomer[0].id;
+                    }
+                }
+            }
+
             if (choice === 'create_new') {
-                const { data, error } = await supabase.from('Projects').insert([{ name: siteNameToUse, order: nextOrder, status: '見積' }]).select();
+                const { data, error } = await supabase.from('Projects').insert([{ name: siteNameToUse, order: nextOrder, status: '見積', customerId }]).select();
                 if (error) throw error;
                 targetProjectId = data[0].id;
             } else if (choice === 'create_alias') {
-                const { data, error } = await supabase.from('Projects').insert([{ name: aliasName || 'エクセル取込現場', order: nextOrder, status: '見積' }]).select();
+                const { data, error } = await supabase.from('Projects').insert([{ name: aliasName || 'エクセル取込現場', order: nextOrder, status: '見積', customerId }]).select();
                 if (error) throw error;
                 targetProjectId = data[0].id;
             } else if (choice === 'overwrite' || choice === 'overwrite_empty') {
                 targetProjectId = directParams ? directParams.projId : activeProjectId;
                 if (!targetProjectId) {
-                    const { data, error } = await supabase.from('Projects').insert([{ name: siteNameToUse, order: nextOrder, status: '見積' }]).select();
+                    const { data, error } = await supabase.from('Projects').insert([{ name: siteNameToUse, order: nextOrder, status: '見積', customerId }]).select();
                     if (error) throw error;
                     targetProjectId = data[0].id;
                 } else {
                     await supabase.from('ProjectTasks').delete().eq('projectId', targetProjectId);
                     if (choice === 'overwrite_empty' || siteNameToUse !== "エクセル取込現場") {
-                        await supabase.from('Projects').update({ name: siteNameToUse }).eq('id', targetProjectId);
+                        await supabase.from('Projects').update({ name: siteNameToUse, customerId }).eq('id', targetProjectId);
+                    } else if (customerId) {
+                        await supabase.from('Projects').update({ customerId }).eq('id', targetProjectId);
                     }
                 }
             } else if (choice === 'overwrite_duplicate') {
                 targetProjectId = info.duplicateId;
+                await supabase.from('Projects').update({ customerId }).eq('id', targetProjectId);
                 await supabase.from('ProjectTasks').delete().eq('projectId', targetProjectId);
             }
 
@@ -291,7 +322,7 @@ const App = () => {
 
     return (
         <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-900">
-            <div className={`${activeTab === 'assignment' ? 'max-w-none px-4' : 'max-w-6xl'} mx-auto`}>
+            <div className={`${activeTab === 'assignment' || activeTab === 'dashboard' ? 'max-w-none px-4 xl:px-8' : 'max-w-6xl'} mx-auto`}>
                 <header className="mb-6">
                     <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
                         <div className="flex-1">
@@ -318,10 +349,28 @@ const App = () => {
                                     </div>
                                 )}
                                 {activeTab === 'master' && (
-                                    <button onClick={projectOps.addNewProject} title="新しい現場を追加" className="px-3 py-2 text-slate-500 flex items-center gap-2 hover:text-blue-600 hover:bg-white rounded-lg transition shadow-sm border border-transparent hover:border-blue-200 text-sm font-bold">
-                                        <PlusCircle size={18} />
-                                        新しい現場を追加
-                                    </button>
+                                    <div className="flex items-center gap-1">
+                                        <button onClick={projectOps.addNewProject} title="新しい現場を追加" className="px-3 py-2 text-slate-500 flex items-center gap-2 hover:text-blue-600 hover:bg-white rounded-lg transition shadow-sm border border-transparent hover:border-blue-200 text-sm font-bold">
+                                            <PlusCircle size={18} />
+                                            新しい現場を追加
+                                        </button>
+                                        <div className="w-px h-6 bg-slate-200 mx-1"></div>
+                                        <input
+                                            type="file"
+                                            accept=".xlsx, .xls"
+                                            onChange={handleExcelImport}
+                                            ref={fileInputRef}
+                                            className="hidden"
+                                            id="excel-upload"
+                                        />
+                                        <label
+                                            htmlFor="excel-upload"
+                                            className="cursor-pointer px-3 py-2 text-slate-500 flex items-center gap-2 hover:text-blue-600 hover:bg-white rounded-lg transition shadow-sm border border-transparent hover:border-blue-200 text-sm font-bold"
+                                        >
+                                            {isLoading ? <Loader2 className="animate-spin w-4 h-4" /> : <Upload size={18} />}
+                                            Excelからインポート
+                                        </label>
+                                    </div>
                                 )}
                             </div>
                         </div>
@@ -353,89 +402,19 @@ const App = () => {
 
                                 {projects.length > 0 && (
                                     <div className="flex flex-wrap items-center gap-4 bg-white p-2 rounded-lg shadow-sm border border-slate-200">
-                                        <div className="flex items-center gap-2 text-sm font-bold text-slate-600 md:border-r pr-4">
-                                            <span className="text-slate-400">表示対象:</span>
-                                            {['見積', '予定', '施工中', '完了'].map(status => (
-                                                <label key={status} className="flex items-center gap-1 cursor-pointer hover:bg-slate-50 px-1 rounded transition">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={dashboardStats.filterStatuses.includes(status)}
-                                                        onChange={() => dashboardStats.toggleFilterStatus(status)}
-                                                        className="w-4 h-4 accent-blue-600 cursor-pointer"
-                                                    /> {status}
-                                                </label>
-                                            ))}
-                                        </div>
-                                        <div className="flex items-center gap-2 text-sm font-bold text-slate-600">
-                                            <span className="text-slate-400">並び順:</span>
-                                            <select
-                                                value={dashboardStats.sortOption}
-                                                onChange={(e) => dashboardStats.setSortOption(e.target.value)}
-                                                className="bg-slate-50 border border-slate-200 rounded p-1 outline-none focus:border-blue-400 cursor-pointer font-bold text-slate-700"
-                                            >
-                                                <option value="created_desc">登録が新しい順</option>
-                                                <option value="created_asc">登録が古い順</option>
-                                                <option value="progress_desc">進捗率が高い順</option>
-                                                <option value="progress_asc">進捗率が低い順</option>
-                                                <option value="profit_desc">予測粗利が高い順</option>
-                                                <option value="profit_asc">予測粗利が低い順</option>
-                                            </select>
+                                        <div className="relative group w-full md:w-64">
+                                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 group-focus-within:text-blue-500 transition-colors" />
+                                            <input
+                                                type="text"
+                                                placeholder="工事名で検索..."
+                                                className="pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-50 outline-none w-full font-bold text-slate-700 transition-all"
+                                                value={dashboardStats.searchQuery}
+                                                onChange={(e) => dashboardStats.setSearchQuery(e.target.value)}
+                                            />
                                         </div>
                                     </div>
                                 )}
                             </div>
-
-                            {/* 全体サマリー統計 (コメントアウト中)
-                            {projects.length > 0 && (() => {
-                                const activeProjects = dashboardStats.allProjectsSummary.filter(p => (p.status || '予定') === '施工中');
-                                const plannedCount = dashboardStats.allProjectsSummary.filter(p => (p.status || '予定') === '予定').length;
-                                const completedCount = dashboardStats.allProjectsSummary.filter(p => (p.status || '予定') === '完了').length;
-                                const totalProfit = activeProjects.reduce((sum, p) => sum + (p.predictedProfitLoss || 0), 0);
-                                const totalActual = activeProjects.reduce((sum, p) => sum + (p.totalActual || 0), 0);
-                                const totalTarget = activeProjects.reduce((sum, p) => sum + (p.totalTarget || 0), 0);
-                                return (
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                                        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm flex items-center gap-4">
-                                            <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center">
-                                                <FolderGit2 className="text-blue-600" size={24} />
-                                            </div>
-                                            <div>
-                                                <div className="text-xs font-bold text-slate-400 mb-1">工事件数</div>
-                                                <div className="flex items-center gap-3 text-sm font-bold">
-                                                    <span className="text-green-600">施工中 {activeProjects.length}</span>
-                                                    <span className="text-blue-500">予定 {plannedCount}</span>
-                                                    <span className="text-slate-400">完了 {completedCount}</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm flex items-center gap-4">
-                                            <div className={`w-12 h-12 rounded-xl ${totalProfit >= 0 ? 'bg-green-100' : 'bg-red-100'} flex items-center justify-center`}>
-                                                <DollarSign className={totalProfit >= 0 ? 'text-green-600' : 'text-red-600'} size={24} />
-                                            </div>
-                                            <div>
-                                                <div className="text-xs font-bold text-slate-400 mb-1">施工中の予測粗利合計</div>
-                                                <div className={`text-xl font-black ${totalProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                                    ¥{Math.abs(Math.round(totalProfit)).toLocaleString()}
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm flex items-center gap-4">
-                                            <div className="w-12 h-12 rounded-xl bg-indigo-100 flex items-center justify-center">
-                                                <BarChart3 className="text-indigo-600" size={24} />
-                                            </div>
-                                            <div>
-                                                <div className="text-xs font-bold text-slate-400 mb-1">施工中 総消化工数 / 目標</div>
-                                                <div className="text-lg font-black text-slate-700">
-                                                    {totalActual.toFixed(1)}<span className="text-xs font-normal text-slate-400">h</span>
-                                                    <span className="text-slate-300 mx-1">/</span>
-                                                    {totalTarget.toFixed(1)}<span className="text-xs font-normal text-slate-400">h</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                );
-                            })()}
-                            */}
 
                             {projects.length === 0 ? (
                                 <div className="text-center py-20 bg-white rounded-xl border border-dashed border-slate-300">
@@ -445,64 +424,105 @@ const App = () => {
                                         <PlusCircle size={20} /> 新しい現場を作成
                                     </button>
                                 </div>
+                            ) : dashboardStats.displayProjects.length === 0 ? (
+                                <div className="text-center py-10 bg-white rounded-xl border border-dashed border-slate-300 text-slate-400 font-bold">該当する条件の現場がありません。</div>
                             ) : (
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                    {dashboardStats.displayProjects.length === 0 ? (
-                                        <div className="col-span-full text-center py-10 bg-white rounded-xl border border-dashed border-slate-300 text-slate-400 font-bold">該当する条件の現場がありません。</div>
-                                    ) : dashboardStats.displayProjects.map(proj => (
-                                        <div
-                                            key={proj.id}
-                                            onClick={() => {
-                                                setActiveProjectId(proj.id);
-                                                setActiveTab('master');
-                                            }}
-                                            className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-xl hover:-translate-y-1 hover:border-blue-300 transition-all cursor-pointer overflow-hidden flex flex-col h-full group"
-                                        >
-                                            <div className="p-5 border-b border-slate-100 flex-1 relative">
-                                                <div className={`absolute top-3 right-3 text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm border ${(proj.status || '見積') === '見積' ? 'bg-orange-50 text-orange-600 border-orange-200' : (proj.status || '見積') === '予定' ? 'bg-blue-50 text-blue-600 border-blue-200' : (proj.status || '見積') === '施工中' ? 'bg-green-50 text-green-600 border-green-200' : 'bg-slate-100 text-slate-500 border-slate-300'}`}>
-                                                    {proj.status || '見積'}
-                                                </div>
-                                                <h3 className="font-bold text-lg text-slate-800 line-clamp-2 leading-tight flex items-start group-hover:text-blue-700 transition-colors pr-12">
-                                                    {proj.siteName}
-                                                </h3>
-                                                <div className="mt-2 flex items-center gap-1 text-sm text-slate-500 font-medium">
-                                                    <User size={14} className="text-slate-400" />
-                                                    職長: {
-                                                        proj.foreman_worker_id
-                                                            ? (workers.find(w => w.id === proj.foreman_worker_id)?.name || '未設定')
-                                                            : '未設定'
-                                                    }
-                                                </div>
-                                            </div>
-                                            <div className="p-5 flex flex-col gap-4 bg-slate-50">
-                                                <div>
-                                                    <div className="flex justify-between text-xs font-bold text-slate-500 mb-1">
-                                                        <span>全体進捗</span>
-                                                        <span className="text-blue-600">{proj.overallProgress}%</span>
-                                                    </div>
-                                                    <div className="h-2 w-full bg-slate-200 rounded-full overflow-hidden">
-                                                        <div className="h-full bg-blue-500 rounded-full" style={{ width: `${Math.min(100, Math.max(0, proj.overallProgress))}%` }}></div>
-                                                    </div>
+                                <div className="flex flex-col xl:flex-row gap-4 overflow-x-auto pb-4 items-start">
+                                    {['見積', '予定', '施工中', '完了'].map(status => {
+                                        const columnProjects = groupedProjects[status] || [];
+                                        const ITEMS_PER_PAGE = 10;
+                                        const totalPages = Math.max(1, Math.ceil(columnProjects.length / ITEMS_PER_PAGE));
+                                        const currentPage = dashboardPages[status] || 1;
+                                        
+                                        // ページ番号の補正（検索などで件数が減った場合に対処）
+                                        const validPage = Math.min(Math.max(1, currentPage), totalPages);
+                                        const startIndex = (validPage - 1) * ITEMS_PER_PAGE;
+                                        const visibleProjects = columnProjects.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+
+                                        const handlePageChange = (newPage) => {
+                                            setDashboardPages(prev => ({ ...prev, [status]: newPage }));
+                                        };
+
+                                        return (
+                                            <div key={status} className="flex flex-col flex-1 min-w-[280px] sm:min-w-[320px] w-full bg-slate-200/50 rounded-xl p-3">
+                                                <div className="flex items-center justify-between mb-3 px-1">
+                                                    <h3 className="font-bold text-slate-700 flex items-center gap-2">
+                                                        <span className={`w-3 h-3 rounded-full ${
+                                                            status === '見積' ? 'bg-orange-400' :
+                                                            status === '予定' ? 'bg-blue-400' :
+                                                            status === '施工中' ? 'bg-green-500' : 'bg-slate-400'
+                                                        }`}></span>
+                                                        {status}
+                                                    </h3>
+                                                    <span className="text-xs font-bold text-slate-500 bg-white px-2 py-0.5 rounded-full shadow-sm">{columnProjects.length}件</span>
                                                 </div>
 
-                                                <div className="flex items-end justify-between mt-auto">
-                                                    <div>
-                                                        <div className="text-[10px] font-bold text-slate-400 mb-1">消化工数 / 目標</div>
-                                                        <div className="font-mono text-lg font-bold text-slate-700">
-                                                            {proj.totalActual}<span className="text-xs font-normal">h</span> <span className="text-slate-300 mx-1">/</span> {proj.totalTarget}<span className="text-xs font-normal">h</span>
+                                                <div className="flex flex-col gap-3 flex-1">
+                                                    {visibleProjects.map(proj => (
+                                                        <div
+                                                            key={proj.id}
+                                                            onClick={() => {
+                                                                setActiveProjectId(proj.id);
+                                                                setActiveTab('master');
+                                                            }}
+                                                            className="bg-white rounded-lg border border-slate-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 hover:border-blue-400 transition-all cursor-pointer overflow-hidden flex flex-col group p-4"
+                                                        >
+                                                            <div className="mb-3">
+                                                                <h4 className="font-bold text-slate-800 line-clamp-2 leading-tight group-hover:text-blue-700 transition-colors text-sm">
+                                                                    {proj.siteName}
+                                                                </h4>
+                                                                <div className="mt-1 flex items-center gap-1 text-[10px] text-slate-500 font-medium">
+                                                                    <User size={12} className="text-slate-400" />
+                                                                    {proj.foreman_worker_id ? (workers.find(w => w.id === proj.foreman_worker_id)?.name || '未設定') : '職長未設定'}
+                                                                </div>
+                                                            </div>
+                                                            
+                                                            <div className="mt-auto pt-2 border-t border-slate-50">
+                                                                <div className="flex justify-between items-end mb-1">
+                                                                    <span className="text-[10px] font-bold text-slate-400">進捗 {proj.overallProgress}%</span>
+                                                                    <span className={`text-[10px] font-bold ${proj.predictedProfitLoss >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                                                                        {proj.predictedProfitLoss >= 0 ? '+' : ''}¥{Math.abs(Math.round(proj.predictedProfitLoss)).toLocaleString()}
+                                                                    </span>
+                                                                </div>
+                                                                <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                                                                    <div className={`h-full rounded-full ${
+                                                                        status === '見積' ? 'bg-orange-400' :
+                                                                        status === '予定' ? 'bg-blue-400' :
+                                                                        status === '施工中' ? 'bg-green-500' : 'bg-slate-400'
+                                                                    }`} style={{ width: `${Math.min(100, Math.max(0, proj.overallProgress))}%` }}></div>
+                                                                </div>
+                                                            </div>
                                                         </div>
-                                                    </div>
-                                                    <div className={`text-right ${proj.predictedProfitLoss >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                                        <div className="text-[10px] font-bold opacity-70 mb-1">予測粗利</div>
-                                                        <div className="font-black flex items-center gap-1 justify-end">
-                                                            {proj.predictedProfitLoss >= 0 ? <TrendingUp size={16} /> : <TrendingDown size={16} />}
-                                                            ¥{Math.abs(Math.round(proj.predictedProfitLoss)).toLocaleString()}
+                                                    ))}
+                                                    {visibleProjects.length === 0 && (
+                                                        <div className="text-center py-8 text-xs text-slate-400 font-bold border-2 border-dashed border-slate-300 rounded-lg">
+                                                            なし
                                                         </div>
-                                                    </div>
+                                                    )}
                                                 </div>
+
+                                                {totalPages > 1 && (
+                                                    <div className="flex items-center justify-between mt-4 px-2 text-xs font-bold text-slate-500 select-none bg-white py-1.5 rounded-lg shadow-sm border border-slate-100">
+                                                        <button 
+                                                            disabled={validPage <= 1}
+                                                            onClick={(e) => { e.stopPropagation(); handlePageChange(validPage - 1); }}
+                                                            className="hover:text-blue-600 disabled:opacity-30 disabled:hover:text-slate-500 transition px-2 py-1 flex items-center gap-1"
+                                                        >
+                                                            &lt; 前
+                                                        </button>
+                                                        <span className="tracking-widest">{validPage}<span className="text-[10px] text-slate-300 mx-1">/</span>{totalPages}</span>
+                                                        <button 
+                                                            disabled={validPage >= totalPages}
+                                                            onClick={(e) => { e.stopPropagation(); handlePageChange(validPage + 1); }}
+                                                            className="hover:text-blue-600 disabled:opacity-30 disabled:hover:text-slate-500 transition px-2 py-1 flex items-center gap-1"
+                                                        >
+                                                            次 &gt;
+                                                        </button>
+                                                    </div>
+                                                )}
                                             </div>
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             )}
                         </div>
@@ -523,6 +543,7 @@ const App = () => {
                             handleForemanChange={projectOps.handleForemanChange}
                             handleProjectDateChange={projectOps.handleProjectDateChange}
                             workers={workers}
+                            customers={customers}
                             updateMasterItemLocal={projectOps.updateMasterItemLocal}
                             saveMasterItemDB={projectOps.saveMasterItemDB}
                             removeMasterItem={projectOps.removeMasterItem}
@@ -586,6 +607,7 @@ const App = () => {
                             setActiveTab={setActiveTab}
                             setActiveProjectId={setActiveProjectId}
                             setProjects={setProjects}
+                            customers={customers}
                         />
                     )}
                 </main>

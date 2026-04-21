@@ -8,13 +8,16 @@ const MONTH_NAMES = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8�
 
 const HOLIDAY_TYPES = [
     { key: 'holiday', label: '休日', color: '#FECACA', textColor: '#DC2626', description: null },
-    { key: 'meeting', label: '会議', color: '#BAE6FD', textColor: '#0369A1', description: '会議' },
+    { key: 'meeting', label: '会議', color: '#DCFCE7', textColor: '#15803d', description: '会議' },
     { key: 'trip', label: '社員旅行', color: '#DDD6FE', textColor: '#6D28D9', description: '社員旅行' },
 ];
 
 const HolidayCalendar = () => {
     const { showToast } = useToast();
-    const [year, setYear] = useState(new Date().getFullYear());
+    const [year, setYear] = useState(() => {
+        const today = new Date();
+        return today.getMonth() < 3 ? today.getFullYear() - 1 : today.getFullYear();
+    });
     const [holidays, setHolidays] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [activeType, setActiveType] = useState('holiday');
@@ -22,8 +25,8 @@ const HolidayCalendar = () => {
     const fetchHolidays = useCallback(async () => {
         setIsLoading(true);
         try {
-            const startDate = `${year}-01-01`;
-            const endDate = `${year}-12-31`;
+            const startDate = `${year}-04-01`;
+            const endDate = `${year + 1}-03-31`;
             const { data, error } = await supabase
                 .from('CompanyHolidays')
                 .select('*')
@@ -100,6 +103,8 @@ const HolidayCalendar = () => {
         const lastDay = new Date(year, month + 1, 0);
         const startDow = firstDay.getDay();
         const daysInMonth = lastDay.getDate();
+        const displayYear = firstDay.getFullYear();
+        const displayMonth = firstDay.getMonth();
 
         const cells = [];
         // 空白セル
@@ -108,9 +113,8 @@ const HolidayCalendar = () => {
         }
         // 日付セル
         for (let day = 1; day <= daysInMonth; day++) {
-            const date = new Date(year, month, day);
-            const dow = date.getDay();
-            const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            const dow = (startDow + day - 1) % 7;
+            const dateStr = `${displayYear}-${String(displayMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
             const colorInfo = getDateColor(dateStr, dow);
             const holiday = getHoliday(dateStr);
 
@@ -151,22 +155,25 @@ const HolidayCalendar = () => {
             );
         }
 
-        const holidayCount = holidays.filter(h => {
-            const d = new Date(h.date);
-            return d.getFullYear() === year && d.getMonth() === month;
-        }).length;
+        // 休日・出勤日数の計算 (日曜 or 登録済み休日[会議・旅行除く])
+        let monthlyHolidays = 0;
+        for (let day = 1; day <= daysInMonth; day++) {
+            const date = new Date(displayYear, displayMonth, day);
+            const dateStr = `${displayYear}-${String(displayMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            const dow = date.getDay();
+            const holiday = getHoliday(dateStr);
+            if (dow === 0 || (holiday && holiday.description !== '会議' && holiday.description !== '社員旅行')) {
+                monthlyHolidays++;
+            }
+        }
+        const monthlyWorkDays = daysInMonth - monthlyHolidays;
 
         return (
-            <div key={month} className="bg-white rounded-lg border border-slate-200 p-3 shadow-sm hover:shadow-md transition-shadow">
+            <div key={month} className="bg-white rounded-lg border border-slate-200 p-3 shadow-sm hover:shadow-md transition-shadow flex flex-col">
                 <div className="flex items-center justify-between mb-2">
-                    <h4 className="text-sm font-bold text-slate-700">{MONTH_NAMES[month]}</h4>
-                    {holidayCount > 0 && (
-                        <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full font-bold">
-                            {holidayCount}日
-                        </span>
-                    )}
+                    <h4 className="text-sm font-bold text-slate-700">{MONTH_NAMES[displayMonth]}</h4>
                 </div>
-                <table className="w-full border-collapse">
+                <table className="w-full border-collapse mb-2 flex-grow">
                     <thead>
                         <tr>
                             {DOW_LABELS.map((d, i) => (
@@ -182,6 +189,10 @@ const HolidayCalendar = () => {
                     </thead>
                     <tbody>{rows}</tbody>
                 </table>
+                <div className="mt-2 pt-2 border-t border-slate-100 flex justify-between text-[10px] font-bold">
+                    <span className="text-red-500">休日 {monthlyHolidays}日</span>
+                    <span className="text-slate-500 text-right">出勤 {monthlyWorkDays}日</span>
+                </div>
             </div>
         );
     };
@@ -204,7 +215,7 @@ const HolidayCalendar = () => {
                         >
                             <ChevronLeft size={16} />
                         </button>
-                        <span className="text-sm font-bold text-slate-700 min-w-[60px] text-center">{year}年</span>
+                        <span className="text-sm font-bold text-slate-700 min-w-[70px] text-center">{year}年度</span>
                         <button
                             onClick={() => setYear(y => y + 1)}
                             className="p-1.5 rounded-md hover:bg-white text-slate-500 transition shadow-sm"
@@ -213,7 +224,16 @@ const HolidayCalendar = () => {
                         </button>
                     </div>
                     <span className="text-xs text-slate-500 font-bold bg-slate-100 px-3 py-1.5 rounded-lg">
-                        設定済: {totalHolidays}日
+                        年間休日日数: {
+                            Array.from({ length: 366 }).reduce((count, _, i) => {
+                                const d = new Date(year, 3, i + 1); // 4/1から数える
+                                if (d.getFullYear() > year + 1 || (d.getFullYear() === year + 1 && d.getMonth() >= 3 && d.getDate() > 31)) return count;
+                                const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                                const holiday = getHoliday(dateStr);
+                                if (d.getDay() === 0 || (holiday && holiday.description !== '会議' && holiday.description !== '社員旅行')) return count + 1;
+                                return count;
+                            }, 0)
+                        }日
                     </span>
                 </div>
             </div>
@@ -248,8 +268,8 @@ const HolidayCalendar = () => {
                     <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
                 </div>
             ) : (
-                <div className="grid grid-cols-3 md:grid-cols-4 gap-4">
-                    {Array.from({ length: 12 }).map((_, i) => renderMonth(i))}
+                <div className="grid grid-cols-3 gap-4">
+                    {Array.from({ length: 12 }).map((_, i) => renderMonth(i + 3))}
                 </div>
             )}
 

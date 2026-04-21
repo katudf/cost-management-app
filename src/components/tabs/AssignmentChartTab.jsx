@@ -7,7 +7,7 @@ import { toDateStr, addDays, getDayOfWeek, getMonday } from '../../utils/dateUti
 import { DEFAULT_COLORS, SCHEDULE_TYPES } from '../../utils/constants';
 
 
-const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTab, setActiveProjectId, setProjects }) => {
+const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTab, setActiveProjectId, setProjects, customers }) => {
     const { showToast } = useToast();
     const [isLoading, setIsLoading] = useState(true);
     const [assignments, setAssignments] = useState([]);
@@ -20,9 +20,22 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
 
     const [barProjects, setBarProjects] = useState([]);
     const [companyHolidays, setCompanyHolidays] = useState([]);
+    const [projectSuspensions, setProjectSuspensions] = useState([]);
+
+    // 顧客情報のMap
+    const customerMap = useMemo(() => {
+        const map = {};
+        (customers || []).forEach(c => {
+            map[c.id] = c.name;
+        });
+        return map;
+    }, [customers]);
 
     // 会社休日のセル編集ポップアップ
     const [editHolidayCell, setEditHolidayCell] = useState(null);
+
+    // プロジェクトカラー編集ポップアップ
+    const [editColorPopup, setEditColorPopup] = useState(null);
 
     // セル編集ポップアップ
     const [editCell, setEditCell] = useState(null);
@@ -46,9 +59,12 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
     // ===== 日付・稼働日数ロジック (休日考慮) =====
     const isHoliday = useCallback((dateObj) => {
         const dow = dateObj.getDay();
-        if (dow === 0 || dow === 6) return true;
         const dStr = toDateStr(dateObj);
-        return companyHolidays.some(h => h.date === dStr && h.description !== '会議' && h.description !== '社員旅行');
+        const isRegisteredHoliday = companyHolidays.some(h => h.date === dStr && h.description !== '会議' && h.description !== '社員旅行');
+        
+        if (dow === 0) return true; // 日曜は常に休み
+        if (dow === 6) return isRegisteredHoliday; // 土曜は登録があれば休み
+        return isRegisteredHoliday; // 平日は登録があれば休み
     }, [companyHolidays]);
 
     const countWorkingDays = useCallback((startStr, endStr) => {
@@ -142,10 +158,8 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
 
             const { data: pData } = await supabase
                 .from('Projects')
-                .select('id, name, startDate, endDate, bar_color, status, display_order')
+                .select('id, name, startDate, endDate, bar_color, status, display_order, customerId, is_prime_contractor')
                 .in('status', ['予定', '施工中'])
-                .not('startDate', 'is', null)
-                .not('endDate', 'is', null)
                 .order('display_order', { ascending: true, nullsFirst: false })
                 .order('created_at', { ascending: true });
 
@@ -159,6 +173,18 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                 .select('id, date, description');
             
             setCompanyHolidays(hData || []);
+
+            // 休工期間データの取得
+            const projectIds = (pData || []).map(p => p.id);
+            if (projectIds.length > 0) {
+                const { data: sData } = await supabase
+                    .from('ProjectSuspensions')
+                    .select('*')
+                    .in('project_id', projectIds);
+                setProjectSuspensions(sData || []);
+            } else {
+                setProjectSuspensions([]);
+            }
         } catch (e) {
             console.error('配置表データ取得エラー:', e);
         } finally {
@@ -209,6 +235,9 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         const handleClickOutside = (e) => {
             if (popupRef.current && !popupRef.current.contains(e.target)) {
                 setEditCell(null);
+            }
+            if (editColorPopup && !e.target.closest('.color-popup')) {
+                setEditColorPopup(null);
             }
         };
         if (editCell) {
@@ -316,6 +345,12 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                     console.error('工期更新エラー:', error);
                     showToast('工期の更新に失敗しました', 'error');
                 }
+            } else {
+                setEditColorPopup({
+                    projectId: projectId,
+                    top: e.clientY,
+                    left: e.clientX
+                });
             }
         };
 
@@ -596,7 +631,9 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
     };
 
     const getDayHeaderStyle = (dow, dateStr) => {
-        if (dow === 0 || companyHolidays.some(h => h.date === dateStr)) return { backgroundColor: '#FEE2E2', color: '#DC2626' };
+        const registered = companyHolidays.find(h => h.date === dateStr);
+        const isActualHoliday = registered && registered.description !== '会議' && registered.description !== '社員旅行';
+        if (dow === 0 || isActualHoliday) return { backgroundColor: '#FEE2E2', color: '#DC2626' };
         if (dow === 6) return { backgroundColor: '#DBEAFE', color: '#2563EB' };
         return {};
     };
@@ -612,6 +649,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
     };
 
     const getBarSpan = (project) => {
+        if (!project.startDate || !project.endDate) return null;
         const pStart = new Date(project.startDate + 'T00:00:00');
         const pEnd = new Date(project.endDate + 'T00:00:00');
         const viewStart = startDate;
@@ -833,6 +871,53 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         });
     };
 
+    const updateProjectColor = async (projectId, color) => {
+        // Optimistic UI update
+        setBarProjects(prev => prev.map(p => p.id === projectId ? { ...p, color } : p));
+        if (setProjects) {
+            setProjects(prev => prev.map(p => p.id === projectId ? { ...p, bar_color: color } : p));
+        }
+
+        try {
+            const { error } = await supabase.from('Projects').update({ bar_color: color }).eq('id', projectId);
+            if (error) throw error;
+            showToast('配置表カラーを更新しました', 'success');
+        } catch (e) {
+            console.error('カラー更新エラー:', e);
+            showToast('カラーの更新に失敗しました', 'error');
+        }
+        setEditColorPopup(null);
+    };
+
+    const handleProjectCellClick = async (proj, dateStr) => {
+        // すでに工期が設定されている場合は、バー上での別の操作（カラー変更など）を優先するため何もしない
+        if (proj.startDate && proj.endDate) return;
+
+        // デバッグ用（あとで消すか、そのまま正常通知として利用）
+        console.log('handleProjectCellClick:', proj.name, dateStr);
+        
+        try {
+            // ステートを即時更新（楽観的更新）
+            const updatedProj = { ...proj, startDate: dateStr, endDate: dateStr };
+            setBarProjects(prev => prev.map(p => p.id === proj.id ? updatedProj : p));
+            if (setProjects) {
+                setProjects(prev => prev.map(p => p.id === proj.id ? { ...p, startDate: dateStr, endDate: dateStr } : p));
+            }
+
+            const { error } = await supabase
+                .from('Projects')
+                .update({ startDate: dateStr, endDate: dateStr, status: proj.status || '予定' })
+                .eq('id', proj.id);
+
+            if (error) throw error;
+            showToast(`${proj.name} の工期を設定しました`, 'success');
+        } catch (e) {
+            console.error('工期設定エラー:', e);
+            showToast('工期の設定に失敗しました', 'error');
+            fetchAssignments();
+        }
+    };
+
     const updateCompanyHoliday = async (dateStr, description, existingId) => {
         try {
             if (description === null && existingId) {
@@ -942,6 +1027,8 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         setHoverProjectStats({
             data: stats,
             foremanName: workers.find(w => w.id === stats.foreman_worker_id)?.name || '未設定',
+            startDate: project.startDate,
+            endDate: project.endDate,
             top: rect.top,
             left: rect.right
         });
@@ -998,9 +1085,9 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                     </button>
 
                     <button
-                        onClick={() => movePeriod(-8)}
+                        onClick={() => movePeriod(-1)}
                         className="p-1.5 rounded-md hover:bg-slate-100 text-slate-500 transition"
-                        title="前の8週"
+                        title="前の週"
                     >
                         <ChevronLeft size={20} />
                     </button>
@@ -1014,9 +1101,9 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                         {periodLabel}
                     </span>
                     <button
-                        onClick={() => movePeriod(8)}
+                        onClick={() => movePeriod(1)}
                         className="p-1.5 rounded-md hover:bg-slate-100 text-slate-500 transition"
-                        title="次の8週"
+                        title="次の週"
                     >
                         <ChevronRight size={20} />
                     </button>
@@ -1086,7 +1173,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
 
                     {/* 案件バーチャート */}
                     <tbody>
-                        {barProjects.map((proj) => {
+                        {barProjects.map((proj, idx) => {
                             const isDraggingThis = draggingGantt && draggingGantt.projectId === proj.id;
                             const effStart = isDraggingThis ? draggingGantt.tempStartStr : proj.startDate;
                             const effEnd = isDraggingThis ? draggingGantt.tempEndStr : proj.endDate;
@@ -1095,9 +1182,13 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                             return (
                                 <tr key={proj.id} className="hover:bg-slate-50 transition-colors">
                                     <td 
-                                        className="sticky left-0 z-10 bg-white text-xs font-bold p-2 border border-slate-200 truncate cursor-grab hover:text-blue-600 transition"
+                                        className="sticky left-0 z-10 bg-white text-xs font-bold p-2 border border-slate-200 truncate cursor-pointer hover:bg-blue-50 hover:text-blue-700 transition"
                                         onMouseEnter={(e) => handleProjectNameMouseEnter(e, proj)}
                                         onMouseLeave={() => setHoverProjectStats(null)}
+                                        onClick={() => {
+                                            setActiveProjectId(proj.id);
+                                            setActiveTab('master');
+                                        }}
                                         draggable={!isDraggingThis}
                                         onDragStart={(e) => {
                                             if (isDraggingThis) { e.preventDefault(); return; }
@@ -1122,42 +1213,77 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                         }}
                                         title="ドラッグで上下に並び替え、またはセルに配置できます"
                                     >
-                                        {proj.name}
+                                        <div className="flex items-center gap-1.5 min-w-0">
+                                            <span className="text-[10px] text-slate-400 font-mono w-4 flex-shrink-0 text-right">{idx + 1}</span>
+                                            <div className="flex flex-col leading-tight min-w-0">
+                                                <div className="text-[9px] text-blue-600 font-bold truncate">
+                                                    {proj.is_prime_contractor ? '元請' : (customerMap[proj.customerId] || '')}
+                                                </div>
+                                                <div className="truncate text-slate-800">{proj.name}</div>
+                                            </div>
+                                        </div>
                                     </td>
                                     {dateColumns.map((col, i) => {
                                         const isInBar = bar && i >= bar.startIdx && i <= bar.endIdx;
                                         const isBarStart = bar && i === bar.startIdx;
-                                        const isHolidayOrWeekend = col.dow === 0 || col.dow === 6 || companyHolidays.some(h => h.date === col.dateStr);
+                                        const registeredHoliday = companyHolidays.find(h => h.date === col.dateStr);
+                                        const isActualHoliday = registeredHoliday && registeredHoliday.description !== '会議' && registeredHoliday.description !== '社員旅行';
+                                        const isHolidayOrWeekend = col.dow === 0 || (col.dow === 6 && isActualHoliday) || (col.dow !== 6 && col.dow !== 0 && isActualHoliday);
+                                        const suspensionMatch = isInBar ? projectSuspensions.find(s => s.project_id === proj.id && col.dateStr >= s.start_date && col.dateStr <= s.end_date) : null;
+                                        const isSuspended = !!suspensionMatch;
+                                        const isSuspensionStart = isSuspended && col.dateStr === suspensionMatch.start_date;
+                                        // 休工期間の表示スパン計算（表示範囲内のみ）
+                                        const suspensionSpan = isSuspensionStart ? (() => {
+                                            const endIdx = dateColumns.findIndex(c => c.dateStr === suspensionMatch.end_date);
+                                            const startIdx = i;
+                                            return (endIdx >= 0 ? endIdx : dateColumns.length - 1) - startIdx + 1;
+                                        })() : 0;
                                         return (
                                             <td
                                                 key={i}
-                                                className="border border-slate-200 p-0 relative"
+                                                onMouseDown={() => handleProjectCellClick(proj, col.dateStr)}
+                                                className={`border border-slate-200 p-0 relative ${isInBar ? 'cursor-pointer' : (!proj.startDate || !proj.endDate) ? 'cursor-pointer hover:bg-blue-50/50' : ''}`}
                                                 style={{
-                                                    backgroundColor: isInBar
+                                                    backgroundColor: (isInBar && !isHolidayOrWeekend && !isSuspended)
                                                         ? proj.color + (isDraggingThis ? '99' : 'CC')
-                                                        : isHolidayOrWeekend ? '#F9FAFB' : 'white'
+                                                        : isHolidayOrWeekend ? '#F9FAFB' : 'white',
+                                                    ...(isSuspended ? {
+                                                        background: `repeating-linear-gradient(45deg, ${proj.color}40, ${proj.color}40 4px, ${proj.color}18 4px, ${proj.color}18 8px)`,
+                                                    } : {})
                                                 }}
+                                                title={isSuspended ? `休工: ${suspensionMatch.reason || ''}` : ''}
                                             >
+                                                {isSuspensionStart && suspensionMatch.reason && (
+                                                    <div
+                                                        className="absolute inset-y-0 left-0 flex items-center text-[8px] font-bold text-orange-700 px-1 whitespace-nowrap overflow-hidden pointer-events-none z-[5]"
+                                                        style={{
+                                                            width: `${suspensionSpan * 48}px`,
+                                                            userSelect: 'none',
+                                                            textShadow: '0 0 3px white, 0 0 3px white'
+                                                        }}
+                                                    >
+                                                        <span className="truncate">{suspensionMatch.reason}</span>
+                                                    </div>
+                                                )}
                                                 {isBarStart && (
                                                     <div
-                                                        className={`absolute inset-y-0 left-0 flex items-center text-[9px] font-bold text-white px-1 whitespace-nowrap overflow-hidden transition-none ${isDraggingThis ? 'opacity-90 scale-[1.02] shadow-md z-[30]' : 'shadow-sm z-5'}`}
+                                                        className={`absolute inset-y-0 left-0 flex items-center text-[9px] font-bold text-slate-900 px-1 whitespace-nowrap overflow-hidden transition-none ${isDraggingThis ? 'opacity-90 scale-[1.02] shadow-md z-[30]' : 'shadow-sm z-5'}`}
                                                         style={{
                                                             width: `${bar.span * 48}px`,
-                                                            textShadow: '0 1px 2px rgba(0,0,0,0.5)',
                                                             userSelect: 'none'
                                                         }}
                                                     >
                                                         <span className="relative z-10 pointer-events-none truncate">{proj.name}</span>
                                                         <div 
-                                                            className="absolute left-0 top-0 bottom-0 w-3 cursor-w-resize z-20 hover:bg-white/40 border-l-2 border-white/50"
+                                                            className="absolute left-0 top-0 bottom-0 w-3 cursor-w-resize z-20 hover:bg-white/40 border-l-2 border-white/50 pointer-events-auto"
                                                             onPointerDown={(e) => handleGanttPointerDown(e, proj, 'start')}
                                                         ></div>
                                                         <div 
-                                                            className="absolute left-3 right-3 top-0 bottom-0 cursor-move z-20 hover:bg-white/10"
+                                                            className="absolute left-3 right-3 top-0 bottom-0 cursor-move z-20 hover:bg-white/10 pointer-events-auto"
                                                             onPointerDown={(e) => handleGanttPointerDown(e, proj, 'move')}
                                                         ></div>
                                                         <div 
-                                                            className="absolute right-0 top-0 bottom-0 w-3 cursor-e-resize z-20 hover:bg-white/40 border-r-2 border-white/50"
+                                                            className="absolute right-0 top-0 bottom-0 w-3 cursor-e-resize z-20 hover:bg-white/40 border-r-2 border-white/50 pointer-events-auto"
                                                             onPointerDown={(e) => handleGanttPointerDown(e, proj, 'end')}
                                                         ></div>
                                                     </div>
@@ -1608,6 +1734,14 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                 >
                     <div className="font-bold text-sm mb-2 text-blue-200 border-b border-slate-600 pb-1">{hoverProjectStats.data.siteName}</div>
                     <div className="flex flex-col gap-1.5">
+                        <div className="flex justify-between items-center mb-1 bg-slate-700/50 p-1.5 rounded border border-slate-600/50">
+                            <span className="text-slate-400">工期:</span>
+                            <span className="font-bold text-right text-[10px]">
+                                {hoverProjectStats.startDate && hoverProjectStats.endDate 
+                                    ? `${hoverProjectStats.startDate.replace(/-/g, '/')} 〜 ${hoverProjectStats.endDate.replace(/-/g, '/')}`
+                                    : '未設定'}
+                            </span>
+                        </div>
                         <div className="flex justify-between items-center">
                             <span className="text-slate-400">担当職長:</span>
                             <span className="font-bold truncate max-w-[100px] text-right">{hoverProjectStats.foremanName}</span>
@@ -1626,6 +1760,38 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                 ¥{Math.abs(Math.round(hoverProjectStats.data.predictedProfitLoss || 0)).toLocaleString()}
                             </span>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* カラー選択ポップアップ */}
+            {editColorPopup && (
+                <div
+                    className="fixed z-[100] bg-white rounded-xl shadow-2xl border border-slate-200 p-3 color-popup"
+                    style={{
+                        top: `${Math.min(window.innerHeight - 150, editColorPopup.top + 10)}px`,
+                        left: `${Math.min(window.innerWidth - 200, editColorPopup.left)}px`
+                    }}
+                >
+                    <div className="flex items-center justify-between mb-2 gap-4">
+                        <div className="text-[10px] font-bold text-slate-400 uppercase">配置表カラーを選択</div>
+                        <button 
+                            onClick={() => setEditColorPopup(null)}
+                            className="p-1 hover:bg-slate-100 rounded-full text-slate-400 transition"
+                            title="閉じる"
+                        >
+                            <X size={14} />
+                        </button>
+                    </div>
+                    <div className="grid grid-cols-4 gap-2">
+                        {DEFAULT_COLORS.map(c => (
+                            <button
+                                key={c}
+                                onClick={() => updateProjectColor(editColorPopup.projectId, c)}
+                                className="w-8 h-8 rounded-full transition-all hover:scale-110 shadow-sm border border-slate-100"
+                                style={{ backgroundColor: c }}
+                            />
+                        ))}
                     </div>
                 </div>
             )}

@@ -1,0 +1,3 @@
+- [x] `useWorkers.js` の `handleWorkerReorder` ロジックを修正
+- [x] ブラウザで並び替えの動作と永続化（保存）を確認
+- [x] 完了報告（Walkthrough）の作成

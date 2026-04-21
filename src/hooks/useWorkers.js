@@ -75,28 +75,54 @@ export function useWorkers({ workers, setWorkers, showToast }) {
     const handleWorkerReorder = async (draggedId, targetId) => {
         if (draggedId === targetId) return;
 
-        setWorkers(prev => {
-            const dragIdx = prev.findIndex(w => w.id === draggedId);
-            const targetIdx = prev.findIndex(w => w.id === targetId);
-            if (dragIdx === -1 || targetIdx === -1) return prev;
+        // 1. ローカルでの並び順計算（Optimistic UI）
+        const dragIdx = workers.findIndex(w => w.id === draggedId);
+        const targetIdx = workers.findIndex(w => w.id === targetId);
+        if (dragIdx === -1 || targetIdx === -1) return;
 
-            const next = [...prev];
-            const [draggedItem] = next.splice(dragIdx, 1);
-            next.splice(targetIdx, 0, draggedItem);
+        const next = [...workers];
+        const [draggedItem] = next.splice(dragIdx, 1);
+        next.splice(targetIdx, 0, draggedItem);
 
-            // 並び順(display_order)を再計算
-            const updatedWorkers = next.map((w, idx) => ({ ...w, display_order: idx + 1 }));
+        // 並び順(display_order)を仮に振り直す
+        const updatedWorkers = next.map((w, idx) => ({ ...w, display_order: idx + 1 }));
+        setWorkers(updatedWorkers);
 
-            // DB一括更新(非同期)
-            Promise.all(
-                updatedWorkers.map(w => supabase.from('Workers').update({ display_order: w.display_order }).eq('id', w.id))
-            ).catch(err => {
-                console.error('作業員並び順更新エラー:', err);
-                showToast("並び順の保存に失敗しました", "error");
-            });
+        // 2. DB永続化
+        try {
+            // 一意制約（Unique Constraint）エラーを回避するため、現在の最大値を取得して
+            // それより大きい値を一時的に割り当てる手法をとる
+            const { data: maxData } = await supabase
+                .from('Workers')
+                .select('display_order')
+                .not('display_order', 'is', null)
+                .order('display_order', { ascending: false })
+                .limit(1);
+            
+            const currentMax = maxData && maxData.length > 0 && maxData[0].display_order ? maxData[0].display_order : 0;
+            
+            // 全対象に対して「currentMax + インデックス」の新しい順序を振る
+            // これにより、既存のどの display_order とも重複しなくなる
+            const promises = updatedWorkers.map((w, idx) => 
+                supabase.from('Workers').update({ display_order: currentMax + idx + 1 }).eq('id', w.id)
+            );
 
-            return updatedWorkers;
-        });
+            const results = await Promise.all(promises);
+            const errors = results.filter(r => r.error);
+            if (errors.length > 0) throw errors[0].error;
+
+            // 成功した場合は、ローカルの状態も新しい display_order に合わせておく（リロード時の整合性のため）
+            setWorkers(prev => prev.map((w, idx) => {
+                const found = updatedWorkers.find(uw => uw.id === w.id);
+                return found ? { ...w, display_order: currentMax + idx + 1 } : w;
+            }));
+
+        } catch (err) {
+            console.error('作業員並び順更新エラー:', err);
+            showToast("並び順の保存に失敗しました", "error");
+            // ロールバックの代わりにデータを再取得して整合性を保つのが安全
+            // (fetchAllData などを呼ぶのが理想だが、ここでは最低限の通知にとどめる)
+        }
     };
 
     return {

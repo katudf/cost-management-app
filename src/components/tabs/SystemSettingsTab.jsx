@@ -1,9 +1,10 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { Settings, Save, CheckCircle2, Award, Plus, Edit3, Trash2, X, ChevronDown, ChevronRight, Activity } from 'lucide-react';
+import { Settings, Save, CheckCircle2, Award, Plus, Edit3, Trash2, X, ChevronDown, ChevronRight, Activity, UserCheck } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../components/Toast';
 import { getDailyApiUsage } from '../../utils/aiOptimizeUtils';
 import HolidayCalendar from '../HolidayCalendar';
+import CustomerSettings from './CustomerSettings';
 
 const SystemSettingsTab = ({ hourlyWage, setHourlyWage, geminiApiKey, setGeminiApiKey, isLoading, setIsLoading, workers = [], fetchAllData }) => {
     const { showToast } = useToast();
@@ -190,6 +191,12 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, geminiApiKey, setGeminiA
                     className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${activeSubTab === 'certs' ? 'bg-blue-600 text-white shadow-md shadow-blue-200' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}
                 >
                     <Award size={18} /> 資格管理
+                </button>
+                <button
+                    onClick={() => setActiveSubTab('customers')}
+                    className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${activeSubTab === 'customers' ? 'bg-blue-600 text-white shadow-md shadow-blue-200' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}
+                >
+                    <UserCheck size={18} /> 顧客情報
                 </button>
             </div>
 
@@ -660,6 +667,9 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, geminiApiKey, setGeminiA
                         </div>
                     </div>
                 </div>
+            )}
+            {activeSubTab === 'customers' && (
+                <CustomerSettings />
             )}
         </div>
     );

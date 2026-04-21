@@ -2,14 +2,7 @@ import { useState, useMemo } from 'react';
 import { calculateProjectsSummary } from '../utils/projectUtils';
 
 export function useDashboardStats({ projects, activeProject, hourlyWage }) {
-    const [filterStatuses, setFilterStatuses] = useState(['見積', '予定', '施工中', '完了']);
-    const [sortOption, setSortOption] = useState('created_desc');
-
-    const toggleFilterStatus = (status) => {
-        setFilterStatuses(prev =>
-            prev.includes(status) ? prev.filter(s => s !== status) : [...prev, status]
-        );
-    };
+    const [searchQuery, setSearchQuery] = useState('');
 
     const allProjectsSummary = useMemo(() => {
         return calculateProjectsSummary(projects, hourlyWage);
@@ -68,27 +61,29 @@ export function useDashboardStats({ projects, activeProject, hourlyWage }) {
     }, [activeProject, hourlyWage]);
 
     const displayProjects = useMemo(() => {
-        let list = allProjectsSummary.filter(p => filterStatuses.includes(p.status || '予定'));
-        list.sort((a, b) => {
-            if (sortOption === 'created_desc') return b.id - a.id;
-            if (sortOption === 'created_asc') return a.id - b.id;
-            if (sortOption === 'progress_desc') return b.overallProgress - a.overallProgress;
-            if (sortOption === 'progress_asc') return a.overallProgress - b.overallProgress;
-            if (sortOption === 'profit_desc') return b.predictedProfitLoss - a.predictedProfitLoss;
-            if (sortOption === 'profit_asc') return a.predictedProfitLoss - b.predictedProfitLoss;
-            return 0; // default order
-        });
+        let list = [...allProjectsSummary]; // すべてのステータスを表示
+        
+        // 検索フィルタリング
+        if (searchQuery.trim()) {
+            const query = searchQuery.toLowerCase();
+            list = list.filter(p => 
+                (p.siteName || '').toLowerCase().includes(query)
+            );
+        }
+
+        // 常に作成順（新しい順）でソート
+        list.sort((a, b) => b.id - a.id);
+        
         return list;
-    }, [allProjectsSummary, filterStatuses, sortOption]);
+    }, [allProjectsSummary, searchQuery]);
 
     return {
-        filterStatuses,
-        toggleFilterStatus,
-        sortOption,
-        setSortOption,
+        searchQuery,
+        setSearchQuery,
         allProjectsSummary,
         workerSummaryData,
         summaryData,
         displayProjects
     };
 }
+

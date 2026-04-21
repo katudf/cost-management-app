@@ -1,0 +1,4 @@
+- [x] Workers, system_settings テーブルの定義を更新する
+- [x] estimates, estimate_items テーブルの定義を追加する
+- [x] ビュー (v_estimate_category_totals) およびトリガーの説明を追加する
+- [x] 完了報告（Walkthrough）を作成する

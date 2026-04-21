@@ -1,0 +1,4 @@
+- [x] 最新のテーブル定義情報を収集する
+- [x] docs/database/database_info.md を更新する
+- [x] 更新内容が実際のスキーマと一致しているか検証する
+- [x] 完了報告（Walkthrough）を作成する

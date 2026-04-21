@@ -1,0 +1,13 @@
+- [x] `useSupabaseData.js` の修正 (is_prime_contractor の取得とマッピング)
+- [x] `MasterTab.jsx` の修正 (元請チェックボックスの追加)
+- [x] `AdminApp.jsx` の修正 (AssignmentChartTab への customers の受け渡し)
+- [x] `AssignmentChartTab.jsx` の修正 (表示ロジックの更新)
+- [x] 配置表の現場名表示の上下入れ替え (顧客情報を上、現場名を下)
+- [x] 現場名をクリックで工事基本設定（受注・マスター）へジャンプする機能の追加
+- [x] 配置表の現場名に上から順に通し番号を表示
+- [x] 通し番号のピリオド削除
+- [x] 休工期間機能の実装
+    - [x] DB: `ProjectSuspensions` テーブル作成
+    - [x] `MasterTab.jsx`: 休工期間の追加/削除UI
+    - [x] `AssignmentChartTab.jsx`: 休工期間の取得と斜線パターン表示
+- [x] 動作確認

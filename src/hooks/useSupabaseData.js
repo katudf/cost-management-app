@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 export function useSupabaseData(showToast) {
     const [projects, setProjects] = useState([]);
     const [workers, setWorkers] = useState([]);
+    const [customers, setCustomers] = useState([]);
     const [hourlyWage, setHourlyWage] = useState(3500);
     const [geminiApiKey, setGeminiApiKey] = useState(import.meta.env.VITE_GEMINI_API_KEY || '');
     const [isLoading, setIsLoading] = useState(true);
@@ -26,6 +27,10 @@ export function useSupabaseData(showToast) {
                 }));
                 setWorkers(workersWithCerts);
             }
+            
+            // Customers取得
+            const { data: custData } = await supabase.from('Customers').select('*').order('name', { ascending: true });
+            if (custData) setCustomers(custData);
 
             // Projects, ProjectTasks, TaskRecords取得
             const { data: pData, error: pError } = await supabase.from('Projects').select('*').order('created_at', { ascending: true });
@@ -80,6 +85,8 @@ export function useSupabaseData(showToast) {
                     siteName: (p.name && p.name.startsWith('__NEW_PROJECT__')) ? '' : (p.name || '無題'),
                     status: p.status || '予定',
                     foreman_worker_id: p.foreman_worker_id || null,
+                    customerId: p.customerId || null,
+                    is_prime_contractor: p.is_prime_contractor || false,
                     startDate: p.startDate || null,
                     endDate: p.endDate || null,
                     bar_color: p.bar_color || null,
@@ -120,6 +127,8 @@ export function useSupabaseData(showToast) {
         setProjects,
         workers,
         setWorkers,
+        customers,
+        setCustomers,
         hourlyWage,
         setHourlyWage,
         geminiApiKey,
