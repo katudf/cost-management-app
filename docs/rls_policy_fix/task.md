@@ -1,0 +1,2 @@
+- [x] docs/database/database_info.md の RLS ポリシー定義を修正する
+- [x] 完了報告（Walkthrough）を作成する

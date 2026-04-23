@@ -1,0 +1,5 @@
+- [x] `SystemSettingsTab.jsx`にて、新しい「担当者管理」サブタブを作成し、`office_staff`テーブルに対するCRUD（追加・編集・削除）機能を実装する。
+- [x] `supabaseEstimates.js`内のデータ取得処理（`fetchEstimates`, `fetchEstimateById`）で、結合元関係を`creator:Workers`から`staff:office_staff`（または新規）に切り替える。
+- [x] `EstimateForm.jsx`で担当者のリストを`office_staff`から取得し、保存・読み出しのフィールドを`created_by`から`staff_id`へと変更する。
+- [x] `EstimatePDF.jsx`で、表紙に印字される担当者名を変更後のデータ構造（`estimate.staff?.name`など）に合わせて修正する。
+- [x] `EstimateList.jsx`などで旧仕様の`creator`や`created_by`に依存している箇所がないか確認し、あれば適宜修正する。

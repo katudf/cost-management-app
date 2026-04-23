@@ -308,3 +308,25 @@ GROUP BY e.id, e.estimate_number, e.title, i.id, i.category_symbol, i.name;
 *   **MaterialUsageLogs**: 材料の使用記録。
 *   **WorkLogs**: 詳細な作業ログ。
 *   **WorkerCertifications**: 作業員の資格管理。
+
+---
+
+## 7. セキュリティ (RLS)
+
+本システムは未ログイン状態（`anon` ロール）でも運用可能なように、以下の通り RLS ポリシーを設定しています。
+
+### estimates / estimate_items
+見積書機能に関連するテーブルです。
+
+```sql
+-- 既存の制限の厳しいポリシーを削除
+DROP POLICY IF EXISTS "estimates_all"      ON public.estimates;
+DROP POLICY IF EXISTS "estimate_items_all" ON public.estimate_items;
+
+-- 未ログインユーザー(anon)およびログイン済みユーザー(authenticated)の両方に権限を付与
+CREATE POLICY "estimates_all" ON public.estimates
+  FOR ALL TO anon, authenticated USING (deleted_at IS NULL);
+
+CREATE POLICY "estimate_items_all" ON public.estimate_items
+  FOR ALL TO anon, authenticated USING (true);
+```

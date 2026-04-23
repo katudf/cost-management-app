@@ -1,0 +1,5 @@
+- [x] AdminApp.jsx に EstimateList, EstimateForm をインポートする
+- [x] estimateEditId ステートを追加する
+- [x] ナビゲーションメニューに「見積」タブを追加する
+- [x] main タグ内に見積機能の表示ロジックを追加する
+- [x] 完了報告（Walkthrough）を作成する

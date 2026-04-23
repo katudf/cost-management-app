@@ -24,10 +24,16 @@ import WorkersTab from './components/tabs/WorkersTab';
 import SystemSettingsTab from './components/tabs/SystemSettingsTab';
 import PurchaseLedgerTab from './components/tabs/PurchaseLedgerTab';
 import AssignmentChartTab from './components/tabs/AssignmentChartTab';
+import EstimateList from './EstimateList';
+import EstimateForm from './EstimateForm';
 
 const App = () => {
     const { showToast } = useToast();
     const [activeTab, setActiveTab] = useState('dashboard');
+    const [estimateEditId, setEstimateEditId] = useState(undefined);
+    // undefined = 一覧表示
+    // null      = 新規作成フォーム
+    // number    = 編集フォーム（IDを指定）
     const [importModalInfo, setImportModalInfo] = useState(null);
     const [aliasName, setAliasName] = useState("");
 
@@ -382,6 +388,7 @@ const App = () => {
                                 { key: 'assignment', label: '配置表', Icon: Calendar },
                                 { key: 'settings', label: '設定', Icon: Settings },
                                 { key: 'purchase_ledger', label: '材料', Icon: FileText },
+                                { key: 'estimate', label: '見積', Icon: FileText },
                             ].map(({ key, label, Icon }) => (
                                 <button key={key} onClick={() => setActiveTab(key)} className={`px-4 py-2 rounded-md transition font-bold whitespace-nowrap flex items-center gap-1.5 ${activeTab === key ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 text-slate-600'}`}>
                                     <Icon size={16} />
@@ -609,6 +616,22 @@ const App = () => {
                             setProjects={setProjects}
                             customers={customers}
                         />
+                    )}
+
+                    {activeTab === 'estimate' && (
+                        estimateEditId === undefined ? (
+                            // 一覧画面
+                            <EstimateList
+                                onEdit={(id) => setEstimateEditId(id === null ? null : id)}
+                            />
+                        ) : (
+                            // 新規作成 or 編集画面
+                            <EstimateForm
+                                estimateId={estimateEditId}  // null=新規, number=編集
+                                onBack={() => setEstimateEditId(undefined)}
+                                onSaved={() => setEstimateEditId(undefined)}
+                            />
+                        )
                     )}
                 </main>
 
