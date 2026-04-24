@@ -61,7 +61,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         const dow = dateObj.getDay();
         const dStr = toDateStr(dateObj);
         const isRegisteredHoliday = companyHolidays.some(h => h.date === dStr && h.description !== '会議' && h.description !== '社員旅行');
-        
+
         if (dow === 0) return true; // 日曜は常に休み
         if (dow === 6) return isRegisteredHoliday; // 土曜は登録があれば休み
         return isRegisteredHoliday; // 平日は登録があれば休み
@@ -72,7 +72,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         const start = new Date(startStr + 'T00:00:00');
         const end = new Date(endStr + 'T00:00:00');
         if (start > end) return 0;
-        
+
         let p = new Date(start);
         while (p <= end) {
             if (!isHoliday(p)) count++;
@@ -171,7 +171,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
             const { data: hData } = await supabase
                 .from('CompanyHolidays')
                 .select('id, date, description');
-            
+
             setCompanyHolidays(hData || []);
 
             // 休工期間データの取得
@@ -201,9 +201,9 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                 setAssignments(prev => {
                     if (payload.eventType === 'INSERT') {
                         if (prev.some(a => a.id === payload.new.id)) return prev;
-                        
+
                         // 楽観的更新の中の未確定データ（temp-）と一致するか確認
-                        const pendingOptimistic = prev.some(a => 
+                        const pendingOptimistic = prev.some(a =>
                             String(a.id).startsWith('temp-') &&
                             a.workerId === payload.new.workerId &&
                             a.date === payload.new.date &&
@@ -211,7 +211,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                             a.title === payload.new.title
                         );
                         if (pendingOptimistic) return prev;
-                        
+
                         return [...prev, payload.new];
                     }
                     if (payload.eventType === 'UPDATE') {
@@ -297,7 +297,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
             e.preventDefault();
             const dx = e.clientX - draggingGantt.startX;
             const diffDays = Math.round(dx / 48); // 1セル=48px
-            
+
             let newStartStr = draggingGantt.initialStartStr;
             let newEndStr = draggingGantt.initialEndStr;
 
@@ -326,13 +326,13 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
 
             if (tempStartStr !== initialStartStr || tempEndStr !== initialEndStr) {
                 // Optimistic Update
-                setBarProjects(prev => prev.map(p => 
+                setBarProjects(prev => prev.map(p =>
                     p.id === projectId ? { ...p, startDate: tempStartStr, endDate: tempEndStr } : p
                 ));
 
                 // Global Status Sync (工事設定タブへの反映用)
                 if (setProjects) {
-                    setProjects(prev => prev.map(p => 
+                    setProjects(prev => prev.map(p =>
                         p.id === projectId ? { ...p, startDate: tempStartStr, endDate: tempEndStr } : p
                     ));
                 }
@@ -341,7 +341,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                     const { error } = await supabase.from('Projects').update({ startDate: tempStartStr, endDate: tempEndStr }).eq('id', projectId);
                     if (error) throw error;
                     showToast('工期を更新しました', 'success');
-                } catch(error) {
+                } catch (error) {
                     console.error('工期更新エラー:', error);
                     showToast('工期の更新に失敗しました', 'error');
                 }
@@ -449,12 +449,12 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         const workerId = editCell.workerId;
         const baseDate = new Date(targetDates[0]);
         const copiedData = [];
-        
+
         targetDates.forEach(dateStr => {
             const existing = assignmentLookup[`${workerId}_${dateStr}`] || [];
             const currentDate = new Date(dateStr);
             const dayOffset = Math.round((currentDate - baseDate) / (1000 * 60 * 60 * 24));
-            
+
             existing.forEach(a => {
                 copiedData.push({
                     dayOffset,
@@ -478,12 +478,12 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         const baseDate = new Date(targetDates[0]);
         const copiedData = [];
         const toDelete = [];
-        
+
         targetDates.forEach(dateStr => {
             const existing = assignmentLookup[`${workerId}_${dateStr}`] || [];
             const currentDate = new Date(dateStr);
             const dayOffset = Math.round((currentDate - baseDate) / (1000 * 60 * 60 * 24));
-            
+
             existing.forEach(a => {
                 copiedData.push({
                     dayOffset,
@@ -497,7 +497,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
 
         if (copiedData.length > 0) {
             setClipboard({ type: 'cut', data: copiedData });
-            
+
             const idsToDelete = toDelete.map(a => a.id);
             setAssignments(prev => prev.filter(a => !idsToDelete.includes(a.id)));
             try {
@@ -518,7 +518,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         const workerId = editCell.workerId;
         const baseDateStr = targetDates[0];
         const baseDate = new Date(baseDateStr);
-        
+
         const newRecords = [];
         const tempIds = [];
 
@@ -598,7 +598,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
             // 入力中（input, textarea）などの場合は無視
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
             if (!editCell) return; // セルが選択（ポップアップが開いている）されていないと無効
-            
+
             if (e.key === 'Delete' || e.key === 'Backspace') {
                 e.preventDefault();
                 handleActionDelete();
@@ -811,7 +811,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
 
         // DB Update
         try {
-            const promises = updatedItems.map(item => 
+            const promises = updatedItems.map(item =>
                 supabase.from('Assignments').update({ assignment_order: item.assignment_order }).eq('id', item.id)
             );
             await Promise.all(promises);
@@ -842,12 +842,12 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                         .not('display_order', 'is', null)
                         .order('display_order', { ascending: false })
                         .limit(1);
-                    
+
                     const currentMax = maxData && maxData.length > 0 && maxData[0].display_order ? maxData[0].display_order : 0;
-                    
+
                     const newProjectsData = next.map((p, idx) => ({ ...p, display_order: currentMax + idx + 1 }));
 
-                    const promises = newProjectsData.map(p => 
+                    const promises = newProjectsData.map(p =>
                         supabase.from('Projects').update({ display_order: p.display_order }).eq('id', p.id)
                     );
                     await Promise.all(promises);
@@ -864,7 +864,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                     showToast('並び順の保存に失敗しました。', 'error');
                 }
             };
-            
+
             performAsyncDBUpdate();
 
             return next;
@@ -895,7 +895,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
 
         // デバッグ用（あとで消すか、そのまま正常通知として利用）
         console.log('handleProjectCellClick:', proj.name, dateStr);
-        
+
         try {
             // ステートを即時更新（楽観的更新）
             const updatedProj = { ...proj, startDate: dateStr, endDate: dateStr };
@@ -976,11 +976,11 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         setDragCells(prev => {
             if (prev.length === 0) return [dateStr];
             if (prev[prev.length - 1] === dateStr) return prev; // 変更なし
-            
+
             const startD = new Date(prev[0] + 'T00:00:00');
             const currentD = new Date(dateStr + 'T00:00:00');
             const step = startD <= currentD ? 1 : -1;
-            
+
             const newCells = [];
             let tempD = new Date(startD);
             while (true) {
@@ -988,7 +988,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                 const m = String(tempD.getMonth() + 1).padStart(2, '0');
                 const d = String(tempD.getDate()).padStart(2, '0');
                 newCells.push(`${y}-${m}-${d}`);
-                
+
                 if (tempD.getTime() === currentD.getTime()) break;
                 tempD.setDate(tempD.getDate() + step);
             }
@@ -1181,7 +1181,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
 
                             return (
                                 <tr key={proj.id} className="hover:bg-slate-50 transition-colors">
-                                    <td 
+                                    <td
                                         className="sticky left-0 z-10 bg-white text-xs font-bold p-2 border border-slate-200 truncate cursor-pointer hover:bg-blue-50 hover:text-blue-700 transition"
                                         onMouseEnter={(e) => handleProjectNameMouseEnter(e, proj)}
                                         onMouseLeave={() => setHoverProjectStats(null)}
@@ -1255,7 +1255,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                             >
                                                 {isSuspensionStart && suspensionMatch.reason && (
                                                     <div
-                                                        className="absolute inset-y-0 left-0 flex items-center text-[8px] font-bold text-orange-700 px-1 whitespace-nowrap overflow-hidden pointer-events-none z-[5]"
+                                                        className="absolute inset-y-0 left-0 flex items-center text-[12px] font-bold text-orange-700 px-1 whitespace-nowrap overflow-hidden pointer-events-none z-[5]"
                                                         style={{
                                                             width: `${suspensionSpan * 48}px`,
                                                             userSelect: 'none',
@@ -1267,22 +1267,22 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                                 )}
                                                 {isBarStart && (
                                                     <div
-                                                        className={`absolute inset-y-0 left-0 flex items-center text-[9px] font-bold text-slate-900 px-1 whitespace-nowrap overflow-hidden transition-none ${isDraggingThis ? 'opacity-90 scale-[1.02] shadow-md z-[30]' : 'shadow-sm z-5'}`}
+                                                        className={`absolute inset-y-0 left-0 flex items-center text-[12px] font-bold text-black px-1 whitespace-nowrap overflow-hidden transition-none ${isDraggingThis ? 'opacity-90 scale-[1.02] shadow-md z-[30]' : 'shadow-sm z-5'}`}
                                                         style={{
                                                             width: `${bar.span * 48}px`,
                                                             userSelect: 'none'
                                                         }}
                                                     >
                                                         <span className="relative z-10 pointer-events-none truncate">{proj.name}</span>
-                                                        <div 
+                                                        <div
                                                             className="absolute left-0 top-0 bottom-0 w-3 cursor-w-resize z-20 hover:bg-white/40 border-l-2 border-white/50 pointer-events-auto"
                                                             onPointerDown={(e) => handleGanttPointerDown(e, proj, 'start')}
                                                         ></div>
-                                                        <div 
+                                                        <div
                                                             className="absolute left-3 right-3 top-0 bottom-0 cursor-move z-20 hover:bg-white/10 pointer-events-auto"
                                                             onPointerDown={(e) => handleGanttPointerDown(e, proj, 'move')}
                                                         ></div>
-                                                        <div 
+                                                        <div
                                                             className="absolute right-0 top-0 bottom-0 w-3 cursor-e-resize z-20 hover:bg-white/40 border-r-2 border-white/50 pointer-events-auto"
                                                             onPointerDown={(e) => handleGanttPointerDown(e, proj, 'end')}
                                                         ></div>
@@ -1343,24 +1343,24 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                             {dateColumns.map((col, i) => {
                                 const holidayObj = companyHolidays.find(h => h.date === col.dateStr);
                                 const isWeekend = col.dow === 0 || col.dow === 6;
-                                
+
                                 let bgColor = 'transparent';
                                 if (holidayObj) {
                                     bgColor = holidayObj.description === '会議' ? '#BAE6FD' : // light sky blue
-                                              holidayObj.description === '社員旅行' ? '#DDD6FE' : // light purple
-                                              '#FECACA'; // light red (default/holiday)
+                                        holidayObj.description === '社員旅行' ? '#DDD6FE' : // light purple
+                                            '#FECACA'; // light red (default/holiday)
                                 } else if (isWeekend) {
                                     bgColor = '#F1F5F9';
                                 }
 
                                 const displayText = holidayObj?.description === '会議' ? '会議' :
-                                                    holidayObj?.description === '社員旅行' ? '旅行' :
-                                                    holidayObj ? '休' : '';
+                                    holidayObj?.description === '社員旅行' ? '旅行' :
+                                        holidayObj ? '休' : '';
 
                                 const textColor = holidayObj?.description === '会議' ? 'text-sky-700' :
-                                                  holidayObj?.description === '社員旅行' ? 'text-violet-700' :
-                                                  'text-red-600';
-                                                  
+                                    holidayObj?.description === '社員旅行' ? 'text-violet-700' :
+                                        'text-red-600';
+
                                 const isEditingEvent = editHolidayCell && editHolidayCell.dateStr === col.dateStr;
 
                                 return (
@@ -1440,13 +1440,12 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                     return (
                                         <td
                                             key={i}
-                                            className={`border p-0 text-center align-middle cursor-pointer transition-all ${
-                                                isDragSelected
-                                                    ? 'border-blue-500 border-2 bg-blue-100'
-                                                    : isEditing
+                                            className={`border p-0 text-center align-middle cursor-pointer transition-all ${isDragSelected
+                                                ? 'border-blue-500 border-2 bg-blue-100'
+                                                : isEditing
                                                     ? 'border-blue-500 border-2 bg-blue-50'
                                                     : 'border-slate-200 hover:border-blue-300 hover:bg-blue-50/30'
-                                            }`}
+                                                }`}
                                             style={{
                                                 backgroundColor: isDragSelected ? '#DBEAFE' : isEditing ? '#EFF6FF' : isWeekend ? '#F9FAFB' : undefined,
                                                 overflow: 'hidden', maxWidth: 0, width: '48px'
@@ -1477,10 +1476,10 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                                     {displayItems.map((item) => (
                                                         <div
                                                             key={item.key}
-                                                            className={`text-[9px] font-bold rounded px-0.5 py-0.5 text-white truncate ${item.isActual ? 'ring-1 ring-inset ring-white/40' : ''}`}
+                                                            className={`text-[9px] font-bold rounded px-0.5 py-0.5 text-black truncate ${item.isActual ? 'ring-1 ring-inset ring-white/40' : ''}`}
                                                             style={{
                                                                 backgroundColor: item.bgColor,
-                                                                textShadow: '0 1px 1px rgba(0,0,0,0.3)'
+                                                                color: 'black'
                                                             }}
                                                             title={item.fullName + (item.isActual ? '（実績）' : '')}
                                                         >
@@ -1529,7 +1528,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                 <div className="text-xs font-bold">
                                     {workers.find(w => w.id === editCell.workerId)?.name} ー {
                                         editCell.dragDates && editCell.dragDates.length > 1
-                                            ? `${editCell.dragDates[0].slice(5).replace('-', '/')} 〜 ${editCell.dragDates[editCell.dragDates.length-1].slice(5).replace('-', '/')} (${editCell.dragDates.length}日)`
+                                            ? `${editCell.dragDates[0].slice(5).replace('-', '/')} 〜 ${editCell.dragDates[editCell.dragDates.length - 1].slice(5).replace('-', '/')} (${editCell.dragDates.length}日)`
                                             : editCell.dateStr.slice(5).replace('-', '/')
                                     }
                                 </div>
@@ -1542,130 +1541,130 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                             </div>
 
                             {/* 現在の配置（単一セルの場合のみ） */}
-                        {(!editCell.dragDates || editCell.dragDates.length <= 1) && editCellAssignments.length > 0 && (
-                            <div className="px-3 py-2 border-b border-slate-100">
-                                <div className="text-[10px] font-bold text-slate-400 mb-1.5 uppercase">現在の配置</div>
-                                <div className="space-y-1">
-                                    {editCellAssignments.map((a, index) => {
-                                        const pInfo = a.projectId ? projectMap[a.projectId] : null;
-                                        const schedType = !a.projectId && a.title ? SCHEDULE_TYPES.find(s => s.title === a.title) : null;
-                                        const itemColor = schedType?.color || pInfo?.color || '#94A3B8';
-                                        const itemName = schedType ? `${schedType.icon} ${schedType.title}` : (pInfo?.name || '不明');
-                                        return (
-                                            <div
-                                                key={a.id}
-                                                className="flex items-center justify-between gap-2 p-1.5 rounded-lg border border-transparent hover:border-blue-200 cursor-grab active:cursor-grabbing transition"
-                                                style={{ backgroundColor: itemColor + '20' }}
-                                                draggable={true}
-                                                onDragStart={(e) => {
-                                                    e.dataTransfer.setData('assignmentid', a.id.toString());
-                                                    e.dataTransfer.effectAllowed = 'copyMove';
-                                                }}
-                                                onDragOver={(e) => {
-                                                    e.preventDefault();
-                                                    e.dataTransfer.dropEffect = 'move';
-                                                    e.currentTarget.classList.add('bg-slate-200');
-                                                }}
-                                                onDragLeave={(e) => {
-                                                    e.currentTarget.classList.remove('bg-slate-200');
-                                                }}
-                                                onDrop={(e) => {
-                                                    e.preventDefault();
-                                                    e.currentTarget.classList.remove('bg-slate-200');
-                                                    const draggedAssignmentId = e.dataTransfer.getData('assignmentid');
-                                                    if (draggedAssignmentId) {
-                                                        handleAssignmentReorder(parseInt(draggedAssignmentId, 10), a.id);
-                                                    }
-                                                }}
-                                            >
-                                                <div className="flex items-center gap-1.5 min-w-0">
-                                                    <div
-                                                        className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
-                                                        style={{ backgroundColor: itemColor }}
-                                                    ></div>
-                                                    <span className="text-xs font-bold text-slate-700 truncate">
-                                                        {itemName}
-                                                    </span>
-                                                    {a.projectId && (
+                            {(!editCell.dragDates || editCell.dragDates.length <= 1) && editCellAssignments.length > 0 && (
+                                <div className="px-3 py-2 border-b border-slate-100">
+                                    <div className="text-[10px] font-bold text-slate-400 mb-1.5 uppercase">現在の配置</div>
+                                    <div className="space-y-1">
+                                        {editCellAssignments.map((a, index) => {
+                                            const pInfo = a.projectId ? projectMap[a.projectId] : null;
+                                            const schedType = !a.projectId && a.title ? SCHEDULE_TYPES.find(s => s.title === a.title) : null;
+                                            const itemColor = schedType?.color || pInfo?.color || '#94A3B8';
+                                            const itemName = schedType ? `${schedType.icon} ${schedType.title}` : (pInfo?.name || '不明');
+                                            return (
+                                                <div
+                                                    key={a.id}
+                                                    className="flex items-center justify-between gap-2 p-1.5 rounded-lg border border-transparent hover:border-blue-200 cursor-grab active:cursor-grabbing transition"
+                                                    style={{ backgroundColor: itemColor + '20' }}
+                                                    draggable={true}
+                                                    onDragStart={(e) => {
+                                                        e.dataTransfer.setData('assignmentid', a.id.toString());
+                                                        e.dataTransfer.effectAllowed = 'copyMove';
+                                                    }}
+                                                    onDragOver={(e) => {
+                                                        e.preventDefault();
+                                                        e.dataTransfer.dropEffect = 'move';
+                                                        e.currentTarget.classList.add('bg-slate-200');
+                                                    }}
+                                                    onDragLeave={(e) => {
+                                                        e.currentTarget.classList.remove('bg-slate-200');
+                                                    }}
+                                                    onDrop={(e) => {
+                                                        e.preventDefault();
+                                                        e.currentTarget.classList.remove('bg-slate-200');
+                                                        const draggedAssignmentId = e.dataTransfer.getData('assignmentid');
+                                                        if (draggedAssignmentId) {
+                                                            handleAssignmentReorder(parseInt(draggedAssignmentId, 10), a.id);
+                                                        }
+                                                    }}
+                                                >
+                                                    <div className="flex items-center gap-1.5 min-w-0">
+                                                        <div
+                                                            className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
+                                                            style={{ backgroundColor: itemColor }}
+                                                        ></div>
+                                                        <span className="text-xs font-bold text-slate-700 truncate">
+                                                            {itemName}
+                                                        </span>
+                                                        {a.projectId && (
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    if (setActiveProjectId && setActiveTab) {
+                                                                        setActiveProjectId(a.projectId);
+                                                                        setActiveTab('master');
+                                                                    }
+                                                                }}
+                                                                className="text-slate-400 hover:text-blue-600 p-0.5 rounded hover:bg-blue-50 transition"
+                                                                title="現場の詳細設定を開く"
+                                                            >
+                                                                <ExternalLink size={12} />
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex items-center gap-0.5 flex-shrink-0">
                                                         <button
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
-                                                                if (setActiveProjectId && setActiveTab) {
-                                                                    setActiveProjectId(a.projectId);
-                                                                    setActiveTab('master');
-                                                                }
+                                                                removeAssignment(a.id);
                                                             }}
-                                                            className="text-slate-400 hover:text-blue-600 p-0.5 rounded hover:bg-blue-50 transition"
-                                                            title="現場の詳細設定を開く"
+                                                            className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition ml-1"
+                                                            title="配置を解除"
                                                         >
-                                                            <ExternalLink size={12} />
+                                                            <Trash2 size={12} />
                                                         </button>
-                                                    )}
+                                                    </div>
                                                 </div>
-                                                <div className="flex items-center gap-0.5 flex-shrink-0">
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            removeAssignment(a.id);
-                                                        }}
-                                                        className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition ml-1"
-                                                        title="配置を解除"
-                                                    >
-                                                        <Trash2 size={12} />
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
+
+                            {/* スケジュール種別 */}
+                            <div className="px-3 py-2">
+                                <div className="text-[10px] font-bold text-slate-400 mb-1.5 uppercase">その他</div>
+                                <div className="flex flex-wrap gap-1">
+                                    {SCHEDULE_TYPES
+                                        .filter(s => !editCellAssignments.some(a => a.title === s.title))
+                                        .map(s => (
+                                            <button
+                                                key={s.title}
+                                                onClick={() => { handlePopupAssign(null, s.title); }}
+                                                className="flex items-center gap-1 px-2 py-1.5 rounded-lg hover:opacity-80 transition text-left"
+                                                style={{ backgroundColor: s.color + '20', border: `1px solid ${s.color}40` }}
+                                            >
+                                                <span className="text-xs">{s.icon}</span>
+                                                <span className="text-[10px] font-bold" style={{ color: s.color }}>
+                                                    {s.title}
+                                                </span>
+                                            </button>
+                                        ))}
                                 </div>
                             </div>
-                        )}
+                        </div>
 
-
-                        {/* スケジュール種別 */}
-                        <div className="px-3 py-2">
-                            <div className="text-[10px] font-bold text-slate-400 mb-1.5 uppercase">その他</div>
-                            <div className="flex flex-wrap gap-1">
-                                {SCHEDULE_TYPES
-                                    .filter(s => !editCellAssignments.some(a => a.title === s.title))
-                                    .map(s => (
-                                        <button
-                                            key={s.title}
-                                            onClick={() => { handlePopupAssign(null, s.title); }}
-                                            className="flex items-center gap-1 px-2 py-1.5 rounded-lg hover:opacity-80 transition text-left"
-                                            style={{ backgroundColor: s.color + '20', border: `1px solid ${s.color}40` }}
-                                        >
-                                            <span className="text-xs">{s.icon}</span>
-                                            <span className="text-[10px] font-bold" style={{ color: s.color }}>
-                                                {s.title}
-                                            </span>
-                                        </button>
-                                    ))}
+                        {/* 分離されたショートカットヒント兼アクションボタン */}
+                        <div className="bg-slate-800/95 backdrop-blur-sm text-slate-200 px-3 py-2 rounded-lg shadow-lg border border-slate-700 text-[10px] flex gap-4 justify-between min-w-[200px]">
+                            <div className="flex gap-2">
+                                <div className="flex flex-col gap-1 items-center">
+                                    <span className="text-slate-400">コピー:</span>
+                                    <button onClick={handleActionCopy} className="font-mono text-[9px] bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 hover:bg-slate-700 hover:text-white transition cursor-pointer">Ctrl+C</button>
+                                </div>
+                                <div className="flex flex-col gap-1 items-center">
+                                    <span className="text-slate-400">カット:</span>
+                                    <button onClick={handleActionCut} className="font-mono text-[9px] bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 hover:bg-slate-700 hover:text-white transition cursor-pointer">Ctrl+X</button>
+                                </div>
+                                <div className="flex flex-col gap-1 items-center">
+                                    <span className="text-slate-400">ペースト:</span>
+                                    <button onClick={handleActionPaste} className={`font-mono text-[9px] bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 transition ${clipboard?.data?.length > 0 ? 'hover:bg-slate-700 hover:text-white cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}>Ctrl+V</button>
+                                </div>
+                            </div>
+                            <div className="flex flex-col gap-1 items-center border-l border-slate-600 pl-4">
+                                <span className="text-slate-400">一括削除:</span>
+                                <button onClick={handleActionDelete} className="font-mono text-[9px] bg-red-900/50 text-red-200 border border-red-800 rounded px-1.5 py-0.5 hover:bg-red-800 hover:text-white transition cursor-pointer">Delete</button>
                             </div>
                         </div>
-                    </div>
-                    
-                    {/* 分離されたショートカットヒント兼アクションボタン */}
-                    <div className="bg-slate-800/95 backdrop-blur-sm text-slate-200 px-3 py-2 rounded-lg shadow-lg border border-slate-700 text-[10px] flex gap-4 justify-between min-w-[200px]">
-                        <div className="flex gap-2">
-                            <div className="flex flex-col gap-1 items-center">
-                                <span className="text-slate-400">コピー:</span>
-                                <button onClick={handleActionCopy} className="font-mono text-[9px] bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 hover:bg-slate-700 hover:text-white transition cursor-pointer">Ctrl+C</button>
-                            </div>
-                            <div className="flex flex-col gap-1 items-center">
-                                <span className="text-slate-400">カット:</span>
-                                <button onClick={handleActionCut} className="font-mono text-[9px] bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 hover:bg-slate-700 hover:text-white transition cursor-pointer">Ctrl+X</button>
-                            </div>
-                            <div className="flex flex-col gap-1 items-center">
-                                <span className="text-slate-400">ペースト:</span>
-                                <button onClick={handleActionPaste} className={`font-mono text-[9px] bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 transition ${clipboard?.data?.length > 0 ? 'hover:bg-slate-700 hover:text-white cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}>Ctrl+V</button>
-                            </div>
-                        </div>
-                        <div className="flex flex-col gap-1 items-center border-l border-slate-600 pl-4">
-                            <span className="text-slate-400">一括削除:</span>
-                            <button onClick={handleActionDelete} className="font-mono text-[9px] bg-red-900/50 text-red-200 border border-red-800 rounded px-1.5 py-0.5 hover:bg-red-800 hover:text-white transition cursor-pointer">Delete</button>
-                        </div>
-                    </div>
                     </div>
                 )}
 
@@ -1728,7 +1727,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
 
             {/* 現場名ホバー時のツールチップ */}
             {hoverProjectStats && (
-                <div 
+                <div
                     className="fixed z-50 bg-slate-800 text-white rounded-lg shadow-xl p-3 w-56 text-xs pointer-events-none transform -translate-y-1/2"
                     style={{ top: hoverProjectStats.top + 16, left: hoverProjectStats.left + 5 }}
                 >
@@ -1737,7 +1736,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                         <div className="flex justify-between items-center mb-1 bg-slate-700/50 p-1.5 rounded border border-slate-600/50">
                             <span className="text-slate-400">工期:</span>
                             <span className="font-bold text-right text-[10px]">
-                                {hoverProjectStats.startDate && hoverProjectStats.endDate 
+                                {hoverProjectStats.startDate && hoverProjectStats.endDate
                                     ? `${hoverProjectStats.startDate.replace(/-/g, '/')} 〜 ${hoverProjectStats.endDate.replace(/-/g, '/')}`
                                     : '未設定'}
                             </span>
@@ -1775,7 +1774,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                 >
                     <div className="flex items-center justify-between mb-2 gap-4">
                         <div className="text-[10px] font-bold text-slate-400 uppercase">配置表カラーを選択</div>
-                        <button 
+                        <button
                             onClick={() => setEditColorPopup(null)}
                             className="p-1 hover:bg-slate-100 rounded-full text-slate-400 transition"
                             title="閉じる"

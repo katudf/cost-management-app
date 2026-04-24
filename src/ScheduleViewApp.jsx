@@ -250,10 +250,10 @@ const ScheduleViewApp = () => {
                                                         return (
                                                             <div
                                                                 key={ai}
-                                                                className="text-[8px] font-bold rounded px-0.5 py-0.5 text-white truncate"
+                                                                className="text-[8px] font-bold rounded px-0.5 py-0.5 text-black truncate"
                                                                 style={{
                                                                     backgroundColor: bgColor,
-                                                                    textShadow: '0 1px 1px rgba(0,0,0,0.3)'
+                                                                    color: 'black'
                                                                 }}
                                                                 title={pInfo?.name || a.title || ''}
                                                             >
