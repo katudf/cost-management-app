@@ -348,9 +348,11 @@ const App = () => {
                                             className="pl-9 pr-8 py-2 bg-white border border-slate-300 rounded-lg shadow-sm font-bold text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 appearance-none hover:border-slate-400 transition"
                                         >
                                             {projects.length === 0 && <option value="">現場なし</option>}
-                                            {projects.map(p => (
-                                                <option key={p.id} value={p.id}>{p.siteName || '無題の現場'}</option>
-                                            ))}
+                                            {projects
+                                                .filter(p => !["【会社】社内業務・雑務", "【会社】有給", "有給", "【有給】"].includes(p.siteName))
+                                                .map(p => (
+                                                    <option key={p.id} value={p.id}>{p.siteName || '無題の現場'}</option>
+                                                ))}
                                         </select>
                                     </div>
                                 )}

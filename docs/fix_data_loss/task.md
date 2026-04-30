@@ -1,0 +1,16 @@
+- [x] `src/WorkerApp.jsx` への状態の追加
+    - [x] `hasUnsavedChanges` 状態の定義
+- [x] 各種入力（タスク、協力業者など）時に `hasUnsavedChanges` を `true` にする処理の追加
+    - [x] `updateTaskField`, `updateSlotField`, `addTimeSlot`, `removeTimeSlot` への追加
+    - [x] `addSubcontractor`, `updateSubcontractor`, `removeSubcontractor` への追加
+    - [x] `handleAddNewTask`, `handleRestoreDraft` への追加
+- [x] 画面遷移・操作時の警告ブロックの実装
+    - [x] `selectedDate` の変更時（`if(hasUnsavedChanges) window.confirm`）
+    - [x] `selectedProjectId` の変更時（同上）
+    - [x] 「入力済みの現場」アイコンからの変更時（同上）
+    - [x] ログアウト処理時（`handleLogout`）
+- [x] オートセーブ機能の実装
+    - [x] `useEffect` を用いた定期的な `localStorage` 保存（`isAutoSaved: true` フラグの付与）
+    - [x] `handleSubmit` 成功時の `hasUnsavedChanges` リセット
+- [x] UIメッセージの調整
+    - [x] 下書き表示ダイアログのメッセージを `isAutoSaved` の有無によって書き分け

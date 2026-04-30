@@ -63,6 +63,13 @@ export function useDashboardStats({ projects, activeProject, hourlyWage }) {
     const displayProjects = useMemo(() => {
         let list = [...allProjectsSummary]; // すべてのステータスを表示
         
+        // 現場向けの共通項目（社内業務や有給など）はホームの工事一覧から除外する
+        const excludedNames = ["【会社】社内業務・雑務", "【会社】有給", "有給", "【有給】"];
+        list = list.filter(p => {
+            const name = p.siteName || '';
+            return !excludedNames.includes(name);
+        });
+
         // 検索フィルタリング
         if (searchQuery.trim()) {
             const query = searchQuery.toLowerCase();

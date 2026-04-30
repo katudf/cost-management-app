@@ -1,0 +1,13 @@
+- [x] `src/utils/workTimeUtils.js` の修正
+    - [x] `calculateWorkHours` に `isOvernight` 引数を追加
+    - [x] `isOvernight == true` の場合に `endMin` を +1440 する処理の追加
+    - [x] 時間枠全体の再計算テスト
+- [x] `src/WorkerApp.jsx` UIと初期化ロジックの修正
+    - [x] `time_slots` の初期状態および DB マッピング時に `is_overnight` を組み込む（`start > end` なら `true`）
+    - [x] UIに「翌日」チェックボックスを追加し、`updateSlotField` で更新できるようにする
+- [x] `src/WorkerApp.jsx` のバリデーション修正
+    - [x] `timeOverlapWarnings` の修正（`is_overnight` 考慮）
+    - [x] `handleSubmit` への追加バリデーションの実装（片方未入力、異常長時間、協力業者の異常値）
+- [x] 動作確認・検証
+    - [x] 日またぎ時間が正しく入力・計算されるか
+    - [x] 片方未入力、異常長時間、協力業者エラーがブロックされるか

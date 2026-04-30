@@ -21,8 +21,10 @@ const WorkerApp = () => {
 
     const [hourlyWage, setHourlyWage] = useState(3500);
     const [allProjectRecords, setAllProjectRecords] = useState([]);
+    const [allSubcontractorRecords, setAllSubcontractorRecords] = useState([]);
     const [workerDailyAllRecords, setWorkerDailyAllRecords] = useState([]);
     const [offlineDraft, setOfflineDraft] = useState(null);
+    const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
     const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
 
@@ -33,7 +35,7 @@ const WorkerApp = () => {
             try {
                 const draftStr = localStorage.getItem('cost-app-unsent-draft');
                 if (draftStr) {
-                    try { setOfflineDraft(JSON.parse(draftStr)); } catch(e) {}
+                    try { setOfflineDraft(JSON.parse(draftStr)); } catch (e) { }
                 }
 
                 const savedWorkerStr = localStorage.getItem('cost-app-worker');
@@ -92,8 +94,9 @@ const WorkerApp = () => {
                             record_id: r.id,
                             start_time: formatTimeDisplay(r.start_time) || '',
                             end_time: formatTimeDisplay(r.end_time) || '',
+                            is_overnight: (formatTimeDisplay(r.start_time) > formatTimeDisplay(r.end_time)) && formatTimeDisplay(r.end_time) !== ''
                         }))
-                        : [{ slot_id: `new-${Date.now()}-${t.id}`, record_id: null, start_time: '', end_time: '' }];
+                        : [{ slot_id: `new-${Date.now()}-${t.id}`, record_id: null, start_time: '', end_time: '', is_overnight: false }];
 
                     return {
                         id: t.id,
@@ -109,6 +112,7 @@ const WorkerApp = () => {
                 setTasks(mappedTasks);
                 setSubcontractors(sData || []);
                 setDeletedSubcontractorIds([]);
+                setHasUnsavedChanges(false);
 
                 const project = projects.find(p => p.id === Number(selectedProjectId));
                 if (project && project.foreman_worker_id === loggedInWorker.id) {
@@ -131,7 +135,9 @@ const WorkerApp = () => {
 
     const handleLogin = (worker) => { setLoggedInWorker(worker); localStorage.setItem('cost-app-worker', JSON.stringify(worker)); };
     const handleLogout = () => {
-        if (window.confirm("ログアウトしますか？")) {
+        const msg = hasUnsavedChanges ? "未送信の入力データがあります。破棄してログアウトしますか？" : "ログアウトしますか？";
+        if (window.confirm(msg)) {
+            setHasUnsavedChanges(false);
             setLoggedInWorker(null); setSelectedProjectId(''); setTasks([]); setSubcontractors([]); setDeletedSubcontractorIds([]);
             localStorage.removeItem('cost-app-worker'); localStorage.removeItem('cost-app-worker-project');
         }
@@ -139,10 +145,12 @@ const WorkerApp = () => {
 
     // ========== タスク操作 ==========
     const updateTaskField = (taskId, field, value) => {
+        setHasUnsavedChanges(true);
         setTasks(prev => prev.map(t => t.id === taskId ? { ...t, [field]: value } : t));
     };
 
     const updateSlotField = (taskId, slotId, field, value) => {
+        setHasUnsavedChanges(true);
         setTasks(prev => prev.map(t => {
             if (t.id !== taskId) return t;
             return { ...t, time_slots: t.time_slots.map(s => s.slot_id === slotId ? { ...s, [field]: value } : s) };
@@ -150,34 +158,45 @@ const WorkerApp = () => {
     };
 
     const addTimeSlot = (taskId) => {
+        setHasUnsavedChanges(true);
         setTasks(prev => prev.map(t => {
             if (t.id !== taskId) return t;
-            return { ...t, time_slots: [...t.time_slots, { slot_id: `new-${Date.now()}`, record_id: null, start_time: '', end_time: '' }] };
+            return { ...t, time_slots: [...t.time_slots, { slot_id: `new-${Date.now()}`, record_id: null, start_time: '', end_time: '', is_overnight: false }] };
         }));
     };
 
     const removeTimeSlot = (taskId, slotId, recordId) => {
+        setHasUnsavedChanges(true);
         setTasks(prev => prev.map(t => {
             if (t.id !== taskId) return t;
             const newSlots = t.time_slots.filter(s => s.slot_id !== slotId);
             const newDeleted = recordId ? [...t.deleted_record_ids, recordId] : t.deleted_record_ids;
             return {
                 ...t,
-                time_slots: newSlots.length > 0 ? newSlots : [{ slot_id: `new-${Date.now()}`, record_id: null, start_time: '', end_time: '' }],
+                time_slots: newSlots.length > 0 ? newSlots : [{ slot_id: `new-${Date.now()}`, record_id: null, start_time: '', end_time: '', is_overnight: false }],
                 deleted_record_ids: newDeleted,
             };
         }));
     };
 
-    const addSubcontractor = () => { setSubcontractors(prev => [...prev, { id: 'temp-' + Date.now(), company_name: '', worker_count: 1 }]); };
-    const updateSubcontractor = (id, field, value) => { setSubcontractors(prev => prev.map(s => s.id === id ? { ...s, [field]: value } : s)); };
+    const addSubcontractor = () => { setHasUnsavedChanges(true); setSubcontractors(prev => [...prev, { id: 'temp-' + Date.now(), company_name: '', worker_count: 1 }]); };
+    const updateSubcontractor = (id, field, value) => { setHasUnsavedChanges(true); setSubcontractors(prev => prev.map(s => s.id === id ? { ...s, [field]: value } : s)); };
     const removeSubcontractor = (id) => {
+        setHasUnsavedChanges(true);
         if (!String(id).startsWith('temp-')) setDeletedSubcontractorIds(prev => [...prev, id]);
         setSubcontractors(prev => prev.filter(s => s.id !== id));
     };
 
     const handleAddNewTask = async () => {
         if (!selectedProjectId) return;
+        
+        const project = projects.find(p => p.id === Number(selectedProjectId));
+        const isForeman = project && project.foreman_worker_id === loggedInWorker.id;
+        if (!isForeman) {
+            window.alert("新しい作業項目の追加は職長のみ可能です。追加が必要な場合は職長に依頼してください。");
+            return;
+        }
+
         const taskName = window.prompt("追加する作業項目の名称を入力してください。");
         if (!taskName || taskName.trim() === '') return;
         setIsLoading(true);
@@ -191,20 +210,40 @@ const WorkerApp = () => {
                 const ins = data[0];
                 setTasks(prev => [...prev, {
                     id: ins.id, name: ins.name, target_hours: ins.target_hours, progress_percentage: ins.progress_percentage, order: ins.order,
-                    time_slots: [{ slot_id: `new-${Date.now()}`, record_id: null, start_time: '', end_time: '' }],
+                    time_slots: [{ slot_id: `new-${Date.now()}`, record_id: null, start_time: '', end_time: '', is_overnight: false }],
                     deleted_record_ids: [], today_note: '',
                 }]);
+                setHasUnsavedChanges(true);
             }
         } catch (e) { console.error(e); showToast('作業項目の追加に失敗しました。', 'error'); }
         finally { setIsLoading(false); }
     };
+
+    // ========== 自動保存 (オートセーブ) ==========
+    useEffect(() => {
+        if (hasUnsavedChanges && selectedProjectId && tasks.length > 0) {
+            const timer = setTimeout(() => {
+                const draft = {
+                    timestamp: new Date().toISOString(),
+                    selectedProjectId,
+                    selectedDate,
+                    tasks,
+                    subcontractors,
+                    deletedSubcontractorIds,
+                    isAutoSaved: true
+                };
+                localStorage.setItem('cost-app-unsent-draft', JSON.stringify(draft));
+            }, 1000);
+            return () => clearTimeout(timer);
+        }
+    }, [tasks, subcontractors, deletedSubcontractorIds, hasUnsavedChanges, selectedProjectId, selectedDate]);
 
     // ========== 時間自動計算 (各タスク×各スロット) ==========
     const tasksWithCalculation = useMemo(() => {
         return tasks.map(t => {
             const slotCalcs = t.time_slots.map(slot => {
                 if (slot.start_time && slot.end_time) {
-                    const c = calculateWorkHours(slot.start_time, slot.end_time, selectedDate);
+                    const c = calculateWorkHours(slot.start_time, slot.end_time, selectedDate, slot.is_overnight);
                     return { ...c, has_input: true };
                 }
                 return { netWorkHours: 0, overtimeHours: 0, regularHours: 0, breakMinutes: 0, grossMinutes: 0, has_input: false };
@@ -219,7 +258,7 @@ const WorkerApp = () => {
 
     // 時間帯ラップ（重複）チェック
     const timeOverlapWarnings = useMemo(() => {
-        if (!selectedProjectId || workerDailyAllRecords.length === 0) return [];
+        if (!selectedProjectId) return [];
 
         const toMinutes = (timeStr) => {
             if (!timeStr) return null;
@@ -227,7 +266,10 @@ const WorkerApp = () => {
             return h * 60 + m;
         };
 
+        const fmt = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
+
         const allIntervals = [];
+        const warnings = [];
         const ap = projects.find(p => p.id === Number(selectedProjectId));
 
         workerDailyAllRecords
@@ -237,35 +279,49 @@ const WorkerApp = () => {
                 const e = toMinutes(r.end_time);
                 if (s !== null && e !== null) {
                     const proj = projects.find(p => p.id === Number(r.project_id));
-                    allIntervals.push({ projectId: r.project_id, projectName: proj?.name || '別現場', start: s, end: e });
+                    allIntervals.push({ projectId: r.project_id, projectName: proj?.name || '別現場', taskName: proj?.name || '別現場', start: s, end: e });
                 }
             });
 
         tasks.forEach(t => {
             t.time_slots.forEach(slot => {
                 const s = toMinutes(slot.start_time);
-                const e = toMinutes(slot.end_time);
+                let e = toMinutes(slot.end_time);
                 if (s !== null && e !== null) {
-                    allIntervals.push({ projectId: selectedProjectId, projectName: ap?.name || '現在の現場', start: s, end: e });
+                    if (slot.is_overnight) e += 1440;
+
+                    if (s >= e) {
+                        warnings.push({
+                            key: `inverted-${t.id}-${slot.slot_id}`,
+                            message: `「${t.name}」の終了時刻が開始時刻以前になっています。日跨ぎの場合は「翌日」にチェックを入れてください。`
+                        });
+                    } else {
+                        allIntervals.push({ projectId: selectedProjectId, projectName: ap?.name || '現在の現場', taskName: t.name, start: s, end: e, slotId: slot.slot_id });
+                    }
                 }
             });
         });
 
-        const warnings = [];
         for (let i = 0; i < allIntervals.length; i++) {
             for (let j = i + 1; j < allIntervals.length; j++) {
                 const a = allIntervals[i];
                 const b = allIntervals[j];
-                if (String(a.projectId) === String(b.projectId)) continue;
+                
+                if (a.slotId && b.slotId && a.slotId === b.slotId) continue;
+
                 if (a.start < b.end && b.start < a.end) {
-                    const fmt = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
                     const overlapStart = Math.max(a.start, b.start);
                     const overlapEnd = Math.min(a.end, b.end);
-                    const key = `${a.projectName}-${b.projectName}-${overlapStart}-${overlapEnd}`;
+                    
+                    const isSameProject = String(a.projectId) === String(b.projectId);
+                    const nameA = isSameProject ? a.taskName : a.projectName;
+                    const nameB = isSameProject ? b.taskName : b.projectName;
+                    
+                    const key = `overlap-${a.projectId}-${a.taskName}-${a.start}-${b.projectId}-${b.taskName}-${b.start}`;
                     if (!warnings.some(w => w.key === key)) {
                         warnings.push({
                             key,
-                            message: `「${a.projectName}」と「${b.projectName}」の作業時間が ${fmt(overlapStart)}〜${fmt(overlapEnd)} で重複しています`
+                            message: `「${nameA}」と「${nameB}」の作業時間が ${fmt(overlapStart)}〜${fmt(overlapEnd)} で重複しています`
                         });
                     }
                 }
@@ -285,6 +341,7 @@ const WorkerApp = () => {
         setDeletedSubcontractorIds(offlineDraft.deletedSubcontractorIds || []);
         localStorage.removeItem('cost-app-unsent-draft');
         setOfflineDraft(null);
+        setHasUnsavedChanges(true);
         showToast('下書きを復元しました。内容を確認し「今日の実績を送信」ボタンを押してください。', 'success');
     };
 
@@ -297,6 +354,38 @@ const WorkerApp = () => {
     // ========== 送信 ==========
     const handleSubmit = async () => {
         if (!selectedProjectId || tasks.length === 0) return;
+        
+        let hasValidationError = false;
+
+        // 片方未入力チェック & 異常時間チェック
+        for (const t of tasks) {
+            for (let j = 0; j < t.time_slots.length; j++) {
+                const slot = t.time_slots[j];
+                const tc = tasksWithCalculation.find(calcItem => calcItem.id === t.id);
+                const sc = tc ? tc.slotCalcs[j] : { netWorkHours: 0 };
+                
+                if ((slot.start_time && !slot.end_time) || (!slot.start_time && slot.end_time)) {
+                    showToast(`「${t.name}」の作業時間が片方しか入力されていません。`, 'error');
+                    hasValidationError = true;
+                }
+                if (sc.netWorkHours > 16) {
+                    showToast(`「${t.name}」の実働時間が16時間を超えています。入力内容を確認してください。`, 'error');
+                    hasValidationError = true;
+                }
+            }
+        }
+        
+        if (subcontractors.some(s => s.company_name && (s.worker_count <= 0 || !Number.isInteger(Number(s.worker_count))))) {
+            showToast('協力業者の人数は1以上の整数を入力してください。', 'error');
+            hasValidationError = true;
+        }
+
+        if (hasValidationError) return;
+
+        if (timeOverlapWarnings.length > 0) {
+            showToast('時間の重複または不整合の警告が出ています。入力内容を修正してください。', 'error');
+            return;
+        }
         setIsSaving(true);
         setSaveMessage('');
         try {
@@ -374,6 +463,7 @@ const WorkerApp = () => {
 
             localStorage.removeItem('cost-app-unsent-draft');
             setOfflineDraft(null);
+            setHasUnsavedChanges(false);
 
             setSaveMessage('日報を送信しました！お疲れ様です。');
             setTimeout(() => setSaveMessage(''), 5000);
@@ -411,7 +501,7 @@ const WorkerApp = () => {
                     <div className="bg-white rounded-2xl shadow-lg p-6 text-center border-t-4 border-blue-600">
                         <HardHat className="w-16 h-16 text-blue-600 mx-auto mb-4" />
                         <h1 className="text-2xl font-black text-slate-800 mb-2">作業日報システム</h1>
-                        <p className="text-sm font-bold text-slate-500 mb-8">自分の名前を選んでください</p>
+                        <p className="text-sm font-bold text-slate-500 mb-8">名前を選んでください</p>
                         <div className="flex flex-col gap-3 max-h-[60vh] overflow-y-auto px-1 pb-4">
                             {workers.map(w => (
                                 <button key={w.id} onClick={() => handleLogin(w)}
@@ -471,10 +561,12 @@ const WorkerApp = () => {
                 {offlineDraft && (
                     <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 mb-4 shadow-sm">
                         <div className="flex items-center gap-2 text-orange-700 font-bold mb-2 text-sm">
-                            <AlertCircle size={18} /> 未送信の下書きがあります
+                            <AlertCircle size={18} /> 未送信のデータがあります
                         </div>
                         <p className="text-xs text-orange-600 mb-3 font-medium">
-                            {new Date(offlineDraft.timestamp).toLocaleString('ja-JP')} に通信エラーで保存されたデータがあります。復元して再送信してください。
+                            {offlineDraft.isAutoSaved ? 
+                                `${new Date(offlineDraft.timestamp).toLocaleString('ja-JP')} に入力中のデータが自動保存されています。` :
+                                `${new Date(offlineDraft.timestamp).toLocaleString('ja-JP')} に通信エラーで保存されたデータがあります。復元して再送信してください。`}
                         </p>
                         <div className="flex gap-2">
                             <button onClick={handleRestoreDraft} className="flex-1 bg-orange-500 hover:bg-orange-600 text-white font-bold py-2 rounded-lg text-xs transition shadow-sm">
@@ -489,7 +581,11 @@ const WorkerApp = () => {
 
                 <div className="mb-6">
                     <label className="block text-sm font-bold text-slate-600 mb-2">作業日</label>
-                    <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)}
+                    <input type="date" value={selectedDate} onChange={(e) => {
+                        if (hasUnsavedChanges && !window.confirm("未送信の入力データがあります。破棄して別の日に移動しますか？")) return;
+                        setHasUnsavedChanges(false);
+                        setSelectedDate(e.target.value);
+                    }}
                         className="w-full bg-white border-2 border-blue-200 text-slate-800 p-4 rounded-xl font-bold text-lg outline-none focus:border-blue-500 shadow-sm appearance-none mb-2" />
                     <div className="flex items-center gap-2 mb-2">
                         <span className={`text-xs font-bold px-2 py-1 rounded-full ${seasonLabel === '夏季' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}`}>{seasonLabel}</span>
@@ -508,12 +604,16 @@ const WorkerApp = () => {
                                 <div className="flex flex-wrap gap-1.5">
                                     {enteredProjects.map(p => (
                                         <span key={p.id}
-                                            onClick={() => { setSelectedProjectId(String(p.id)); localStorage.setItem('cost-app-worker-project', String(p.id)); }}
-                                            className={`text-xs font-bold px-2.5 py-1 rounded-full border cursor-pointer active:scale-95 transition ${
-                                                String(p.id) === String(selectedProjectId)
+                                            onClick={() => {
+                                                if (hasUnsavedChanges && !window.confirm("未送信の入力データがあります。入力内容を破棄して現場を切り替えますか？")) return;
+                                                setHasUnsavedChanges(false);
+                                                setSelectedProjectId(String(p.id)); 
+                                                localStorage.setItem('cost-app-worker-project', String(p.id)); 
+                                            }}
+                                            className={`text-xs font-bold px-2.5 py-1 rounded-full border cursor-pointer active:scale-95 transition ${String(p.id) === String(selectedProjectId)
                                                     ? 'bg-blue-100 text-blue-700 border-blue-300'
                                                     : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                                            }`}
+                                                }`}
                                         >
                                             {p.name || '無題の現場'}
                                         </span>
@@ -540,11 +640,16 @@ const WorkerApp = () => {
                     )}
 
                     <label className="block text-sm font-bold text-slate-600 mb-2">現場を選択</label>
-                    <select value={selectedProjectId} onChange={(e) => { setSelectedProjectId(e.target.value); localStorage.setItem('cost-app-worker-project', e.target.value); }}
+                    <select value={selectedProjectId} onChange={(e) => {
+                        if (hasUnsavedChanges && !window.confirm("未送信の入力データがあります。入力内容を破棄して現場を切り替えますか？")) return;
+                        setHasUnsavedChanges(false);
+                        setSelectedProjectId(e.target.value); 
+                        localStorage.setItem('cost-app-worker-project', e.target.value); 
+                    }}
                         className="w-full bg-white border-2 border-blue-200 text-slate-800 p-4 rounded-xl font-bold text-lg outline-none focus:border-blue-500 shadow-sm appearance-none">
                         <option value="">現場を選ぶ...</option>
-                        {projects.filter(p => p.name === "【会社】社内業務・雑務").map(p => (<option key={p.id} value={p.id}>{p.name}</option>))}
-                        {projects.filter(p => p.name !== "【会社】社内業務・雑務").map(p => (<option key={p.id} value={p.id}>{p.name || '無題の現場'}</option>))}
+                        {projects.filter(p => ["【会社】社内業務・雑務", "【会社】有給", "有給", "【有給】"].includes(p.name)).map(p => (<option key={p.id} value={p.id}>{p.name}</option>))}
+                        {projects.filter(p => !["【会社】社内業務・雑務", "【会社】有給", "有給", "【有給】"].includes(p.name) && p.status === '施工中').map(p => (<option key={p.id} value={p.id}>{p.name || '無題の現場'}</option>))}
                     </select>
                 </div>
 
@@ -628,6 +733,12 @@ const WorkerApp = () => {
                                                         <input type="time" step="900" value={slot.end_time || ''}
                                                             onChange={(e) => updateSlotField(t.id, slot.slot_id, 'end_time', e.target.value)}
                                                             className="w-full h-12 text-center text-lg font-bold text-blue-600 bg-blue-50 border-2 border-blue-100 rounded-xl outline-none focus:border-blue-400 transition" />
+                                                    </div>
+                                                    <div className={`flex flex-col justify-center ${slotIdx === 0 ? 'mt-5' : ''}`}>
+                                                        <label className="flex items-center gap-1 bg-white border-2 border-slate-200 px-2 h-12 rounded-xl cursor-pointer hover:bg-slate-50 transition">
+                                                            <input type="checkbox" checked={slot.is_overnight || false} onChange={(e) => updateSlotField(t.id, slot.slot_id, 'is_overnight', e.target.checked)} className="w-4 h-4 text-blue-600 cursor-pointer" />
+                                                            <span className="text-[10px] font-bold text-slate-500 whitespace-nowrap leading-none">翌日</span>
+                                                        </label>
                                                     </div>
                                                     {/* 削除ボタン（スロットが2つ以上の場合のみ） */}
                                                     {t.time_slots.length > 1 && (

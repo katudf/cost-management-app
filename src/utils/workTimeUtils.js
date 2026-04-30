@@ -80,13 +80,28 @@ const overlapMinutes = (aStart, aEnd, bStart, bEnd) => {
  * @param {string} startTime - "HH:MM"
  * @param {string} endTime   - "HH:MM"
  * @param {string} dateStr   - "YYYY-MM-DD"
+ * @param {boolean} isOvernight - 翌日（日跨ぎ）フラグ
  * @returns {object} { grossMinutes, breakMinutes, netWorkHours, overtimeHours, regularHours }
  */
-export const calculateWorkHours = (startTime, endTime, dateStr) => {
+export const calculateWorkHours = (startTime, endTime, dateStr, isOvernight = false) => {
     const startMin = toMinutes(startTime);
-    const endMin = toMinutes(endTime);
+    let endMin = toMinutes(endTime);
 
-    if (startMin === null || endMin === null || endMin <= startMin) {
+    if (startMin === null || endMin === null) {
+        return {
+            grossMinutes: 0,
+            breakMinutes: 0,
+            netWorkHours: 0,
+            overtimeHours: 0,
+            regularHours: 0,
+        };
+    }
+
+    if (isOvernight) {
+        endMin += + 1440; // 24時間を追加
+    }
+
+    if (endMin <= startMin) {
         return {
             grossMinutes: 0,
             breakMinutes: 0,
@@ -102,7 +117,13 @@ export const calculateWorkHours = (startTime, endTime, dateStr) => {
     // 作業時間帯と重複する休憩時間を計算
     let breakMinutes = 0;
     config.breaks.forEach(brk => {
+        // 通常の休憩時間との重複
         breakMinutes += overlapMinutes(startMin, endMin, brk.s, brk.e);
+        
+        // 翌日（+1440分）の休憩時間とも重複チェック
+        if (isOvernight) {
+            breakMinutes += overlapMinutes(startMin, endMin, brk.s + 1440, brk.e + 1440);
+        }
     });
 
     const netWorkMinutes = grossMinutes - breakMinutes;
@@ -123,12 +144,16 @@ export const calculateWorkHours = (startTime, endTime, dateStr) => {
 
     // 残業: 定時終了後に働いた時間（休憩重複を除く）
     let lateOvertimeMinutes = 0;
+    // (通常 + 翌日の定時終了以降も残業とする）
     if (endMin > config.scheduledEnd) {
         const lateStart = Math.max(startMin, config.scheduledEnd);
         let lateGross = endMin - lateStart;
         // 残業時間帯の休憩重複を控除
         config.breaks.forEach(brk => {
             lateGross -= overlapMinutes(lateStart, endMin, brk.s, brk.e);
+            if (isOvernight) {
+               lateGross -= overlapMinutes(lateStart, endMin, brk.s + 1440, brk.e + 1440);
+            }
         });
         lateOvertimeMinutes = Math.max(0, lateGross);
     }

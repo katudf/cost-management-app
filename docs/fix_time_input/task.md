@@ -1,0 +1,10 @@
+- [x] `src/WorkerApp.jsx` `timeOverlapWarnings`処理の修正
+    - [x] `allIntervals` 配列へ作業項目名（TaskName）を含める修正
+    - [x] 逆転した時間の入力検知（`start >= end`）の追加
+    - [x] 同一現場内でも重複チェックを行うようにループ内の条件（`continue`）を修正
+    - [x] 重複エラーメッセージを同一現場／別現場で出し分ける処理の実装
+- [x] `src/WorkerApp.jsx` `handleSubmit`の送信ブロックの実装
+    - [x] `timeOverlapWarnings.length > 0` の場合に送信処理を中断（`return`）し、`showToast`でエラーを表示
+- [x] 動作確認・検証
+    - [x] 重複時間入力による警告と送信ブロックの確認
+    - [x] 逆転時間の入力による警告と送信ブロックの確認
