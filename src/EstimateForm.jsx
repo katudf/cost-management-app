@@ -1,8 +1,9 @@
 // src/EstimateForm.jsx
 // 見積書入力画面（ヘッダー + 明細）
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { ArrowLeft, Save, FileText, Plus, Trash2, GripVertical, ChevronDown, ChevronUp, Lock, Unlock } from 'lucide-react';
+import ConfirmModal from './components/ConfirmModal';
 import {
   fetchEstimateById,
   createEstimate,
@@ -119,6 +120,11 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
   const [numberError, setNumberError] = useState('');
   const [originalStatus, setOriginalStatus] = useState('draft');
 
+  // 未保存変更の追跡
+  const isDirty = useRef(false);
+  const isInitialized = useRef(false);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+
   // 見積番号を文字列に結合
   const estimateNumber = [
     header.estimate_number_date,
@@ -195,10 +201,29 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
         setError('データの読み込みに失敗しました: ' + e.message);
       } finally {
         setLoading(false);
+        // 初期ロード完了後から変更を追跡開始
+        isInitialized.current = true;
       }
     };
     init();
   }, [estimateId, isNew]);
+
+  // 初期化完了後、変更を検知してダーティフラグをセット
+  useEffect(() => {
+    if (!isInitialized.current) return;
+    isDirty.current = true;
+  }, [header, items]);
+
+  // ブラウザのタブ閉じ・リロード時に警告
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (!isDirty.current) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
 
   // ============================================================
   // ヘッダー入力ハンドラ
@@ -498,6 +523,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
       }
 
       setOriginalStatus(header.status);
+      isDirty.current = false; // 保存完了後はダーティフラグをリセット
       onSaved?.();
     } catch (e) {
       setError('保存に失敗しました: ' + e.message);
@@ -522,7 +548,9 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
       <div className="flex items-center justify-between mb-5">
         <div className="flex items-center gap-3">
           <button
-            onClick={onBack}
+            onClick={() => isDirty.current ? setShowLeaveConfirm(true) : onBack()}
+            aria-label="一覧に戻る"
+            title="一覧に戻る"
             className="p-2 rounded-lg hover:bg-slate-100 text-slate-500 transition"
           >
             <ArrowLeft size={20} />
@@ -808,6 +836,8 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
                     <div className="flex items-center gap-2">
                       <input
                         type="number"
+                        min="0"
+                        max="100"
                         value={header.net_perc}
                         onChange={e => handleHeaderChange('net_perc', e.target.value)}
                         className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-blue-400"
@@ -822,6 +852,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
                       <span className="absolute left-3 top-1.5 text-slate-400 text-xs">¥</span>
                       <input
                         type="number"
+                        min="0"
                         value={header.net_amount}
                         onChange={e => handleHeaderChange('net_amount', e.target.value)}
                         className="w-full border border-slate-300 rounded-lg pl-6 pr-3 py-1.5 text-xs focus:ring-2 focus:ring-blue-400"
@@ -901,6 +932,17 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
 
         </div>
       </div>
+
+      {/* 未保存変更の離脱確認モーダル */}
+      <ConfirmModal
+        isOpen={showLeaveConfirm}
+        onClose={() => setShowLeaveConfirm(false)}
+        onConfirm={() => { setShowLeaveConfirm(false); isDirty.current = false; onBack(); }}
+        title="変更を破棄しますか？"
+        message="保存されていない変更があります。一覧に戻ると変更内容が失われます。"
+        confirmText="破棄して戻る"
+        cancelText="編集を続ける"
+      />
     </div>
   );
 };
@@ -1045,7 +1087,7 @@ const ItemRow = ({ item, index, allItems, onChange, onAddItem, onRemove, disable
         </td>
         <td className="px-2 py-1.5">
           {!disabled && (
-            <button onClick={onRemove} className="text-red-400 hover:text-red-600">
+            <button onClick={onRemove} aria-label="行を削除" title="行を削除" className="text-red-400 hover:text-red-600">
               <Trash2 size={14} />
             </button>
           )}
@@ -1066,6 +1108,7 @@ const ItemRow = ({ item, index, allItems, onChange, onAddItem, onRemove, disable
         <td className="px-2 py-1.5">
           <input
             type="number"
+            min="0"
             value={item.amount || ''}
             onChange={e => onChange('amount', e.target.value)}
             className="w-full border border-slate-300 rounded px-1 py-1 text-xs text-right bg-white"
@@ -1105,6 +1148,7 @@ const ItemRow = ({ item, index, allItems, onChange, onAddItem, onRemove, disable
       <td className="px-2 py-1.5">
         <input
           type="number"
+          min="0"
           value={item.quantity || ''}
           onChange={e => onChange('quantity', e.target.value)}
           className="w-full border border-slate-200 rounded px-1 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-400"
@@ -1140,6 +1184,7 @@ const ItemRow = ({ item, index, allItems, onChange, onAddItem, onRemove, disable
       <td className="px-2 py-1.5">
         <input
           type="number"
+          min="0"
           value={item.unit_price || ''}
           onChange={e => onChange('unit_price', e.target.value)}
           className="w-full border border-slate-200 rounded px-1 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-400"
@@ -1150,6 +1195,7 @@ const ItemRow = ({ item, index, allItems, onChange, onAddItem, onRemove, disable
       <td className="px-2 py-1.5">
         <input
           type="number"
+          min="0"
           value={item.amount || ''}
           onChange={e => onChange('amount', e.target.value)}
           className="w-full border border-slate-200 rounded px-1 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-400 bg-slate-50"
@@ -1169,7 +1215,7 @@ const ItemRow = ({ item, index, allItems, onChange, onAddItem, onRemove, disable
       </td>
       <td className="px-2 py-1.5">
         {!disabled && (
-          <button onClick={onRemove} className="text-red-400 hover:text-red-600">
+          <button onClick={onRemove} aria-label="行を削除" title="行を削除" className="text-red-400 hover:text-red-600">
             <Trash2 size={14} />
           </button>
         )}

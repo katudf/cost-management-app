@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Search, Plus, Edit3, Trash2, Save, X, User, MapPin, Phone, UserCheck, Loader2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../components/Toast';
+import ConfirmModal from '../ConfirmModal';
 
 const CustomerSettings = () => {
     const { showToast } = useToast();
@@ -10,6 +11,7 @@ const CustomerSettings = () => {
     const [isSaving, setIsSaving] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [form, setForm] = useState({ id: null, name: '', address: '', contactPerson: '', phone: '' });
+    const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
     const fetchCustomers = useCallback(async () => {
         setIsLoading(true);
@@ -69,8 +71,6 @@ const CustomerSettings = () => {
     };
 
     const handleDelete = async (id) => {
-        if (!window.confirm('この顧客情報を削除してもよろしいですか？')) return;
-
         setIsSaving(true);
         try {
             const { error } = await supabase.from('Customers').delete().eq('id', id);
@@ -237,7 +237,7 @@ const CustomerSettings = () => {
                                                     <Edit3 size={16} />
                                                 </button>
                                                 <button
-                                                    onClick={() => handleDelete(customer.id)}
+                                                    onClick={() => setConfirmDeleteId(customer.id)}
                                                     disabled={isSaving}
                                                     className="bg-white border border-slate-200 text-red-500 hover:text-red-600 hover:border-red-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50"
                                                     title="削除"
@@ -253,6 +253,13 @@ const CustomerSettings = () => {
                     </table>
                 </div>
             </div>
+            <ConfirmModal
+                isOpen={!!confirmDeleteId}
+                onClose={() => setConfirmDeleteId(null)}
+                onConfirm={() => { handleDelete(confirmDeleteId); setConfirmDeleteId(null); }}
+                title="顧客情報を削除"
+                message="この顧客情報を削除してもよろしいですか？"
+            />
         </div>
     );
 };

@@ -823,7 +823,7 @@ const WorkerApp = () => {
                                                     className="w-16 bg-white border border-slate-200 p-2 rounded-lg text-sm text-center font-bold outline-none focus:border-blue-400" />
                                                 <span className="text-xs font-bold text-slate-500">人</span>
                                             </div>
-                                            <button onClick={() => removeSubcontractor(s.id)} className="w-8 h-8 flex items-center justify-center shrink-0 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition"><Trash2 size={16} /></button>
+                                            <button onClick={() => removeSubcontractor(s.id)} aria-label="協力業者を削除" title="協力業者を削除" className="w-8 h-8 flex items-center justify-center shrink-0 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition"><Trash2 size={16} /></button>
                                         </div>
                                     ))}
                                 </div>

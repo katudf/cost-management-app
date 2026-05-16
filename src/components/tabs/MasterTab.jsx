@@ -317,7 +317,7 @@ const MasterTab = ({
                                             <label className="text-[9px] font-bold text-slate-400 block mb-1 uppercase text-right tracking-tighter">見積金額</label>
                                             <div className="flex items-center gap-1 justify-end font-mono font-bold">
                                                 <span className="text-slate-400 text-xs">¥</span><input
-                                                    type="number" value={m.estimatedAmount || 0}
+                                                    type="number" min="0" value={m.estimatedAmount || 0}
                                                     className="w-full text-right outline-none bg-slate-50 rounded px-1"
                                                     onChange={(e) => {
                                                         const newEst = Number(e.target.value);
