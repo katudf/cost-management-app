@@ -116,6 +116,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [numberError, setNumberError] = useState('');
+  const [originalStatus, setOriginalStatus] = useState('draft');
 
   // 見積番号を文字列に結合
   const estimateNumber = [
@@ -150,6 +151,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
             estimate_number_seq: seq,
             customer_honorific: '御中',
           }));
+          setOriginalStatus('draft');
           // デフォルト明細（工種1つ + 固定費）
           setItems([
             { ...newCategoryRow(0), category_symbol: 'A', name: '' },
@@ -186,6 +188,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
             net_amount:      est.net_amount ?? '',
           });
           setItems(est.items || []);
+          setOriginalStatus(est.status || 'draft');
         }
       } catch (e) {
         setError('データの読み込みに失敗しました: ' + e.message);
@@ -278,7 +281,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
   // ============================================================
   // 編集ロック判定
   // ============================================================
-  const isLocked = !isNew && header.status !== 'draft';
+  const isLocked = !isNew && originalStatus !== 'draft';
 
   // 下書きに戻す
   const handleUnlock = async () => {
@@ -286,6 +289,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
       setSaving(true);
       await updateEstimate(estimateId, { status: 'draft' });
       setHeader(h => ({ ...h, status: 'draft' }));
+      setOriginalStatus('draft');
     } catch (e) {
       setError('ステータスの変更に失敗しました: ' + e.message);
     } finally {
@@ -325,12 +329,8 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
       return;
     }
 
-    // 工種・細別バリデーション
+    // 工種・細別バリデーション（工種がある場合のみチェック）
     const categories = items.filter(i => i.item_type === 'category');
-    if (categories.length === 0) {
-      setError('工種を最低1件追加してください。');
-      return;
-    }
     let catIdx = 0;
     for (let i = 0; i < items.length; i++) {
       if (items[i].item_type === 'category') {
@@ -462,6 +462,41 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
         }));
       await saveEstimateItems(savedId, saveableItems);
 
+      // --- 「承認」時の自動連動（Projectsテーブルへのコピー） ---
+      if (header.status === 'approved' && originalStatus !== 'approved') {
+        try {
+          const { supabase } = await import('./lib/supabase');
+          // 既存の同名プロジェクト確認
+          const { data: existing } = await supabase
+            .from('Projects')
+            .select('id')
+            .eq('name', header.title)
+            .eq('customerId', header.customer_id)
+            .limit(1);
+            
+          if (!existing || existing.length === 0) {
+            // next order 取得
+            const { data: maxOrder } = await supabase
+              .from('Projects')
+              .select('order')
+              .order('order', { ascending: false })
+              .limit(1);
+            const nextOrder = (maxOrder?.[0]?.order || 0) + 1;
+            
+            // プロジェクト作成
+            await supabase.from('Projects').insert([{
+              name: header.title,
+              customerId: header.customer_id,
+              status: '見積',
+              order: nextOrder
+            }]);
+          }
+        } catch (syncErr) {
+          console.error('工事マスタへの連携に失敗しました:', syncErr);
+        }
+      }
+
+      setOriginalStatus(header.status);
       onSaved?.();
     } catch (e) {
       setError('保存に失敗しました: ' + e.message);
@@ -527,7 +562,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
       {isLocked && (
         <div className="bg-amber-50 border border-amber-200 text-amber-700 rounded-lg px-4 py-3 mb-4 text-sm flex items-center gap-2">
           <Lock size={16} />
-          この見積書は「{header.status === 'submitted' ? '提出済み' : header.status === 'accepted' ? '受注' : '失注'}」のため編集できません。編集するには「下書きに戻す」を実行してください。
+          この見積書は「{originalStatus === 'pending' ? '申請中' : originalStatus === 'approved' ? '承認' : originalStatus === 'returned' ? '差し戻し' : originalStatus}」のため編集できません。編集するには「下書きに戻す」を実行してください。
         </div>
       )}
 
@@ -804,11 +839,12 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
               value={header.status}
               onChange={e => handleHeaderChange('status', e.target.value)}
               className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+              disabled={isLocked}
             >
               <option value="draft">下書き</option>
-              <option value="submitted">提出済み</option>
-              <option value="accepted">受注</option>
-              <option value="rejected">失注</option>
+              <option value="pending">申請中</option>
+              <option value="approved">承認</option>
+              <option value="returned">差し戻し</option>
             </select>
           </Section>
 

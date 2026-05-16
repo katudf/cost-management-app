@@ -28,8 +28,33 @@ Font.register({
   src: 'https://fonts.gstatic.com/s/shipporimincho/v17/VdGGAZweH5EbgHY6YExcZfDoj0BA2w.ttf'
 });
 
-// 日本語のハイフネーション処理を無効化（クラッシュ防止）
-Font.registerHyphenationCallback(word => [word]);
+// 日本語テキストの折り返し対応（ハイフンなし）
+// @react-pdf/rendererはデフォルトでハイフンを付与して折り返すため、
+// ハイフネーションを無効化した上で、微小な空白（Hair Space: \u200A）を各文字間に挿入して
+// 自然な折り返しを実現する。（\u200Bは内部で単語区切りとして認識されないため不可）
+Font.registerHyphenationCallback((word) => [word]);
+
+const wrapText = (text) => {
+  if (!text) return '';
+  const str = String(text);
+  // 短い単語の途中改行を防ぐ
+  if (str.length <= 10) return str;
+  
+  // React-PDFの強制ハイフン付与を回避するため、
+  // 単語区切りとして認識される正規のスペース（\u0020）を挿入するが、
+  // フォントサイズを極小（0.1）かつ透明にして画面上は見えなくする
+  const elements = [];
+  const arr = Array.from(str);
+  for (let i = 0; i < arr.length; i++) {
+    elements.push(<Text key={`char-${i}`}>{arr[i]}</Text>);
+    if (i < arr.length - 1) {
+      elements.push(
+        <Text key={`space-${i}`} style={{ fontSize: 0.1, color: 'transparent' }}> </Text>
+      );
+    }
+  }
+  return elements;
+};
 
 // ============================================================
 // スタイル定義
@@ -49,6 +74,7 @@ const S = StyleSheet.create({
     border: '1pt solid #333',
     padding: 16,
     flex: 1,
+    overflow: 'hidden',
   },
   title: { // 「御見積書」のタイトル
     fontSize: 34,
@@ -57,22 +83,22 @@ const S = StyleSheet.create({
     letterSpacing: 8,
     borderBottom: '1.5pt solid #1a1a1a',
     paddingBottom: 6,
-    marginBottom: 14,
+    marginBottom: 10,
     width: 320,           // ラインの長さを 320pt に固定
     alignSelf: 'center',  // 要素自体を中央に配置
   },
   coverHeaderRow: { // 見積Noと見積日の行
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 12,
+    marginBottom: 8,
   },
   coverTwoCol: { // 顧客情報(左)と自社情報(右)を並べるためのコンテナ
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 14,
-    gap: 12,
+    marginBottom: 8,
+    gap: 8,
   },
-  coverLeft: { flex: 1 }, // 顧客情報側の幅調整
+  coverLeft: { width: 460 }, // 顧客情報側の幅（テキスト折り返しのため固定）
   coverRight: { // 自社情報側の幅調整
     width: 200,
     alignItems: 'flex-start',
@@ -85,15 +111,13 @@ const S = StyleSheet.create({
     marginBottom: 6,
     borderBottom: '0.5pt solid #555',
     paddingBottom: 3,
-    width: 320,           // ラインの長さを 320pt に固定
-    alignSelf: 'left',  // 要素自体を左に配置
   },
   subText: { fontSize: 12, marginBottom: 4, color: '#333' }, // 「下記の通り...」などの小テキスト
   totalBox: { // 合計金額を囲む四角いボックス全体
     flexDirection: 'row',
     border: '1.5pt solid #1a1a1a',
-    marginTop: 8,
-    marginBottom: 6,
+    marginTop: 4,
+    marginBottom: 4,
     width: 380,
   },
   totalBoxLabel: { // 「合計（税込）」のラベル部分
@@ -102,7 +126,7 @@ const S = StyleSheet.create({
     fontSize: 24,
     fontWeight: 'bold',
     borderRight: '1pt solid #1a1a1a',
-    width: 140,
+    width: 150,
     justifyContent: 'center',
   },
   totalBoxAmount: { // 金額表示部分
@@ -147,19 +171,22 @@ const S = StyleSheet.create({
     fontFamily: 'ShipporiMincho',
   },
   projectInfoSection: { // 工事情報セクション（全体のコンテナを横並びに）
-    marginTop: 10,
+    marginTop: 4,
     paddingTop: 8,
     flexDirection: 'row',
+    overflow: 'hidden',
   },
   projectInfoLeft: { // 左側：詳細情報のブロック
     flex: 1,
     paddingRight: 15,
-    marginTop: 45, // 60から45に縮小（はみ出し防止）
+    marginTop: 20, // 顧客名2行化で縦スペースが減ったため圧縮
+    overflow: 'hidden',
   },
   projectInfoRight: { // 右側：備考情報のブロック
     width: 320, // 3文字分（約40pt）拡張
     paddingLeft: 15,
-    marginTop: 10, // 25から10に縮小（はみ出し防止）
+    marginTop: 4, // 縦スペース圧縮
+    overflow: 'hidden',
   },
   projectInfoRow: { // 工事情報1件分の行
     flexDirection: 'row',
@@ -180,7 +207,7 @@ const S = StyleSheet.create({
     color: '#444',
   },
   projectValue: { // 右側の内容
-    flex: 1,
+    width: 280, // projectInfoLeft(flex:1 ≈ 345pt) - projectLabel(65pt) = 280pt
     fontSize: 13,
   },
   notesLabel: { // 備考ラベル特有の幅調整など
@@ -191,7 +218,7 @@ const S = StyleSheet.create({
     marginLeft: 12,
   },
   notesValue: { // 備考内容
-    flex: 1,
+    width: 290, // projectInfoRight(320pt) - paddingLeft(15pt) - margin
     fontSize: 13,
   },
 
@@ -218,13 +245,17 @@ const S = StyleSheet.create({
     borderBottom: '1pt solid #1a1a1a',
     borderLeft: '1pt solid #1a1a1a',
     borderRight: '1pt solid #1a1a1a',
+    height: 22,
+    minHeight: 22,
   },
   tableRow: {
     flexDirection: 'row',
     borderBottom: '0.5pt dashed #888',
     borderLeft: '1pt solid #1a1a1a',
     borderRight: '1pt solid #1a1a1a',
-    minHeight: 20,
+    height: 23,
+    maxHeight: 23,
+    overflow: 'hidden',
   },
   categoryRow: {
     flexDirection: 'row',
@@ -232,7 +263,9 @@ const S = StyleSheet.create({
     borderBottom: '0.5pt dashed #888',
     borderLeft: '1pt solid #1a1a1a',
     borderRight: '1pt solid #1a1a1a',
-    minHeight: 20,
+    height: 23,
+    maxHeight: 23,
+    overflow: 'hidden',
   },
   fixedRow: {
     flexDirection: 'row',
@@ -240,21 +273,27 @@ const S = StyleSheet.create({
     borderBottom: '0.5pt dashed #888',
     borderLeft: '1pt solid #1a1a1a',
     borderRight: '1pt solid #1a1a1a',
-    minHeight: 20,
+    height: 23,
+    maxHeight: 23,
+    overflow: 'hidden',
   },
   subtotalRow: {
     flexDirection: 'row',
     borderBottom: '1pt solid #1a1a1a',
     borderLeft: '1pt solid #1a1a1a',
     borderRight: '1pt solid #1a1a1a',
-    minHeight: 20,
+    height: 23,
+    maxHeight: 23,
+    overflow: 'hidden',
   },
   netRow: {
     flexDirection: 'row',
-    borderBottom: '0.5pt dashed #888',
+    borderBottom: '1pt solid #1a1a1a',
     borderLeft: '1pt solid #1a1a1a',
     borderRight: '1pt solid #1a1a1a',
-    minHeight: 20,
+    height: 23,
+    maxHeight: 23,
+    overflow: 'hidden',
     position: 'relative',
     alignItems: 'center',
     justifyContent: 'center',
@@ -289,17 +328,25 @@ const S = StyleSheet.create({
     fontSize: 10,
   },
 
-  // セル (A4横用に幅とパディングを調整、縦の点線を追加)
-  cellNo: { width: 30, paddingHorizontal: 4, paddingVertical: 4, fontSize: 9, textAlign: 'center', borderRight: '0.5pt dashed #888' },
-  cellName: { flex: 2, paddingHorizontal: 6, paddingVertical: 4, fontSize: 9, borderRight: '0.5pt dashed #888' },
-  cellSpec: { flex: 2, paddingHorizontal: 6, paddingVertical: 4, fontSize: 9, color: '#333', borderRight: '0.5pt dashed #888' },
-  cellQty: { width: 50, paddingHorizontal: 6, paddingVertical: 4, fontSize: 9, textAlign: 'right', borderRight: '0.5pt dashed #888' },
-  cellUnit: { width: 40, paddingHorizontal: 4, paddingVertical: 4, fontSize: 9, textAlign: 'center', borderRight: '0.5pt dashed #888' },
-  cellPrice: { width: 70, paddingHorizontal: 6, paddingVertical: 4, fontSize: 9, textAlign: 'right', borderRight: '0.5pt dashed #888' },
-  cellAmount: { width: 80, paddingHorizontal: 6, paddingVertical: 4, fontSize: 9, textAlign: 'right', borderRight: '0.5pt dashed #888' },
-  cellNote: { flex: 1.5, paddingHorizontal: 6, paddingVertical: 4, fontSize: 9, color: '#555' },
+  // セル (A4横用に幅とパディングを調整、縦の点線を追加、テキスト切り詰め)
+  cellNo: { width: 30, paddingHorizontal: 4, paddingVertical: 4, fontSize: 9, textAlign: 'center', borderRight: '0.5pt dashed #888', overflow: 'hidden', maxLines: 1 },
+  cellName: { flex: 2, paddingHorizontal: 6, paddingVertical: 4, fontSize: 9, borderRight: '0.5pt dashed #888', overflow: 'hidden', maxLines: 2 },
+  cellSpec: { flex: 3, paddingHorizontal: 6, paddingVertical: 4, fontSize: 9, color: '#333', borderRight: '0.5pt dashed #888', overflow: 'hidden', maxLines: 2 },
+  cellQty: { width: 50, paddingHorizontal: 6, paddingVertical: 4, fontSize: 9, textAlign: 'right', borderRight: '0.5pt dashed #888', overflow: 'hidden', maxLines: 1 },
+  cellUnit: { width: 25, paddingHorizontal: 4, paddingVertical: 4, fontSize: 9, textAlign: 'center', borderRight: '0.5pt dashed #888', overflow: 'hidden', maxLines: 1 },
+  cellPrice: { width: 60, paddingHorizontal: 6, paddingVertical: 4, fontSize: 9, textAlign: 'right', borderRight: '0.5pt dashed #888', overflow: 'hidden', maxLines: 1 },
+  cellAmount: { width: 60, paddingHorizontal: 6, paddingVertical: 4, fontSize: 9, textAlign: 'right', borderRight: '0.5pt dashed #888', overflow: 'hidden', maxLines: 1 },
+  cellNote: { flex: 0.8, paddingHorizontal: 6, paddingVertical: 4, fontSize: 9, color: '#555', overflow: 'hidden', maxLines: 2 },
 
-  // ヘッダー用セル (点線を実線に上書きしないため、ベースは同じだがヘッダー特有のスタイルがあればここへ)
+  // ヘッダー用セル（テキスト非表示問題を避けるため専用スタイルを用意）
+  hCellNo: { width: 30, paddingHorizontal: 4, paddingTop: 5, fontSize: 9, textAlign: 'center', fontWeight: 'bold', borderRight: '0.5pt dashed #888' },
+  hCellName: { flex: 2, paddingHorizontal: 6, paddingTop: 5, fontSize: 9, textAlign: 'center', fontWeight: 'bold', borderRight: '0.5pt dashed #888' },
+  hCellSpec: { flex: 3, paddingHorizontal: 6, paddingTop: 5, fontSize: 9, textAlign: 'center', fontWeight: 'bold', borderRight: '0.5pt dashed #888' },
+  hCellQty: { width: 50, paddingHorizontal: 6, paddingTop: 5, fontSize: 9, textAlign: 'center', fontWeight: 'bold', borderRight: '0.5pt dashed #888' },
+  hCellUnit: { width: 25, paddingHorizontal: 4, paddingTop: 5, fontSize: 9, textAlign: 'center', fontWeight: 'bold', borderRight: '0.5pt dashed #888' },
+  hCellPrice: { width: 60, paddingHorizontal: 6, paddingTop: 5, fontSize: 9, textAlign: 'center', fontWeight: 'bold', borderRight: '0.5pt dashed #888' },
+  hCellAmount: { width: 60, paddingHorizontal: 6, paddingTop: 5, fontSize: 9, textAlign: 'center', fontWeight: 'bold', borderRight: '0.5pt dashed #888' },
+  hCellNote: { flex: 0.8, paddingHorizontal: 6, paddingTop: 5, fontSize: 9, textAlign: 'center', fontWeight: 'bold' },
 
   // ページ番号
   pageNumber: {
@@ -335,12 +382,31 @@ const fmtDate = (dateStr) => {
   return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
 };
 
+// テキスト長に応じたフォントサイズ自動縮小
+const calcFontSize = (text, baseSize, maxChars) => {
+  if (!text) return baseSize;
+  const len = text.length;
+  if (len <= maxChars) return baseSize;
+  // 文字数が超過した分だけ縮小（下限は baseSize の 50%）
+  const ratio = maxChars / len;
+  return Math.max(baseSize * 0.5, baseSize * ratio);
+};
+
 // ============================================================
 // 表紙コンポーネント
 // ============================================================
 const CoverPage = ({ estimate, settings, totals }) => {
   const { net, subtotal, tax, total } = totals;
 
+  // 顧客名の動的フォントサイズ計算（2行表示を前提に40文字基準）
+  const customerFullName = `${estimate.customer?.name || ''}　${estimate.customer_honorific === 'なし' ? '' : (estimate.customer_honorific || '御中')}`;
+  const customerFontSize = calcFontSize(customerFullName, 24, 40);
+
+  // 工事名の動的フォントサイズ計算（2行表示を前提に40文字基準）
+  const titleFontSize = calcFontSize(estimate.title, 13, 40);
+
+  // 備考の動的フォントサイズ計算
+  const notesFontSize = calcFontSize(estimate.notes, 13, 100);
   return (
     <Page size="A4" orientation="landscape" style={S.page}>
       <View style={S.outerBorder}>
@@ -359,8 +425,8 @@ const CoverPage = ({ estimate, settings, totals }) => {
 
           {/* 左カラム: 宛名と合計金額ボックス */}
           <View style={S.coverLeft}>
-            <Text style={S.customerName}>
-              {estimate.customer?.name}　{estimate.customer_honorific === 'なし' ? '' : (estimate.customer_honorific || '御中')}
+            <Text style={[S.customerName, { fontSize: customerFontSize }]}>
+              {wrapText(customerFullName)}
             </Text>
             <Text style={S.subText}>下記の通りお見積り申し上げます。</Text>
 
@@ -435,7 +501,7 @@ const CoverPage = ({ estimate, settings, totals }) => {
             {/* 工事名 */}
             <View style={S.projectInfoRow}>
               <Text style={S.projectLabel}>工  事  名</Text>
-              <Text style={[S.projectValue, { fontWeight: 'bold' }]}>{estimate.title}</Text>
+              <Text style={[S.projectValue, { fontWeight: 'bold', fontSize: titleFontSize }]}>{wrapText(estimate.title || '')}</Text>
             </View>
 
             {/* 工事場所 */}
@@ -469,7 +535,7 @@ const CoverPage = ({ estimate, settings, totals }) => {
               <Text style={S.projectLabel}>備　考</Text>
             </View>
             <View>
-              <Text style={S.notesValue}>{estimate.notes || ''}</Text>
+              <Text style={[S.notesValue, { fontSize: notesFontSize }]}>{wrapText(estimate.notes || '')}</Text>
             </View>
           </View>
 
@@ -493,11 +559,36 @@ const DetailPage = ({ estimate, totals, settings }) => {
   const fixedItems = items.filter(i => i.item_type === 'fixed');
 
   // ダミー行の追加（ページ内で行枠を固定するため）
-  const ROWS_PER_PAGE = 17; // ★ 追加された合計行を収めるため19から17へ縮小
-  const remainder = nonFixed.length % ROWS_PER_PAGE;
-  // データが0件の場合はROWS_PER_PAGE行、端数がある場合は埋める
-  const paddingCount = nonFixed.length === 0 ? ROWS_PER_PAGE : (remainder === 0 ? 0 : ROWS_PER_PAGE - remainder);
-  const dummyRows = Array(paddingCount).fill({
+  const ROWS_PER_PAGE = 19; // 1ページのデータ行数（ヘッダー行含めず）
+
+  // 最後のページに必要な合計行のスペースを計算
+  // 工事費 + 消費税 + 税込合計 = 3行、NET表示 = 1行、固定費行数
+  const fixedFeeRows = estimate.show_fixed_fees ? fixedItems.length : 0;
+  const netRow = estimate.show_net ? 1 : 0;
+  const footerRows = 3 + netRow + fixedFeeRows; // 合計行 + NET行 + 固定費行
+
+  const totalDataRows = nonFixed.length;
+  const remainder = totalDataRows % ROWS_PER_PAGE;
+  // 最終ページで何行のデータ行があるか
+  const lastPageDataRows = remainder === 0 ? ROWS_PER_PAGE : remainder;
+  // 最終ページの空き行数（合計行のスペースを引いた残り）
+  const availableForDummy = ROWS_PER_PAGE - lastPageDataRows - footerRows;
+
+  let paddingCount;
+  if (totalDataRows === 0) {
+    // データが0件の場合はROWS_PER_PAGE行からfooterRows分を引く
+    paddingCount = ROWS_PER_PAGE - footerRows;
+  } else if (availableForDummy >= 0) {
+    // 最終ページに合計行もダミー行も収まる
+    paddingCount = availableForDummy;
+  } else {
+    // 合計行が収まらないので次ページに送る → 現在のページをダミーで埋めて、
+    // 次ページで合計行のみ表示（次ページの行数からfooterRows分を引く）
+    const fillCurrent = remainder === 0 ? 0 : ROWS_PER_PAGE - remainder;
+    paddingCount = fillCurrent + (ROWS_PER_PAGE - footerRows);
+  }
+
+  const dummyRows = Array(Math.max(0, paddingCount)).fill({
     item_type: 'dummy',
     name: '',
     spec: '',
@@ -525,19 +616,7 @@ const DetailPage = ({ estimate, totals, settings }) => {
     }
   });
 
-  // 列ヘッダー（固定・各ページ繰り返し）
-  const ColHeader = () => (
-    <View style={S.tableHeader} fixed>
-      <Text style={[S.cellNo, { textAlign: 'center' }]}>No</Text>
-      <Text style={[S.cellName, { fontWeight: 'bold', textAlign: 'center' }]}>名　称</Text>
-      <Text style={[S.cellSpec, { fontWeight: 'bold', textAlign: 'center' }]}>仕　様</Text>
-      <Text style={[S.cellQty, { fontWeight: 'bold', textAlign: 'center' }]}>数量</Text>
-      <Text style={[S.cellUnit, { fontWeight: 'bold', textAlign: 'center' }]}>単位</Text>
-      <Text style={[S.cellPrice, { fontWeight: 'bold', textAlign: 'center' }]}>単価</Text>
-      <Text style={[S.cellAmount, { fontWeight: 'bold', textAlign: 'center' }]}>金　額</Text>
-      <Text style={[S.cellNote, { fontWeight: 'bold', textAlign: 'center' }]}>摘　要</Text>
-    </View>
-  );
+
 
   return (
     <Page size="A4" orientation="landscape" style={S.page} wrap>
@@ -548,10 +627,26 @@ const DetailPage = ({ estimate, totals, settings }) => {
         <Text style={S.sheetTitle}>見積内訳明細書</Text>
       </View>
 
-      <ColHeader />
+      {/* 列ヘッダー（固定・各ページ繰り返し） */}
+      <View style={S.tableHeader} fixed>
+        <Text style={S.hCellNo}>No.</Text>
+        <Text style={S.hCellName}>名　　　　　　称</Text>
+        <Text style={S.hCellSpec}>仕　　　　　　様</Text>
+        <Text style={S.hCellQty}>数　量</Text>
+        <Text style={S.hCellUnit}>単位</Text>
+        <Text style={S.hCellPrice}>単　価</Text>
+        <Text style={S.hCellAmount}>金　額</Text>
+        <Text style={S.hCellNote}>摘　要</Text>
+      </View>
 
       {/* 明細行 */}
       {displayItems.map((item, idx) => {
+        // 19行ごとに強制改ページ（@react-pdfの自動分割とのズレ防止）
+        const shouldBreak = idx > 0 && idx % ROWS_PER_PAGE === 0;
+        // ページの最終行は外枠として下線を実線にする
+        const isLastRowOfPage = (idx + 1) % ROWS_PER_PAGE === 0;
+        const pageBottomBorderStyle = isLastRowOfPage ? { borderBottom: '1pt solid #1a1a1a' } : {};
+
         if (item.item_type === 'category') {
           const catId = item.id || item._tempId;
           const catTotal = categoryTotals[catId] || 0;
@@ -559,10 +654,10 @@ const DetailPage = ({ estimate, totals, settings }) => {
           return (
             <React.Fragment key={idx}>
               {/* 工種見出し行 */}
-              <View style={S.categoryRow} wrap={false}>
+              <View style={[S.categoryRow, pageBottomBorderStyle]} wrap={false} break={shouldBreak}>
                 <Text style={S.cellNo}></Text>
                 <Text style={[S.cellName, { fontWeight: 'bold', flex: 7 }]}>
-                  {item.category_symbol ? `${item.category_symbol}　` : ''}{item.name}
+                  {item.category_symbol ? `${item.category_symbol}　` : ''}{wrapText(item.name)}
                 </Text>
                 <Text style={S.cellNote}></Text>
               </View>
@@ -573,10 +668,10 @@ const DetailPage = ({ estimate, totals, settings }) => {
         if (item.item_type === 'item') {
           itemNo++;
           return (
-            <View key={idx} style={S.tableRow} wrap={false}>
+            <View key={idx} style={[S.tableRow, pageBottomBorderStyle]} wrap={false} break={shouldBreak}>
               <Text style={S.cellNo}>{itemNo}</Text>
-              <Text style={S.cellName}>{item.name}</Text>
-              <Text style={S.cellSpec}>{item.spec || ''}</Text>
+              <Text style={S.cellName}>{wrapText(item.name)}</Text>
+              <Text style={S.cellSpec}>{wrapText(item.spec || '')}</Text>
               <Text style={S.cellQty}>
                 {item.quantity != null ? Number(item.quantity).toLocaleString('ja-JP') : ''}
               </Text>
@@ -587,7 +682,7 @@ const DetailPage = ({ estimate, totals, settings }) => {
               <Text style={S.cellAmount}>
                 {item.amount != null ? fmt(item.amount) : ''}
               </Text>
-              <Text style={S.cellNote}>{item.note || ''}</Text>
+              <Text style={S.cellNote}>{wrapText(item.note || '')}</Text>
             </View>
           );
         }
@@ -595,7 +690,7 @@ const DetailPage = ({ estimate, totals, settings }) => {
         // subtotal行（show_subtotals=true 時）
         if (item.item_type === 'subtotal') {
           return (
-            <View key={idx} style={S.subtotalRow} wrap={false}>
+            <View key={idx} style={[S.subtotalRow, pageBottomBorderStyle]} wrap={false} break={shouldBreak}>
               <Text style={S.cellNo}></Text>
               <Text style={[S.cellName, { flex: 5, textAlign: 'right', fontWeight: 'bold', paddingRight: 8 }]}>
                 合　計
@@ -611,7 +706,7 @@ const DetailPage = ({ estimate, totals, settings }) => {
         // ダミー行（固定枠用）
         if (item.item_type === 'dummy') {
           return (
-            <View key={`dummy_${idx}`} style={S.tableRow} wrap={false}>
+            <View key={`dummy_${idx}`} style={[S.tableRow, pageBottomBorderStyle]} wrap={false} break={shouldBreak}>
               <Text style={S.cellNo}></Text>
               <Text style={S.cellName}></Text>
               <Text style={S.cellSpec}></Text>

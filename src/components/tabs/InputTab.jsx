@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Edit3, Plus, Trash2, Filter, Grid, List as ListIcon, ChevronLeft, ChevronRight } from 'lucide-react';
+import { supabase } from '../../lib/supabase';
 
 const InputTab = ({
     activeProject,
@@ -15,6 +16,13 @@ const InputTab = ({
     removeSubcontractorRecord
 }) => {
     const [companyHolidays, setCompanyHolidays] = useState([]);
+    const [viewMode, setViewMode] = useState('matrix');
+    const [currentMonth, setCurrentMonth] = useState(() => {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    });
+    const [filterDate, setFilterDate] = useState('');
+    const [filterWorker, setFilterWorker] = useState('');
 
     // 休日データの取得
     useEffect(() => {

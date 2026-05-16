@@ -330,74 +330,75 @@ const App = () => {
         <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-900">
             <div className={`${activeTab === 'assignment' || activeTab === 'dashboard' ? 'max-w-none px-4 xl:px-8' : 'max-w-6xl'} mx-auto`}>
                 <header className="mb-6">
-                    <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
-                        <div className="flex-1">
-                            <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2 mb-3 cursor-pointer hover:opacity-80 transition" onClick={() => setActiveTab('dashboard')}>
+                    <div className="flex flex-col gap-4">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                            <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2 cursor-pointer hover:opacity-80 transition" onClick={() => setActiveTab('dashboard')}>
                                 <BarChart3 className="text-blue-600" /> 工事管理システム
                             </h1>
-                            <div className="flex flex-wrap items-center gap-2">
-                                {activeTab !== 'assignment' && activeTab !== 'workers' && (
-                                    <div className="relative flex items-center">
-                                        <FolderGit2 className="absolute left-3 text-slate-400 w-4 h-4" />
-                                        <select
-                                            value={activeProjectId || ''}
-                                            onChange={(e) => {
-                                                setActiveProjectId(Number(e.target.value));
-                                                if (activeTab === 'dashboard') setActiveTab('master');
-                                            }}
-                                            className="pl-9 pr-8 py-2 bg-white border border-slate-300 rounded-lg shadow-sm font-bold text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 appearance-none hover:border-slate-400 transition"
-                                        >
-                                            {projects.length === 0 && <option value="">現場なし</option>}
-                                            {projects
-                                                .filter(p => !["【会社】社内業務・雑務", "【会社】有給", "有給", "【有給】"].includes(p.siteName))
-                                                .map(p => (
-                                                    <option key={p.id} value={p.id}>{p.siteName || '無題の現場'}</option>
-                                                ))}
-                                        </select>
-                                    </div>
-                                )}
-                                {activeTab === 'master' && (
-                                    <div className="flex items-center gap-1">
-                                        <button onClick={projectOps.addNewProject} title="新しい現場を追加" className="px-3 py-2 text-slate-500 flex items-center gap-2 hover:text-blue-600 hover:bg-white rounded-lg transition shadow-sm border border-transparent hover:border-blue-200 text-sm font-bold">
-                                            <PlusCircle size={18} />
-                                            新しい現場を追加
-                                        </button>
-                                        <div className="w-px h-6 bg-slate-200 mx-1"></div>
-                                        <input
-                                            type="file"
-                                            accept=".xlsx, .xls"
-                                            onChange={handleExcelImport}
-                                            ref={fileInputRef}
-                                            className="hidden"
-                                            id="excel-upload"
-                                        />
-                                        <label
-                                            htmlFor="excel-upload"
-                                            className="cursor-pointer px-3 py-2 text-slate-500 flex items-center gap-2 hover:text-blue-600 hover:bg-white rounded-lg transition shadow-sm border border-transparent hover:border-blue-200 text-sm font-bold"
-                                        >
-                                            {isLoading ? <Loader2 className="animate-spin w-4 h-4" /> : <Upload size={18} />}
-                                            Excelからインポート
-                                        </label>
-                                    </div>
-                                )}
-                            </div>
+                            <nav className="bg-white p-2 rounded-lg shadow-sm border flex gap-1 overflow-x-auto">
+                                {[
+                                    { key: 'dashboard', label: 'ホーム', Icon: Home },
+                                    { key: 'master', label: '工事設定', Icon: Settings },
+                                    { key: 'workers', label: '作業員', Icon: Users },
+                                    { key: 'assignment', label: '配置表', Icon: Calendar },
+                                    { key: 'settings', label: '設定', Icon: Settings },
+                                    { key: 'purchase_ledger', label: '材料', Icon: FileText },
+                                    { key: 'estimate', label: '見積', Icon: Clipboard },
+                                ].map(({ key, label, Icon }) => (
+                                    <button key={key} onClick={() => setActiveTab(key)} className={`px-4 py-2 rounded-md transition font-bold whitespace-nowrap flex items-center gap-1.5 ${activeTab === key ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 text-slate-600'}`}>
+                                        <Icon size={16} />
+                                        {label}
+                                    </button>
+                                ))}
+                            </nav>
                         </div>
-                        <nav className="bg-white p-2 rounded-lg shadow-sm border flex gap-1 mt-2 md:mt-0 overflow-x-auto">
-                            {[
-                                { key: 'dashboard', label: 'ホーム', Icon: Home },
-                                { key: 'master', label: '工事設定', Icon: Settings },
-                                { key: 'workers', label: '作業員', Icon: Users },
-                                { key: 'assignment', label: '配置表', Icon: Calendar },
-                                { key: 'settings', label: '設定', Icon: Settings },
-                                { key: 'purchase_ledger', label: '材料', Icon: FileText },
-                                { key: 'estimate', label: '見積', Icon: FileText },
-                            ].map(({ key, label, Icon }) => (
-                                <button key={key} onClick={() => setActiveTab(key)} className={`px-4 py-2 rounded-md transition font-bold whitespace-nowrap flex items-center gap-1.5 ${activeTab === key ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 text-slate-600'}`}>
-                                    <Icon size={16} />
-                                    {label}
-                                </button>
-                            ))}
-                        </nav>
+                        
+                        <div className="flex flex-wrap items-center gap-2">
+                            {activeTab !== 'assignment' && activeTab !== 'workers' && (
+                                <div className="relative flex items-center">
+                                    <FolderGit2 className="absolute left-3 text-slate-400 w-4 h-4" />
+                                    <select
+                                        value={activeProjectId || ''}
+                                        onChange={(e) => {
+                                            setActiveProjectId(Number(e.target.value));
+                                            if (activeTab === 'dashboard') setActiveTab('master');
+                                        }}
+                                        className="pl-9 pr-8 py-2 bg-white border border-slate-300 rounded-lg shadow-sm font-bold text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 appearance-none hover:border-slate-400 transition"
+                                    >
+                                        {projects.length === 0 && <option value="">現場なし</option>}
+                                        {projects
+                                            .filter(p => !["【会社】社内業務・雑務", "【会社】有給", "有給", "【有給】"].includes(p.siteName))
+                                            .map(p => (
+                                                <option key={p.id} value={p.id}>{p.siteName || '無題の現場'}</option>
+                                            ))}
+                                    </select>
+                                </div>
+                            )}
+                            {activeTab === 'master' && (
+                                <div className="flex items-center gap-1">
+                                    <button onClick={projectOps.addNewProject} title="新しい現場を追加" className="px-3 py-2 text-slate-500 flex items-center gap-2 hover:text-blue-600 hover:bg-white rounded-lg transition shadow-sm border border-transparent hover:border-blue-200 text-sm font-bold">
+                                        <PlusCircle size={18} />
+                                        新しい現場を追加
+                                    </button>
+                                    <div className="w-px h-6 bg-slate-200 mx-1"></div>
+                                    <input
+                                        type="file"
+                                        accept=".xlsx, .xls"
+                                        onChange={handleExcelImport}
+                                        ref={fileInputRef}
+                                        className="hidden"
+                                        id="excel-upload"
+                                    />
+                                    <label
+                                        htmlFor="excel-upload"
+                                        className="cursor-pointer px-3 py-2 text-slate-500 flex items-center gap-2 hover:text-blue-600 hover:bg-white rounded-lg transition shadow-sm border border-transparent hover:border-blue-200 text-sm font-bold"
+                                    >
+                                        {isLoading ? <Loader2 className="animate-spin w-4 h-4" /> : <Upload size={18} />}
+                                        Excelからインポート
+                                    </label>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </header>
 
@@ -410,17 +411,15 @@ const App = () => {
                                 <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Home className="text-blue-600" /> 登録済み工事一覧</h2>
 
                                 {projects.length > 0 && (
-                                    <div className="flex flex-wrap items-center gap-4 bg-white p-2 rounded-lg shadow-sm border border-slate-200">
-                                        <div className="relative group w-full md:w-64">
-                                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 group-focus-within:text-blue-500 transition-colors" />
-                                            <input
-                                                type="text"
-                                                placeholder="工事名で検索..."
-                                                className="pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-50 outline-none w-full font-bold text-slate-700 transition-all"
-                                                value={dashboardStats.searchQuery}
-                                                onChange={(e) => dashboardStats.setSearchQuery(e.target.value)}
-                                            />
-                                        </div>
+                                    <div className="relative group w-full md:w-64">
+                                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 group-focus-within:text-blue-500 transition-colors" />
+                                        <input
+                                            type="text"
+                                            placeholder="工事名で検索..."
+                                            className="pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:border-blue-400 focus:ring-4 focus:ring-blue-50 outline-none w-full font-bold text-slate-700 transition-all shadow-sm"
+                                            value={dashboardStats.searchQuery}
+                                            onChange={(e) => dashboardStats.setSearchQuery(e.target.value)}
+                                        />
                                     </div>
                                 )}
                             </div>
@@ -436,14 +435,13 @@ const App = () => {
                             ) : dashboardStats.displayProjects.length === 0 ? (
                                 <div className="text-center py-10 bg-white rounded-xl border border-dashed border-slate-300 text-slate-400 font-bold">該当する条件の現場がありません。</div>
                             ) : (
-                                <div className="flex flex-col xl:flex-row gap-4 overflow-x-auto pb-4 items-start">
+                                <div className="flex flex-row gap-4 overflow-x-auto pb-4 items-start">
                                     {['見積', '予定', '施工中', '完了'].map(status => {
                                         const columnProjects = groupedProjects[status] || [];
                                         const ITEMS_PER_PAGE = 10;
                                         const totalPages = Math.max(1, Math.ceil(columnProjects.length / ITEMS_PER_PAGE));
                                         const currentPage = dashboardPages[status] || 1;
                                         
-                                        // ページ番号の補正（検索などで件数が減った場合に対処）
                                         const validPage = Math.min(Math.max(1, currentPage), totalPages);
                                         const startIndex = (validPage - 1) * ITEMS_PER_PAGE;
                                         const visibleProjects = columnProjects.slice(startIndex, startIndex + ITEMS_PER_PAGE);
@@ -536,8 +534,6 @@ const App = () => {
                             )}
                         </div>
                     )}
-
-
 
                     {activeTab === 'master' && (
                         <MasterTab

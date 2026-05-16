@@ -174,22 +174,28 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
         await supabase.from('ProjectTasks').update({ progress_percentage: value }).eq('id', dbItemId);
     };
 
-    const addRecord = async () => {
+    const addRecord = async (params = {}) => {
+        const initialValues = params.initialValues || {};
         const defaultTaskId = activeProject.masterData[0]?.id;
-        if (!defaultTaskId) {
+        
+        if (!defaultTaskId && !initialValues.taskId) {
             showToast("先に工事設定で作業項目を登録してください", 'error');
             return;
         }
 
-        const date = new Date().toISOString().split('T')[0];
+        const date = initialValues.date || new Date().toISOString().split('T')[0];
+        const workerName = initialValues.worker || (workers && workers.length > 0 ? workers[0].name : '');
+        const taskId = initialValues.taskId || defaultTaskId;
+        const hours = initialValues.hours || 0;
+        const note = initialValues.note || '';
 
         const { data, error } = await supabase.from('TaskRecords').insert([{
-            project_task_id: defaultTaskId,
+            project_task_id: taskId,
             project_id: activeProjectId,
             date: date,
-            worker_name: workers && workers.length > 0 ? workers[0].name : '',
-            hours: 0,
-            note: ''
+            worker_name: workerName,
+            hours: hours,
+            note: note
         }]).select();
 
         if (error) {

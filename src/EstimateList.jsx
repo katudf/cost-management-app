@@ -1,24 +1,29 @@
 // src/EstimateList.jsx
 // 見積書一覧画面
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, FileText, Copy, Trash2, Edit, Download, ChevronDown } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Plus, FileText, Copy, Trash2, Edit, Download, ChevronDown, Upload, Loader2 } from 'lucide-react';
 import {
   fetchEstimates,
   deleteEstimate,
   duplicateEstimate,
   fetchEstimateById,
   formatCurrency,
+  createEstimate,
+  saveEstimateItems,
+  getNextEstimateSeq,
+  fetchCustomers,
 } from './supabaseEstimates';
 import { downloadEstimatePDF } from './EstimatePDF';
 import { supabase } from './lib/supabase';
+import { parseExcelForEstimate } from './utils/excelImportUtils';
 
 // ステータス表示設定
 const STATUS_CONFIG = {
   draft:     { label: '下書き',   className: 'bg-slate-100 text-slate-600' },
-  submitted: { label: '提出済み', className: 'bg-blue-100 text-blue-700' },
-  accepted:  { label: '受注',     className: 'bg-green-100 text-green-700' },
-  rejected:  { label: '失注',     className: 'bg-red-100 text-red-600' },
+  pending:   { label: '申請中',   className: 'bg-yellow-100 text-yellow-700' },
+  approved:  { label: '承認',     className: 'bg-green-100 text-green-700' },
+  returned:  { label: '差し戻し', className: 'bg-red-100 text-red-600' },
 };
 
 const StatusBadge = ({ status }) => {
@@ -40,6 +45,8 @@ const EstimateList = ({ onEdit }) => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [searchText, setSearchText] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(null); // 削除確認対象のID
+  const [importing, setImporting] = useState(false);
+  const fileInputRef = useRef(null);
 
   // 一覧取得
   const loadEstimates = useCallback(async () => {
@@ -114,6 +121,109 @@ const EstimateList = ({ onEdit }) => {
     }
   };
 
+  // Excelインポート処理
+  const handleExcelImport = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (fileInputRef.current) fileInputRef.current.value = '';
+
+    setImporting(true);
+    setError(null);
+    try {
+      // Excelパース
+      const result = await parseExcelForEstimate(file);
+      if (!result.items || result.items.length === 0) {
+        setError('取り込めるデータが見つかりませんでした。');
+        setImporting(false);
+        return;
+      }
+
+      // 見積番号の自動採番（重複回避付き）
+      const d = new Date();
+      const yy = String(d.getFullYear()).slice(2);
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      const prefix = `${yy}${mm}${dd}`;
+      const seq = await getNextEstimateSeq(prefix);
+
+      // 枝番001から開始し、重複があればインクリメント
+      let branch = 1;
+      let estimateNumber = `${prefix}-${seq}-${String(branch).padStart(3, '0')}`;
+      const { checkDuplicateNumber } = await import('./supabaseEstimates');
+      while (await checkDuplicateNumber(estimateNumber)) {
+        branch++;
+        estimateNumber = `${prefix}-${seq}-${String(branch).padStart(3, '0')}`;
+        if (branch > 999) throw new Error('見積番号の採番に失敗しました（枝番上限）');
+      }
+
+      // 顧客の検索・紐付け
+      let customerId = null;
+      if (result.customerName) {
+        const customers = await fetchCustomers();
+        const found = customers.find(c => c.name === result.customerName);
+        if (found) {
+          customerId = found.id;
+        } else {
+          // 新規顧客を登録
+          const { data: newCust, error: custErr } = await supabase
+            .from('Customers')
+            .insert([{ name: result.customerName }])
+            .select();
+          if (!custErr && newCust?.length > 0) customerId = newCust[0].id;
+        }
+      }
+
+      // 見積書ヘッダーを作成
+      const payload = {
+        estimate_number: estimateNumber,
+        customer_id: customerId,
+        customer_honorific: '御中',
+        title: result.projectName || file.name.replace(/\.[^/.]+$/, ''),
+        site_location: null,
+        work_period: null,
+        issue_date: new Date().toISOString().split('T')[0],
+        valid_until: null,
+        payment_terms: '従来通り',
+        notes: result.notes || null,
+        tax_rate: 0.10,
+        status: 'draft',
+        show_fixed_fees: false,
+        show_net: true,
+        show_subtotals: false,
+        stamp_header: 'company',
+        show_approver: false,
+        staff_id: null,
+        net_calc_type: 'perc',
+        net_perc: 95,
+        net_amount: null,
+        total_with_tax: 0,
+      };
+
+      const created = await createEstimate(payload);
+
+      // 明細保存
+      const saveableItems = result.items
+        .filter(i => i.name?.trim())
+        .map((item, idx) => ({
+          ...item,
+          estimate_id: created.id,
+          sort_order: idx,
+          quantity: item.quantity != null ? Number(item.quantity) : null,
+          unit_price: item.unit_price !== '' && item.unit_price != null ? Number(item.unit_price) : null,
+          amount: item.amount !== '' && item.amount != null ? Number(item.amount) : null,
+        }));
+      await saveEstimateItems(created.id, saveableItems);
+
+      // 作成した見積書の編集画面に遷移
+      onEdit(created.id);
+    } catch (err) {
+      console.error('Excel取込エラー:', err);
+      setError('Excelの取り込みに失敗しました: ' + err.message);
+    } finally {
+      setImporting(false);
+    }
+  };
+
   // ============================================================
   // レンダリング
   // ============================================================
@@ -126,13 +236,30 @@ const EstimateList = ({ onEdit }) => {
           <FileText size={22} className="text-blue-600" />
           見積書管理
         </h2>
-        <button
-          onClick={() => onEdit(null)}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold transition"
-        >
-          <Plus size={18} />
-          新規作成
-        </button>
+        <div className="flex items-center gap-2">
+          <input
+            type="file"
+            accept=".xlsx, .xls"
+            onChange={handleExcelImport}
+            ref={fileInputRef}
+            className="hidden"
+            id="estimate-excel-upload"
+          />
+          <label
+            htmlFor="estimate-excel-upload"
+            className={`flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-bold transition cursor-pointer ${importing ? 'opacity-60 pointer-events-none' : ''}`}
+          >
+            {importing ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />}
+            {importing ? '取込中...' : 'Excelから取込'}
+          </label>
+          <button
+            onClick={() => onEdit(null)}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold transition"
+          >
+            <Plus size={18} />
+            新規作成
+          </button>
+        </div>
       </div>
 
       {/* 検索・フィルター */}
@@ -148,9 +275,9 @@ const EstimateList = ({ onEdit }) => {
           {[
             { key: 'all',       label: 'すべて' },
             { key: 'draft',     label: '下書き' },
-            { key: 'submitted', label: '提出済み' },
-            { key: 'accepted',  label: '受注' },
-            { key: 'rejected',  label: '失注' },
+            { key: 'pending',   label: '申請中' },
+            { key: 'approved',  label: '承認' },
+            { key: 'returned',  label: '差し戻し' },
           ].map(({ key, label }) => (
             <button
               key={key}

@@ -102,11 +102,12 @@ export const deleteEstimate = async (id) => {
 // 見積番号の重複チェック
 // ============================================================
 export const checkDuplicateNumber = async (estimateNumber, excludeId = null) => {
+  // DBのユニーク制約は論理削除済みレコードにも適用されるため、
+  // deleted_atフィルターなしで全レコードを対象にチェックする
   let query = supabase
     .from('estimates')
     .select('id')
-    .eq('estimate_number', estimateNumber)
-    .is('deleted_at', null);
+    .eq('estimate_number', estimateNumber);
 
   if (excludeId) {
     query = query.neq('id', excludeId);

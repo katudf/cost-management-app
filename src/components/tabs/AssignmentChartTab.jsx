@@ -143,14 +143,14 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                 .lte('date', endStr);
             setAssignments(aData || []);
 
-            // 過去日付の日報実績を取得
-            if (todayStr > startStr) {
-                const pastEndStr = todayStr < endStr ? todayStr : endStr;
+            // 過去(今日含む)日付の日報実績を取得
+            if (todayStr >= startStr) {
+                const pastEndStr = todayStr <= endStr ? todayStr : endStr;
                 const { data: trData } = await supabase
                     .from('TaskRecords')
                     .select('id, project_id, worker_name, date')
                     .gte('date', startStr)
-                    .lt('date', pastEndStr);
+                    .lte('date', pastEndStr);
                 setTaskRecords(trData || []);
             } else {
                 setTaskRecords([]);
@@ -163,10 +163,14 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                 .order('display_order', { ascending: true, nullsFirst: false })
                 .order('created_at', { ascending: true });
 
-            setBarProjects((pData || []).map((p, idx) => ({
-                ...p,
-                color: p.bar_color || DEFAULT_COLORS[idx % DEFAULT_COLORS.length]
-            })));
+            const excludedNames = ["【会社】有給", "有給", "【有給】"];
+            setBarProjects((pData || [])
+                .filter(p => !excludedNames.includes(p.name))
+                .map((p, idx) => ({
+                    ...p,
+                    color: p.bar_color || DEFAULT_COLORS[idx % DEFAULT_COLORS.length]
+                }))
+            );
 
             const { data: hData } = await supabase
                 .from('CompanyHolidays')
@@ -260,7 +264,8 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                         dateStr: firstDateStr,
                         dragDates: [...dragCells],
                         top: dragSourceCell.top,
-                        left: dragSourceCell.left
+                        left: dragSourceCell.left,
+                        showAbove: dragSourceCell.showAbove
                     });
                 }
             }
@@ -376,8 +381,9 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
     }, [projects, barProjects]);
 
     const allProjects = useMemo(() => {
+        const excludedNames = ["【会社】有給", "有給", "【有給】"];
         return projects
-            .filter(p => p.status === '予定' || p.status === '施工中')
+            .filter(p => (p.status === '予定' || p.status === '施工中') && !excludedNames.includes(p.siteName))
             .map((p, idx) => ({
                 id: p.id,
                 name: p.siteName || '無題',
@@ -961,13 +967,18 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
 
         const cellRect = e.currentTarget.getBoundingClientRect();
         const containerRect = tableContainerRef.current?.getBoundingClientRect();
+        const spaceBelow = window.innerHeight - cellRect.bottom;
+        const showAbove = spaceBelow < 350;
 
         setIsDragging(true);
         setDragWorkerId(workerId);
         setDragCells([dateStr]);
         setDragSourceCell({
-            top: cellRect.bottom - (containerRect?.top || 0) + (tableContainerRef.current?.scrollTop || 0),
-            left: cellRect.left - (containerRect?.left || 0) + (tableContainerRef.current?.scrollLeft || 0)
+            top: showAbove 
+                ? cellRect.top - (containerRect?.top || 0) + (tableContainerRef.current?.scrollTop || 0)
+                : cellRect.bottom - (containerRect?.top || 0) + (tableContainerRef.current?.scrollTop || 0),
+            left: cellRect.left - (containerRect?.left || 0) + (tableContainerRef.current?.scrollLeft || 0),
+            showAbove
         });
     };
 
@@ -1007,13 +1018,18 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         if (isDragging) return;
         const cellRect = e.currentTarget.getBoundingClientRect();
         const containerRect = tableContainerRef.current?.getBoundingClientRect();
+        const spaceBelow = window.innerHeight - cellRect.bottom;
+        const showAbove = spaceBelow < 350;
 
         setEditCell({
             workerId,
             dateStr,
             dragDates: null,
-            top: cellRect.bottom - (containerRect?.top || 0) + (tableContainerRef.current?.scrollTop || 0),
-            left: cellRect.left - (containerRect?.left || 0) + (tableContainerRef.current?.scrollLeft || 0)
+            top: showAbove 
+                ? cellRect.top - (containerRect?.top || 0) + (tableContainerRef.current?.scrollTop || 0)
+                : cellRect.bottom - (containerRect?.top || 0) + (tableContainerRef.current?.scrollTop || 0),
+            left: cellRect.left - (containerRect?.left || 0) + (tableContainerRef.current?.scrollLeft || 0),
+            showAbove
         });
     };
 
@@ -1405,7 +1421,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                 {dateColumns.map((col, i) => {
                                     const lookupKey = `${worker.id}_${col.dateStr}`;
                                     const cellAssignments = assignmentLookup[lookupKey] || [];
-                                    const isPastDate = col.dateStr < todayStr;
+                                    const isPastDate = col.dateStr <= todayStr;
                                     const actualProjectIds = isPastDate ? (taskRecordLookup[lookupKey] || []) : [];
                                     const isWeekend = col.dow === 0 || col.dow === 6;
                                     const isEditing = editCell && editCell.workerId === worker.id && (
@@ -1476,12 +1492,14 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                                     {displayItems.map((item) => (
                                                         <div
                                                             key={item.key}
-                                                            className={`text-[9px] font-bold rounded px-0.5 py-0.5 text-black truncate ${item.isActual ? 'ring-1 ring-inset ring-white/40' : ''}`}
+                                                            className={`text-[9px] font-bold rounded px-0.5 py-0.5 text-black truncate ${item.isActual ? 'shadow-sm border border-black/20' : ''}`}
                                                             style={{
-                                                                backgroundColor: item.bgColor,
+                                                                background: item.isActual
+                                                                    ? `repeating-linear-gradient(-45deg, rgba(255,255,255,0.2), rgba(255,255,255,0.2) 3px, transparent 3px, transparent 6px), ${item.bgColor}`
+                                                                    : item.bgColor,
                                                                 color: 'black'
                                                             }}
-                                                            title={item.fullName + (item.isActual ? '（実績）' : '')}
+                                                            title={item.fullName + (item.isActual ? '（実績・編集不可）' : '')}
                                                         >
                                                             {item.displayName}
                                                         </div>
@@ -1513,10 +1531,11 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                 {editCell && (
                     <div
                         ref={popupRef}
-                        className="absolute z-50 flex flex-col gap-2"
+                        className={`absolute z-50 flex gap-2 ${editCell.showAbove ? 'flex-col-reverse' : 'flex-col'}`}
                         style={{
-                            top: `${editCell.top + 4}px`,
-                            left: `${Math.max(0, editCell.left - 100)}px`
+                            top: `${editCell.showAbove ? editCell.top - 4 : editCell.top + 4}px`,
+                            left: `${Math.max(0, editCell.left - 100)}px`,
+                            transform: editCell.showAbove ? 'translateY(-100%)' : 'none'
                         }}
                     >
                         {/* メイン編集ポップアップ */}
@@ -1620,6 +1639,26 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                 </div>
                             )}
 
+
+                            {/* 現場の追加 */}
+                            {unassignedProjects.length > 0 && (
+                                <div className="px-3 py-2 border-b border-slate-100 max-h-48 overflow-y-auto custom-scrollbar">
+                                    <div className="text-[10px] font-bold text-slate-400 mb-1.5 uppercase">現場の追加</div>
+                                    <div className="flex flex-col gap-1">
+                                        {unassignedProjects.map(p => (
+                                            <button
+                                                key={p.id}
+                                                onClick={() => { handlePopupAssign(p.id, null); }}
+                                                className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg hover:opacity-80 transition text-left"
+                                                style={{ backgroundColor: p.color + '20', border: `1px solid ${p.color}40` }}
+                                            >
+                                                <div className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: p.color }}></div>
+                                                <span className="text-[11px] font-bold text-slate-700 truncate">{p.name}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
 
                             {/* スケジュール種別 */}
                             <div className="px-3 py-2">
