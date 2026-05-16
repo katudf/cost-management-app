@@ -3,6 +3,7 @@ import { supabase } from './lib/supabase';
 import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2, PlusCircle, Clock, X } from 'lucide-react';
 import { useToast } from './components/Toast';
 import { calculateWorkHours, calculateNinku, getSeasonConfig, formatTimeDisplay } from './utils/workTimeUtils';
+import { PROJECT_STATUS } from './utils/constants';
 
 const WorkerApp = () => {
     const { showToast } = useToast();
@@ -649,7 +650,7 @@ const WorkerApp = () => {
                         className="w-full bg-white border-2 border-blue-200 text-slate-800 p-4 rounded-xl font-bold text-lg outline-none focus:border-blue-500 shadow-sm appearance-none">
                         <option value="">現場を選ぶ...</option>
                         {projects.filter(p => ["【会社】社内業務・雑務", "【会社】有給", "有給", "【有給】"].includes(p.name)).map(p => (<option key={p.id} value={p.id}>{p.name}</option>))}
-                        {projects.filter(p => !["【会社】社内業務・雑務", "【会社】有給", "有給", "【有給】"].includes(p.name) && p.status === '施工中').map(p => (<option key={p.id} value={p.id}>{p.name || '無題の現場'}</option>))}
+                        {projects.filter(p => !["【会社】社内業務・雑務", "【会社】有給", "有給", "【有給】"].includes(p.name) && p.status === PROJECT_STATUS.IN_PROGRESS).map(p => (<option key={p.id} value={p.id}>{p.name || '無題の現場'}</option>))}
                     </select>
                 </div>
 

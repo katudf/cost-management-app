@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Settings, Loader2, Upload, Trash, PlusCircle, Trash2, Clipboard, Table as TableIcon, ExternalLink, PauseCircle, X } from 'lucide-react';
-import { DEFAULT_COLORS } from '../../utils/constants';
+import { DEFAULT_COLORS, PROJECT_STATUS, PROJECT_STATUS_LIST } from '../../utils/constants';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../Toast';
 import DashboardTab from './DashboardTab';
@@ -161,14 +161,13 @@ const MasterTab = ({
                                 <div>
                                     <label className="text-xs font-bold text-blue-600 block mb-2 uppercase">現場ステータス</label>
                                     <select
-                                        value={activeProject.status || '見積'}
+                                        value={activeProject.status || PROJECT_STATUS.ESTIMATE}
                                         onChange={(e) => handleProjectStatusChange(activeProject.id, e.target.value)}
                                         className="w-full bg-white p-3 rounded-lg border-2 border-blue-200 font-bold text-lg outline-none focus:border-blue-500"
                                     >
-                                        <option value="見積">見積</option>
-                                        <option value="予定">予定</option>
-                                        <option value="施工中">施工中</option>
-                                        <option value="完了">完了</option>
+                                        {PROJECT_STATUS_LIST.map(s => (
+                                            <option key={s} value={s}>{s}</option>
+                                        ))}
                                     </select>
                                 </div>
                                 <div>

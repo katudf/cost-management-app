@@ -2,6 +2,7 @@
 // 見積書機能のSupabase操作関数
 
 import { supabase } from './lib/supabase';
+import { ITEM_TYPE } from './utils/constants';
 
 // ============================================================
 // 見積書一覧取得
@@ -213,8 +214,8 @@ export const fetchWorkers = async () => {
 // 金額計算ユーティリティ
 // ============================================================
 export const calcTotals = (items, taxRate = 0.1, netCalcSettings = {}) => {
-  const itemRows = items.filter(i => i.item_type === 'item');
-  const fixedRows = items.filter(i => i.item_type === 'fixed');
+  const itemRows = items.filter(i => i.item_type === ITEM_TYPE.ITEM);
+  const fixedRows = items.filter(i => i.item_type === ITEM_TYPE.FIXED);
 
   const itemTotal = itemRows.reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
   const fixedTotal = fixedRows.reduce((sum, i) => sum + (Number(i.amount) || 0), 0);

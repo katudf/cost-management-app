@@ -16,6 +16,7 @@ import {
   checkDuplicateNumber,
   fetchOfficeStaff,
 } from './supabaseEstimates';
+import { PROJECT_STATUS, ITEM_TYPE } from './utils/constants';
 
 // 今日の日付を YYMMDD 形式で返す
 const todayPrefix = () => {
@@ -37,7 +38,7 @@ const newItemRow = (estimateId, parentId, sortOrder) => ({
   estimate_id: estimateId,
   parent_id: parentId,
   sort_order: sortOrder,
-  item_type: 'item',
+  item_type: ITEM_TYPE.ITEM,
   category_symbol: null,
   name: '',
   spec: '',
@@ -49,7 +50,7 @@ const newItemRow = (estimateId, parentId, sortOrder) => ({
 });
 
 const newCategoryRow = (sortOrder) => ({
-  item_type: 'category',
+  item_type: ITEM_TYPE.CATEGORY,
   category_symbol: '',
   name: '',
   spec: null,
@@ -63,8 +64,8 @@ const newCategoryRow = (sortOrder) => ({
 });
 
 const fixedRows = [
-  { item_type: 'fixed', name: '法定福利費', quantity: 1, unit: '式', amount: '', note: '' },
-  { item_type: 'fixed', name: '安全費',     quantity: 1, unit: '式', amount: '', note: '' },
+  { item_type: ITEM_TYPE.FIXED, name: '法定福利費', quantity: 1, unit: '式', amount: '', note: '' },
+  { item_type: ITEM_TYPE.FIXED, name: '安全費',     quantity: 1, unit: '式', amount: '', note: '' },
 ];
 
 const UNIT_SUGGESTIONS = ['m²', 'm', 'm³', '本', '式', 'ヶ所', '個', 't', '枚', '組'];
@@ -211,16 +212,16 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
   // ============================================================
   // 工種行追加
   const addCategory = () => {
-    const categories = items.filter(i => i.item_type === 'category');
+    const categories = items.filter(i => i.item_type === ITEM_TYPE.CATEGORY);
     const symbols = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
     const nextSymbol = symbols[categories.length] || '';
     const newRow = {
       ...newCategoryRow(items.length),
       category_symbol: nextSymbol,
     };
-    setItems(prev => [...prev.filter(i => i.item_type !== 'fixed'), newRow,
+    setItems(prev => [...prev.filter(i => i.item_type !== ITEM_TYPE.FIXED), newRow,
       newItemRow(null, null, items.length + 1),
-      ...prev.filter(i => i.item_type === 'fixed'),
+      ...prev.filter(i => i.item_type === ITEM_TYPE.FIXED),
     ]);
   };
 
@@ -238,10 +239,10 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
   const removeRow = (index) => {
     setItems(prev => {
       const target = prev[index];
-      if (target.item_type === 'category') {
+      if (target.item_type === ITEM_TYPE.CATEGORY) {
         // 工種行削除：配下の細別も削除（次のcategoryまで）
         let end = index + 1;
-        while (end < prev.length && prev[end].item_type === 'item') end++;
+        while (end < prev.length && prev[end].item_type === ITEM_TYPE.ITEM) end++;
         return prev.filter((_, i) => i < index || i >= end);
       }
       return prev.filter((_, i) => i !== index);
@@ -269,8 +270,8 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
   // 合計計算
   // ============================================================
   const visibleItems = items.filter(i =>
-    i.item_type === 'item' ||
-    (i.item_type === 'fixed' && header.show_fixed_fees)
+    i.item_type === ITEM_TYPE.ITEM ||
+    (i.item_type === ITEM_TYPE.FIXED && header.show_fixed_fees)
   );
   const totals = calcTotals(visibleItems, Number(header.tax_rate), {
     type: header.net_calc_type,
@@ -304,10 +305,10 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
     const result = {};
     let currentCatKey = null;
     items.forEach(item => {
-      if (item.item_type === 'category') {
+      if (item.item_type === ITEM_TYPE.CATEGORY) {
         currentCatKey = item.id || item._tempId || item.category_symbol;
         result[currentCatKey] = 0;
-      } else if (item.item_type === 'item' && currentCatKey) {
+      } else if (item.item_type === ITEM_TYPE.ITEM && currentCatKey) {
         result[currentCatKey] += Number(item.amount) || 0;
       }
     });
@@ -330,16 +331,16 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
     }
 
     // 工種・細別バリデーション（工種がある場合のみチェック）
-    const categories = items.filter(i => i.item_type === 'category');
+    const categories = items.filter(i => i.item_type === ITEM_TYPE.CATEGORY);
     let catIdx = 0;
     for (let i = 0; i < items.length; i++) {
-      if (items[i].item_type === 'category') {
+      if (items[i].item_type === ITEM_TYPE.CATEGORY) {
         const catName = items[i].name || items[i].category_symbol || `工種${catIdx + 1}`;
         // この工種配下に名称入力済みの細別があるか
         let hasItem = false;
         for (let j = i + 1; j < items.length; j++) {
-          if (items[j].item_type === 'category') break;
-          if (items[j].item_type === 'item' && items[j].name?.trim()) { hasItem = true; break; }
+          if (items[j].item_type === ITEM_TYPE.CATEGORY) break;
+          if (items[j].item_type === ITEM_TYPE.ITEM && items[j].name?.trim()) { hasItem = true; break; }
         }
         if (!hasItem) {
           setError(`「${catName}」に細別を最低1件追加してください。`);
@@ -371,17 +372,17 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
       // 合計行の自動生成（show_subtotals=ON 時）
       let finalItems = [...items];
       // まず既存のsubtotal行を除去
-      finalItems = finalItems.filter(i => i.item_type !== 'subtotal');
+      finalItems = finalItems.filter(i => i.item_type !== ITEM_TYPE.SUBTOTAL);
       if (header.show_subtotals) {
         const withSubtotals = [];
         let currentCatKey = null;
         let catAmount = 0;
         finalItems.forEach((item, idx) => {
-          if (item.item_type === 'category') {
+          if (item.item_type === ITEM_TYPE.CATEGORY) {
             // 前の工種の合計行を挿入
             if (currentCatKey !== null) {
               withSubtotals.push({
-                item_type: 'subtotal',
+                item_type: ITEM_TYPE.SUBTOTAL,
                 name: '合　計',
                 amount: catAmount,
                 sort_order: withSubtotals.length,
@@ -389,7 +390,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
             }
             currentCatKey = item.id || item._tempId || idx;
             catAmount = 0;
-          } else if (item.item_type === 'item') {
+          } else if (item.item_type === ITEM_TYPE.ITEM) {
             catAmount += Number(item.amount) || 0;
           }
           withSubtotals.push(item);
@@ -397,7 +398,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
         // 最後の工種の合計行
         if (currentCatKey !== null) {
           withSubtotals.push({
-            item_type: 'subtotal',
+            item_type: ITEM_TYPE.SUBTOTAL,
             name: '合　計',
             amount: catAmount,
             sort_order: withSubtotals.length,
@@ -408,8 +409,8 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
 
       // 税込合計を計算
       const savingVisibleItems = finalItems.filter(i =>
-        i.item_type === 'item' ||
-        (i.item_type === 'fixed' && header.show_fixed_fees)
+        i.item_type === ITEM_TYPE.ITEM ||
+        (i.item_type === ITEM_TYPE.FIXED && header.show_fixed_fees)
       );
       const savingTotals = calcTotals(savingVisibleItems, Number(header.tax_rate), {
         type: header.net_calc_type,
@@ -487,7 +488,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
             await supabase.from('Projects').insert([{
               name: header.title,
               customerId: header.customer_id,
-              status: '見積',
+              status: PROJECT_STATUS.ESTIMATE,
               order: nextOrder
             }]);
           }
@@ -912,11 +913,11 @@ const ItemTable = ({ items, showFixedFees, showSubtotals, categorySubtotals, onU
   const isLastItemBeforeNext = (index) => {
     if (!showSubtotals) return false;
     const item = items[index];
-    if (item.item_type !== 'item') return false;
+    if (item.item_type !== ITEM_TYPE.ITEM) return false;
     // 次の行がcategory, fixed, またはリスト末尾であれば最後のitem
     for (let j = index + 1; j < items.length; j++) {
-      if (items[j].item_type === 'category' || items[j].item_type === 'fixed') return true;
-      if (items[j].item_type === 'item') return false;
+      if (items[j].item_type === ITEM_TYPE.CATEGORY || items[j].item_type === ITEM_TYPE.FIXED) return true;
+      if (items[j].item_type === ITEM_TYPE.ITEM) return false;
     }
     return true; // リスト末尾
   };
@@ -924,7 +925,7 @@ const ItemTable = ({ items, showFixedFees, showSubtotals, categorySubtotals, onU
   // 直近の工種キーを取得
   const getCategoryKeyForIndex = (index) => {
     for (let i = index; i >= 0; i--) {
-      if (items[i].item_type === 'category') {
+      if (items[i].item_type === ITEM_TYPE.CATEGORY) {
         return items[i].id || items[i]._tempId || items[i].category_symbol;
       }
     }
@@ -950,8 +951,8 @@ const ItemTable = ({ items, showFixedFees, showSubtotals, categorySubtotals, onU
           </thead>
           <tbody>
             {items.map((item, index) => {
-              if (item.item_type === 'fixed' && !showFixedFees) return null;
-              if (item.item_type === 'subtotal') return null; // subtotalはUI上では表示しない（保存時に自動生成）
+              if (item.item_type === ITEM_TYPE.FIXED && !showFixedFees) return null;
+              if (item.item_type === ITEM_TYPE.SUBTOTAL) return null; // subtotalはUI上では表示しない（保存時に自動生成）
               return (
                 <React.Fragment key={item.id || item._tempId || index}>
                   <ItemRow
@@ -1009,7 +1010,7 @@ const ItemTable = ({ items, showFixedFees, showSubtotals, categorySubtotals, onU
 const ItemRow = ({ item, index, allItems, onChange, onAddItem, onRemove, disabled }) => {
   const [showUnitSug, setShowUnitSug] = useState(false);
 
-  if (item.item_type === 'category') {
+  if (item.item_type === ITEM_TYPE.CATEGORY) {
     return (
       <tr className="bg-blue-50 border-t border-blue-100">
         <td className="px-2 py-1.5 text-slate-400"><GripVertical size={14} /></td>
@@ -1053,7 +1054,7 @@ const ItemRow = ({ item, index, allItems, onChange, onAddItem, onRemove, disable
     );
   }
 
-  if (item.item_type === 'fixed') {
+  if (item.item_type === ITEM_TYPE.FIXED) {
     return (
       <tr className="bg-amber-50 border-t border-amber-100">
         <td className="px-2 py-1.5"></td>

@@ -6,6 +6,7 @@ import {
   Document, Page, Text, View, StyleSheet, Font, pdf, Image
 } from '@react-pdf/renderer';
 import { calcTotals } from './supabaseEstimates';
+import { ITEM_TYPE } from './utils/constants';
 
 // ============================================================
 // フォント登録
@@ -555,8 +556,8 @@ const CoverPage = ({ estimate, settings, totals }) => {
 const DetailPage = ({ estimate, totals, settings }) => {
   const { net, subtotal, tax, total } = totals;
   const items = estimate.items || [];
-  const nonFixed = items.filter(i => i.item_type !== 'fixed');
-  const fixedItems = items.filter(i => i.item_type === 'fixed');
+  const nonFixed = items.filter(i => i.item_type !== ITEM_TYPE.FIXED);
+  const fixedItems = items.filter(i => i.item_type === ITEM_TYPE.FIXED);
 
   // ダミー行の追加（ページ内で行枠を固定するため）
   const ROWS_PER_PAGE = 19; // 1ページのデータ行数（ヘッダー行含めず）
@@ -608,10 +609,10 @@ const DetailPage = ({ estimate, totals, settings }) => {
   const categoryTotals = {};
   let currentCatId = null;
   items.forEach(item => {
-    if (item.item_type === 'category') {
+    if (item.item_type === ITEM_TYPE.CATEGORY) {
       currentCatId = item.id || item._tempId;
       categoryTotals[currentCatId] = 0;
-    } else if (item.item_type === 'item' && currentCatId) {
+    } else if (item.item_type === ITEM_TYPE.ITEM && currentCatId) {
       categoryTotals[currentCatId] += Number(item.amount) || 0;
     }
   });
@@ -647,7 +648,7 @@ const DetailPage = ({ estimate, totals, settings }) => {
         const isLastRowOfPage = (idx + 1) % ROWS_PER_PAGE === 0;
         const pageBottomBorderStyle = isLastRowOfPage ? { borderBottom: '1pt solid #1a1a1a' } : {};
 
-        if (item.item_type === 'category') {
+        if (item.item_type === ITEM_TYPE.CATEGORY) {
           const catId = item.id || item._tempId;
           const catTotal = categoryTotals[catId] || 0;
 
@@ -665,7 +666,7 @@ const DetailPage = ({ estimate, totals, settings }) => {
           );
         }
 
-        if (item.item_type === 'item') {
+        if (item.item_type === ITEM_TYPE.ITEM) {
           itemNo++;
           return (
             <View key={idx} style={[S.tableRow, pageBottomBorderStyle]} wrap={false} break={shouldBreak}>
@@ -688,7 +689,7 @@ const DetailPage = ({ estimate, totals, settings }) => {
         }
 
         // subtotal行（show_subtotals=true 時）
-        if (item.item_type === 'subtotal') {
+        if (item.item_type === ITEM_TYPE.SUBTOTAL) {
           return (
             <View key={idx} style={[S.subtotalRow, pageBottomBorderStyle]} wrap={false} break={shouldBreak}>
               <Text style={S.cellNo}></Text>
@@ -810,8 +811,8 @@ const DetailPage = ({ estimate, totals, settings }) => {
 const EstimateDocument = ({ estimate, settings }) => {
   const items = estimate.items || [];
   const visibleItems = items.filter(i =>
-    i.item_type === 'item' ||
-    (i.item_type === 'fixed' && estimate.show_fixed_fees)
+    i.item_type === ITEM_TYPE.ITEM ||
+    (i.item_type === ITEM_TYPE.FIXED && estimate.show_fixed_fees)
   );
   const totals = calcTotals(visibleItems, Number(estimate.tax_rate || 0.1), {
     type: estimate.net_calc_type,

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import AdminApp from './AdminApp';
 import WorkerApp from './WorkerApp';
 import ScheduleViewApp from './ScheduleViewApp';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 const App = () => {
     const [mode, setMode] = useState(null);
@@ -23,14 +24,14 @@ const App = () => {
     }
 
     if (mode === 'worker') {
-        return <WorkerApp />;
+        return <ErrorBoundary><WorkerApp /></ErrorBoundary>;
     }
 
     if (mode === 'schedule') {
-        return <ScheduleViewApp />;
+        return <ErrorBoundary><ScheduleViewApp /></ErrorBoundary>;
     }
 
-    return <AdminApp />;
+    return <ErrorBoundary><AdminApp /></ErrorBoundary>;
 };
 
 export default App;
