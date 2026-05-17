@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Search, Plus, Edit3, Trash2, Save, X, User, Shield, UserCheck, Loader2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../components/Toast';
+import ConfirmModal from '../ConfirmModal';
 
 const StaffSettings = () => {
     const { showToast } = useToast();
@@ -10,6 +11,7 @@ const StaffSettings = () => {
     const [isSaving, setIsSaving] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [form, setForm] = useState({ id: null, name: '', role: '' });
+    const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
     const fetchStaff = useCallback(async () => {
         setIsLoading(true);
@@ -67,8 +69,6 @@ const StaffSettings = () => {
     };
 
     const handleDelete = async (id) => {
-        if (!window.confirm('この担当者情報を削除してもよろしいですか？（※過去の見積等の担当者名が消える場合があります）')) return;
-
         setIsSaving(true);
         try {
             const { error } = await supabase.from('office_staff').delete().eq('id', id);
@@ -204,7 +204,7 @@ const StaffSettings = () => {
                                                     <Edit3 size={16} />
                                                 </button>
                                                 <button
-                                                    onClick={() => handleDelete(staff.id)}
+                                                    onClick={() => setConfirmDeleteId(staff.id)}
                                                     disabled={isSaving}
                                                     className="bg-white border border-slate-200 text-red-500 hover:text-red-600 hover:border-red-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50"
                                                     title="削除"
@@ -220,6 +220,13 @@ const StaffSettings = () => {
                     </table>
                 </div>
             </div>
+            <ConfirmModal
+                isOpen={!!confirmDeleteId}
+                onClose={() => setConfirmDeleteId(null)}
+                onConfirm={() => { handleDelete(confirmDeleteId); setConfirmDeleteId(null); }}
+                title="担当者情報を削除"
+                message="この担当者情報を削除してもよろしいですか？過去の見積等の担当者名が消える場合があります。"
+            />
         </div>
     );
 };

@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
+import { PROJECT_STATUS } from '../utils/constants';
 
 export function useProjects({ projects, setProjects, activeProjectId, setActiveProjectId, showToast, workers }) {
     
@@ -25,7 +26,7 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
         }
         const nextOrder = projects.length > 0 ? Math.max(...projects.map(p => p.order || 0)) + 1 : 0;
         const tempName = `__NEW_PROJECT__${Date.now()}`;
-        const { data, error } = await supabase.from('Projects').insert([{ name: tempName, order: nextOrder, status: '見積' }]).select();
+        const { data, error } = await supabase.from('Projects').insert([{ name: tempName, order: nextOrder, status: PROJECT_STATUS.ESTIMATE }]).select();
         if (error) {
             console.error(error); showToast('現場の作成に失敗しました: ' + error.message, 'error');
             return;
@@ -33,7 +34,7 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
         const newProj = data[0];
 
         setProjects(prev => [...prev, {
-            id: newProj.id, order: newProj.order, siteName: '', status: newProj.status || '見積', masterData: [], records: [], progressData: {}
+            id: newProj.id, order: newProj.order, siteName: '', status: newProj.status || PROJECT_STATUS.ESTIMATE, masterData: [], records: [], progressData: {}
         }]);
         setActiveProjectId(newProj.id);
     };

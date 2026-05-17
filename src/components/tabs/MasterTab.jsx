@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Settings, Loader2, Upload, Trash, PlusCircle, Trash2, Clipboard, Table as TableIcon, ExternalLink, PauseCircle, X } from 'lucide-react';
-import { DEFAULT_COLORS } from '../../utils/constants';
+import { DEFAULT_COLORS, PROJECT_STATUS, PROJECT_STATUS_LIST } from '../../utils/constants';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../Toast';
 import DashboardTab from './DashboardTab';
@@ -161,14 +161,13 @@ const MasterTab = ({
                                 <div>
                                     <label className="text-xs font-bold text-blue-600 block mb-2 uppercase">現場ステータス</label>
                                     <select
-                                        value={activeProject.status || '見積'}
+                                        value={activeProject.status || PROJECT_STATUS.ESTIMATE}
                                         onChange={(e) => handleProjectStatusChange(activeProject.id, e.target.value)}
                                         className="w-full bg-white p-3 rounded-lg border-2 border-blue-200 font-bold text-lg outline-none focus:border-blue-500"
                                     >
-                                        <option value="見積">見積</option>
-                                        <option value="予定">予定</option>
-                                        <option value="施工中">施工中</option>
-                                        <option value="完了">完了</option>
+                                        {PROJECT_STATUS_LIST.map(s => (
+                                            <option key={s} value={s}>{s}</option>
+                                        ))}
                                     </select>
                                 </div>
                                 <div>
@@ -318,7 +317,7 @@ const MasterTab = ({
                                             <label className="text-[9px] font-bold text-slate-400 block mb-1 uppercase text-right tracking-tighter">見積金額</label>
                                             <div className="flex items-center gap-1 justify-end font-mono font-bold">
                                                 <span className="text-slate-400 text-xs">¥</span><input
-                                                    type="number" value={m.estimatedAmount || 0}
+                                                    type="number" min="0" value={m.estimatedAmount || 0}
                                                     className="w-full text-right outline-none bg-slate-50 rounded px-1"
                                                     onChange={(e) => {
                                                         const newEst = Number(e.target.value);

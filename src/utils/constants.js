@@ -3,6 +3,36 @@ export const DEFAULT_MASTER_DATA = [
     { id: 'temp-2', task: '屋根：ウレタン防水', target: 73 },
 ];
 
+// === プロジェクトステータス ===
+export const PROJECT_STATUS = {
+    ESTIMATE: '見積',
+    SCHEDULED: '予定',
+    IN_PROGRESS: '施工中',
+    COMPLETED: '完了',
+};
+export const PROJECT_STATUS_LIST = [
+    PROJECT_STATUS.ESTIMATE,
+    PROJECT_STATUS.SCHEDULED,
+    PROJECT_STATUS.IN_PROGRESS,
+    PROJECT_STATUS.COMPLETED,
+];
+
+// ステータスごとの表示色（Tailwindクラス）
+export const PROJECT_STATUS_COLOR = {
+    [PROJECT_STATUS.ESTIMATE]:   'bg-orange-400',
+    [PROJECT_STATUS.SCHEDULED]:  'bg-blue-400',
+    [PROJECT_STATUS.IN_PROGRESS]:'bg-green-500',
+    [PROJECT_STATUS.COMPLETED]:  'bg-slate-400',
+};
+
+// === 見積アイテム種別 ===
+export const ITEM_TYPE = {
+    CATEGORY: 'category',
+    ITEM: 'item',
+    SUBTOTAL: 'subtotal',
+    FIXED: 'fixed',
+};
+
 // === 配置表 カラーパレット ===
 export const DEFAULT_COLORS = [
     '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7',

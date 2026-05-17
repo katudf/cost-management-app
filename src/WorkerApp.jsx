@@ -3,6 +3,7 @@ import { supabase } from './lib/supabase';
 import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2, PlusCircle, Clock, X } from 'lucide-react';
 import { useToast } from './components/Toast';
 import { calculateWorkHours, calculateNinku, getSeasonConfig, formatTimeDisplay } from './utils/workTimeUtils';
+import { PROJECT_STATUS } from './utils/constants';
 
 const WorkerApp = () => {
     const { showToast } = useToast();
@@ -649,7 +650,7 @@ const WorkerApp = () => {
                         className="w-full bg-white border-2 border-blue-200 text-slate-800 p-4 rounded-xl font-bold text-lg outline-none focus:border-blue-500 shadow-sm appearance-none">
                         <option value="">現場を選ぶ...</option>
                         {projects.filter(p => ["【会社】社内業務・雑務", "【会社】有給", "有給", "【有給】"].includes(p.name)).map(p => (<option key={p.id} value={p.id}>{p.name}</option>))}
-                        {projects.filter(p => !["【会社】社内業務・雑務", "【会社】有給", "有給", "【有給】"].includes(p.name) && p.status === '施工中').map(p => (<option key={p.id} value={p.id}>{p.name || '無題の現場'}</option>))}
+                        {projects.filter(p => !["【会社】社内業務・雑務", "【会社】有給", "有給", "【有給】"].includes(p.name) && p.status === PROJECT_STATUS.IN_PROGRESS).map(p => (<option key={p.id} value={p.id}>{p.name || '無題の現場'}</option>))}
                     </select>
                 </div>
 
@@ -822,7 +823,7 @@ const WorkerApp = () => {
                                                     className="w-16 bg-white border border-slate-200 p-2 rounded-lg text-sm text-center font-bold outline-none focus:border-blue-400" />
                                                 <span className="text-xs font-bold text-slate-500">人</span>
                                             </div>
-                                            <button onClick={() => removeSubcontractor(s.id)} className="w-8 h-8 flex items-center justify-center shrink-0 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition"><Trash2 size={16} /></button>
+                                            <button onClick={() => removeSubcontractor(s.id)} aria-label="協力業者を削除" title="協力業者を削除" className="w-8 h-8 flex items-center justify-center shrink-0 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition"><Trash2 size={16} /></button>
                                         </div>
                                     ))}
                                 </div>

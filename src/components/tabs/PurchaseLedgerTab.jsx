@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Search, Loader2, Database, Plus, Edit3, Trash2, X, Check, ChevronLeft, ChevronRight } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../components/Toast';
+import ConfirmModal from '../ConfirmModal';
 
 const initialFormData = {
     date: '',
@@ -30,6 +31,7 @@ const PurchaseLedgerTab = () => {
     // インライン編集用ステート
     const [editingRowId, setEditingRowId] = useState(null);
     const [editFormData, setEditFormData] = useState({});
+    const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
     // ページネーション用ステート
     const [currentPage, setCurrentPage] = useState(1);
@@ -244,10 +246,6 @@ const PurchaseLedgerTab = () => {
 
     // --- 削除処理 ---
     const handleDelete = async (id) => {
-        if (!window.confirm('本当にこのデータを削除しますか？\nこの操作は元に戻せません。')) {
-            return;
-        }
-
         try {
             setIsSaving(true);
             const { error } = await supabase
@@ -346,7 +344,7 @@ const PurchaseLedgerTab = () => {
                                                 <button onClick={() => handleEditClick(row)} className="p-1 rounded text-blue-600 hover:bg-blue-100 transition" title="編集">
                                                     <Edit3 size={16} />
                                                 </button>
-                                                <button onClick={() => handleDelete(row.id)} className="p-1 rounded text-red-600 hover:bg-red-100 transition" title="削除">
+                                                <button onClick={() => setConfirmDeleteId(row.id)} className="p-1 rounded text-red-600 hover:bg-red-100 transition" title="削除">
                                                     <Trash2 size={16} />
                                                 </button>
                                             </div>
@@ -381,9 +379,10 @@ const PurchaseLedgerTab = () => {
             <div className="p-3 border-t border-slate-200 bg-slate-50 flex flex-wrap items-center justify-between gap-4 text-sm text-slate-600">
                 <div className="flex items-center gap-2">
                     <span className="font-semibold text-slate-700">Page</span>
-                    <input 
-                        type="number" 
-                        value={currentPage} 
+                    <input
+                        type="number"
+                        min="1"
+                        value={currentPage}
                         onChange={(e) => {
                             const val = e.target.value;
                             if (val === '') setCurrentPage('');
@@ -490,6 +489,13 @@ const PurchaseLedgerTab = () => {
                     </div>
                 </div>
             )}
+            <ConfirmModal
+                isOpen={!!confirmDeleteId}
+                onClose={() => setConfirmDeleteId(null)}
+                onConfirm={() => { handleDelete(confirmDeleteId); setConfirmDeleteId(null); }}
+                title="データを削除"
+                message="このデータを削除しますか？この操作は元に戻せません。"
+            />
         </div>
     );
 };

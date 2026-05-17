@@ -1,4 +1,5 @@
 import * as xlsx from 'xlsx-js-style';
+import { ITEM_TYPE } from './constants';
 
 /**
  * Excelファイルをインポート用にパースする関数
@@ -200,7 +201,7 @@ export const parseExcelForEstimate = (file) => {
                             const nameStr = name.trim();
 
                             items.push({
-                                item_type: 'category',
+                                item_type: ITEM_TYPE.CATEGORY,
                                 category_symbol: symbols[categoryIndex] || String(categoryIndex + 1),
                                 name: nameStr,
                                 spec: null,
@@ -217,7 +218,7 @@ export const parseExcelForEstimate = (file) => {
 
                         // 通常の明細行
                         items.push({
-                            item_type: 'item',
+                            item_type: ITEM_TYPE.ITEM,
                             category_symbol: null,
                             name: name.trim(),
                             spec: spec ? String(spec).trim() : '',

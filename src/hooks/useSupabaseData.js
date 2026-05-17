@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { PROJECT_STATUS } from '../utils/constants';
 
 export function useSupabaseData(showToast) {
     const [projects, setProjects] = useState([]);
@@ -14,10 +15,12 @@ export function useSupabaseData(showToast) {
         setIsLoading(true);
         try {
             // Workers取得
-            const { data: wData } = await supabase.from('Workers').select('*').order('display_order', { ascending: true, nullsFirst: false });
+            const { data: wData, error: wError } = await supabase.from('Workers').select('*').order('display_order', { ascending: true, nullsFirst: false });
+            if (wError) throw wError;
 
             // WorkerCertifications取得
-            const { data: cData } = await supabase.from('WorkerCertifications').select('*');
+            const { data: cData, error: cError } = await supabase.from('WorkerCertifications').select('*');
+            if (cError) throw cError;
 
             if (wData) {
                 const validWorkers = wData.filter(w => w.name && w.name.trim() !== '');
@@ -27,9 +30,10 @@ export function useSupabaseData(showToast) {
                 }));
                 setWorkers(workersWithCerts);
             }
-            
+
             // Customers取得
-            const { data: custData } = await supabase.from('Customers').select('*').order('name', { ascending: true });
+            const { data: custData, error: custError } = await supabase.from('Customers').select('*').order('name', { ascending: true });
+            if (custError) throw custError;
             if (custData) setCustomers(custData);
 
             // Projects, ProjectTasks, TaskRecords取得
@@ -83,7 +87,7 @@ export function useSupabaseData(showToast) {
                     id: p.id,
                     order: p.order,
                     siteName: (p.name && p.name.startsWith('__NEW_PROJECT__')) ? '' : (p.name || '無題'),
-                    status: p.status || '予定',
+                    status: p.status || PROJECT_STATUS.SCHEDULED,
                     foreman_worker_id: p.foreman_worker_id || null,
                     customerId: p.customerId || null,
                     is_prime_contractor: p.is_prime_contractor || false,

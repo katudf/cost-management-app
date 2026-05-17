@@ -6,10 +6,12 @@ import { getDailyApiUsage } from '../../utils/aiOptimizeUtils';
 import HolidayCalendar from '../HolidayCalendar';
 import CustomerSettings from './CustomerSettings';
 import StaffSettings from './StaffSettings';
+import ConfirmModal from '../ConfirmModal';
 
 const SystemSettingsTab = ({ hourlyWage, setHourlyWage, geminiApiKey, setGeminiApiKey, isLoading, setIsLoading, workers = [], fetchAllData }) => {
     const { showToast } = useToast();
     const [localWage, setLocalWage] = useState(hourlyWage);
+    const [confirmDeleteCertId, setConfirmDeleteCertId] = useState(null);
     const [isSaving, setIsSaving] = useState(false);
     const [showSuccess, setShowSuccess] = useState(false);
     const [certForm, setCertForm] = useState({ id: null, workerId: '', name: '', registrationNumber: '', acquisitionDate: '', expiryDate: '' });
@@ -231,7 +233,6 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, geminiApiKey, setGeminiA
     };
 
     const handleDeleteCert = async (certId) => {
-        if (!window.confirm('この資格情報を削除しますか？')) return;
         setIsSaving(true);
         setIsLoading(true);
         try {
@@ -330,6 +331,7 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, geminiApiKey, setGeminiA
                                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold">¥</span>
                                     <input
                                         type="number"
+                                        min="0"
                                         value={localWage}
                                         onChange={(e) => setLocalWage(Number(e.target.value))}
                                         className="w-full pl-8 pr-4 py-3 rounded-lg border-2 border-slate-200 font-bold text-xl outline-none focus:border-blue-500 transition"
@@ -636,8 +638,10 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, geminiApiKey, setGeminiA
                                                                         <Edit3 size={16} />
                                                                     </button>
                                                                     <button
-                                                                        onClick={() => handleDeleteCert(firstCert.id)}
+                                                                        onClick={() => setConfirmDeleteCertId(firstCert.id)}
                                                                         disabled={isSaving}
+                                                                        aria-label="資格を削除"
+                                                                        title="資格を削除"
                                                                         className="bg-white border border-slate-200 text-red-500 hover:text-red-600 hover:border-red-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50"
                                                                     >
                                                                         <Trash2 size={16} />
@@ -666,8 +670,10 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, geminiApiKey, setGeminiA
                                                                             <Edit3 size={16} />
                                                                         </button>
                                                                         <button
-                                                                            onClick={() => handleDeleteCert(cert.id)}
+                                                                            onClick={() => setConfirmDeleteCertId(cert.id)}
                                                                             disabled={isSaving}
+                                                                            aria-label="資格を削除"
+                                                                            title="資格を削除"
                                                                             className="bg-white border border-slate-200 text-red-500 hover:text-red-600 hover:border-red-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50"
                                                                         >
                                                                             <Trash2 size={16} />
@@ -729,8 +735,10 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, geminiApiKey, setGeminiA
                                                                         <Edit3 size={16} />
                                                                     </button>
                                                                     <button
-                                                                        onClick={() => handleDeleteCert(firstHolder.id)}
+                                                                        onClick={() => setConfirmDeleteCertId(firstHolder.id)}
                                                                         disabled={isSaving}
+                                                                        aria-label="資格保有者を削除"
+                                                                        title="資格保有者を削除"
                                                                         className="bg-white border border-slate-200 text-red-500 hover:text-red-600 hover:border-red-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50"
                                                                     >
                                                                         <Trash2 size={16} />
@@ -754,13 +762,17 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, geminiApiKey, setGeminiA
                                                                         <button
                                                                             onClick={() => setCertForm({ id: holder.id, workerId: holder.workerId, name: group.name, registrationNumber: holder.registrationNumber || '', acquisitionDate: holder.acquisitionDate || '', expiryDate: holder.expiryDate || '' })}
                                                                             disabled={isSaving}
+                                                                            aria-label="資格保有者を編集"
+                                                                            title="資格保有者を編集"
                                                                             className="bg-white border border-slate-200 text-blue-600 hover:text-blue-700 hover:border-blue-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50"
                                                                         >
                                                                             <Edit3 size={16} />
                                                                         </button>
                                                                         <button
-                                                                            onClick={() => handleDeleteCert(holder.id)}
+                                                                            onClick={() => setConfirmDeleteCertId(holder.id)}
                                                                             disabled={isSaving}
+                                                                            aria-label="資格保有者を削除"
+                                                                            title="資格保有者を削除"
                                                                             className="bg-white border border-slate-200 text-red-500 hover:text-red-600 hover:border-red-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50"
                                                                         >
                                                                             <Trash2 size={16} />
@@ -943,6 +955,13 @@ const SystemSettingsTab = ({ hourlyWage, setHourlyWage, geminiApiKey, setGeminiA
                     </div>
                 </div>
             )}
+            <ConfirmModal
+                isOpen={!!confirmDeleteCertId}
+                onClose={() => setConfirmDeleteCertId(null)}
+                onConfirm={() => { handleDeleteCert(confirmDeleteCertId); setConfirmDeleteCertId(null); }}
+                title="資格情報を削除"
+                message="この資格情報を削除しますか？"
+            />
         </div>
     );
 };

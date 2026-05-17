@@ -4,7 +4,7 @@ import { Calendar, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Loader2, X
 import { supabase } from '../../lib/supabase';
 import { exportAssignmentChartToExcel } from '../../utils/assignmentChartExport';
 import { toDateStr, addDays, getDayOfWeek, getMonday } from '../../utils/dateUtils';
-import { DEFAULT_COLORS, SCHEDULE_TYPES } from '../../utils/constants';
+import { DEFAULT_COLORS, SCHEDULE_TYPES, PROJECT_STATUS } from '../../utils/constants';
 
 
 const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTab, setActiveProjectId, setProjects, customers }) => {
@@ -159,7 +159,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
             const { data: pData } = await supabase
                 .from('Projects')
                 .select('id, name, startDate, endDate, bar_color, status, display_order, customerId, is_prime_contractor')
-                .in('status', ['予定', '施工中'])
+                .in('status', [PROJECT_STATUS.SCHEDULED, PROJECT_STATUS.IN_PROGRESS])
                 .order('display_order', { ascending: true, nullsFirst: false })
                 .order('created_at', { ascending: true });
 
@@ -383,7 +383,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
     const allProjects = useMemo(() => {
         const excludedNames = ["【会社】有給", "有給", "【有給】"];
         return projects
-            .filter(p => (p.status === '予定' || p.status === '施工中') && !excludedNames.includes(p.siteName))
+            .filter(p => (p.status === PROJECT_STATUS.SCHEDULED || p.status === PROJECT_STATUS.IN_PROGRESS) && !excludedNames.includes(p.siteName))
             .map((p, idx) => ({
                 id: p.id,
                 name: p.siteName || '無題',
@@ -912,7 +912,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
 
             const { error } = await supabase
                 .from('Projects')
-                .update({ startDate: dateStr, endDate: dateStr, status: proj.status || '予定' })
+                .update({ startDate: dateStr, endDate: dateStr, status: proj.status || PROJECT_STATUS.SCHEDULED })
                 .eq('id', proj.id);
 
             if (error) throw error;

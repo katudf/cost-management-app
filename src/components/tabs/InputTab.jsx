@@ -258,6 +258,7 @@ const InputTab = ({
                                         <td className="p-2">
                                             <input
                                                 type="number"
+                                                min="0"
                                                 step="0.1"
                                                 value={r.hours}
                                                 className="border-slate-200 border rounded p-1 w-full text-right font-black text-xs text-blue-600 focus:border-blue-400 outline-none"
@@ -274,7 +275,7 @@ const InputTab = ({
                                             />
                                         </td>
                                         <td className="p-2 text-center">
-                                            <button onClick={() => removeRecord(r.id)} className="text-slate-300 hover:text-red-500 transition">
+                                            <button onClick={() => removeRecord(r.id)} aria-label="日報を削除" title="日報を削除" className="text-slate-300 hover:text-red-500 transition">
                                                 <Trash2 size={16} />
                                             </button>
                                         </td>
@@ -454,7 +455,7 @@ const InputTab = ({
                                     />
                                 </td>
                                 <td className="p-2 text-center">
-                                    <button onClick={() => removeSubcontractorRecord(r.id)} className="text-orange-300 hover:text-red-500 transition">
+                                    <button onClick={() => removeSubcontractorRecord(r.id)} aria-label="協力業者記録を削除" title="協力業者記録を削除" className="text-orange-300 hover:text-red-500 transition">
                                         <Trash2 size={16} />
                                     </button>
                                 </td>

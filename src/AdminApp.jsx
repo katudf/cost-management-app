@@ -7,7 +7,7 @@ import { useDashboardStats } from './hooks/useDashboardStats';
 import { useToast } from './components/Toast';
 import { Table, Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, Upload } from 'lucide-react';
 import { supabase } from './lib/supabase';
-import { DEFAULT_MASTER_DATA } from './utils/constants';
+import { DEFAULT_MASTER_DATA, PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR, ITEM_TYPE } from './utils/constants';
 import { calculateAge } from './utils/dateUtils';
 import { calculateProjectsSummary } from './utils/projectUtils';
 import { parseExcelForImport } from './utils/excelImportUtils';
@@ -55,9 +55,9 @@ const App = () => {
     const dashboardStats = useDashboardStats({ projects, activeProject: projectOps.activeProject, hourlyWage });
 
     const groupedProjects = useMemo(() => {
-        const groups = { 見積: [], 予定: [], 施工中: [], 完了: [] };
+        const groups = { [PROJECT_STATUS.ESTIMATE]: [], [PROJECT_STATUS.SCHEDULED]: [], [PROJECT_STATUS.IN_PROGRESS]: [], [PROJECT_STATUS.COMPLETED]: [] };
         (dashboardStats.displayProjects || []).forEach(p => {
-            const st = p.status || '見積';
+            const st = p.status || PROJECT_STATUS.ESTIMATE;
             if (groups[st]) groups[st].push(p);
         });
         return groups;
@@ -160,17 +160,17 @@ const App = () => {
             }
 
             if (choice === 'create_new') {
-                const { data, error } = await supabase.from('Projects').insert([{ name: siteNameToUse, order: nextOrder, status: '見積', customerId }]).select();
+                const { data, error } = await supabase.from('Projects').insert([{ name: siteNameToUse, order: nextOrder, status: PROJECT_STATUS.ESTIMATE, customerId }]).select();
                 if (error) throw error;
                 targetProjectId = data[0].id;
             } else if (choice === 'create_alias') {
-                const { data, error } = await supabase.from('Projects').insert([{ name: aliasName || 'エクセル取込現場', order: nextOrder, status: '見積', customerId }]).select();
+                const { data, error } = await supabase.from('Projects').insert([{ name: aliasName || 'エクセル取込現場', order: nextOrder, status: PROJECT_STATUS.ESTIMATE, customerId }]).select();
                 if (error) throw error;
                 targetProjectId = data[0].id;
             } else if (choice === 'overwrite' || choice === 'overwrite_empty') {
                 targetProjectId = directParams ? directParams.projId : activeProjectId;
                 if (!targetProjectId) {
-                    const { data, error } = await supabase.from('Projects').insert([{ name: siteNameToUse, order: nextOrder, status: '見積', customerId }]).select();
+                    const { data, error } = await supabase.from('Projects').insert([{ name: siteNameToUse, order: nextOrder, status: PROJECT_STATUS.ESTIMATE, customerId }]).select();
                     if (error) throw error;
                     targetProjectId = data[0].id;
                 } else {
@@ -436,7 +436,7 @@ const App = () => {
                                 <div className="text-center py-10 bg-white rounded-xl border border-dashed border-slate-300 text-slate-400 font-bold">該当する条件の現場がありません。</div>
                             ) : (
                                 <div className="flex flex-row gap-4 overflow-x-auto pb-4 items-start">
-                                    {['見積', '予定', '施工中', '完了'].map(status => {
+                                    {PROJECT_STATUS_LIST.map(status => {
                                         const columnProjects = groupedProjects[status] || [];
                                         const ITEMS_PER_PAGE = 10;
                                         const totalPages = Math.max(1, Math.ceil(columnProjects.length / ITEMS_PER_PAGE));
@@ -454,11 +454,7 @@ const App = () => {
                                             <div key={status} className="flex flex-col flex-1 min-w-[280px] sm:min-w-[320px] w-full bg-slate-200/50 rounded-xl p-3">
                                                 <div className="flex items-center justify-between mb-3 px-1">
                                                     <h3 className="font-bold text-slate-700 flex items-center gap-2">
-                                                        <span className={`w-3 h-3 rounded-full ${
-                                                            status === '見積' ? 'bg-orange-400' :
-                                                            status === '予定' ? 'bg-blue-400' :
-                                                            status === '施工中' ? 'bg-green-500' : 'bg-slate-400'
-                                                        }`}></span>
+                                                        <span className={`w-3 h-3 rounded-full ${PROJECT_STATUS_COLOR[status] || 'bg-slate-400'}`}></span>
                                                         {status}
                                                     </h3>
                                                     <span className="text-xs font-bold text-slate-500 bg-white px-2 py-0.5 rounded-full shadow-sm">{columnProjects.length}件</span>
@@ -492,11 +488,7 @@ const App = () => {
                                                                     </span>
                                                                 </div>
                                                                 <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
-                                                                    <div className={`h-full rounded-full ${
-                                                                        status === '見積' ? 'bg-orange-400' :
-                                                                        status === '予定' ? 'bg-blue-400' :
-                                                                        status === '施工中' ? 'bg-green-500' : 'bg-slate-400'
-                                                                    }`} style={{ width: `${Math.min(100, Math.max(0, proj.overallProgress))}%` }}></div>
+                                                                    <div className={`h-full rounded-full ${PROJECT_STATUS_COLOR[status] || 'bg-slate-400'}`} style={{ width: `${Math.min(100, Math.max(0, proj.overallProgress))}%` }}></div>
                                                                 </div>
                                                             </div>
                                                         </div>

@@ -1,8 +1,9 @@
 // src/EstimateForm.jsx
 // 見積書入力画面（ヘッダー + 明細）
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { ArrowLeft, Save, FileText, Plus, Trash2, GripVertical, ChevronDown, ChevronUp, Lock, Unlock } from 'lucide-react';
+import ConfirmModal from './components/ConfirmModal';
 import {
   fetchEstimateById,
   createEstimate,
@@ -16,6 +17,7 @@ import {
   checkDuplicateNumber,
   fetchOfficeStaff,
 } from './supabaseEstimates';
+import { PROJECT_STATUS, ITEM_TYPE } from './utils/constants';
 
 // 今日の日付を YYMMDD 形式で返す
 const todayPrefix = () => {
@@ -37,7 +39,7 @@ const newItemRow = (estimateId, parentId, sortOrder) => ({
   estimate_id: estimateId,
   parent_id: parentId,
   sort_order: sortOrder,
-  item_type: 'item',
+  item_type: ITEM_TYPE.ITEM,
   category_symbol: null,
   name: '',
   spec: '',
@@ -49,7 +51,7 @@ const newItemRow = (estimateId, parentId, sortOrder) => ({
 });
 
 const newCategoryRow = (sortOrder) => ({
-  item_type: 'category',
+  item_type: ITEM_TYPE.CATEGORY,
   category_symbol: '',
   name: '',
   spec: null,
@@ -63,8 +65,8 @@ const newCategoryRow = (sortOrder) => ({
 });
 
 const fixedRows = [
-  { item_type: 'fixed', name: '法定福利費', quantity: 1, unit: '式', amount: '', note: '' },
-  { item_type: 'fixed', name: '安全費',     quantity: 1, unit: '式', amount: '', note: '' },
+  { item_type: ITEM_TYPE.FIXED, name: '法定福利費', quantity: 1, unit: '式', amount: '', note: '' },
+  { item_type: ITEM_TYPE.FIXED, name: '安全費',     quantity: 1, unit: '式', amount: '', note: '' },
 ];
 
 const UNIT_SUGGESTIONS = ['m²', 'm', 'm³', '本', '式', 'ヶ所', '個', 't', '枚', '組'];
@@ -117,6 +119,11 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
   const [error, setError] = useState(null);
   const [numberError, setNumberError] = useState('');
   const [originalStatus, setOriginalStatus] = useState('draft');
+
+  // 未保存変更の追跡
+  const isDirty = useRef(false);
+  const isInitialized = useRef(false);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
 
   // 見積番号を文字列に結合
   const estimateNumber = [
@@ -194,10 +201,29 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
         setError('データの読み込みに失敗しました: ' + e.message);
       } finally {
         setLoading(false);
+        // 初期ロード完了後から変更を追跡開始
+        isInitialized.current = true;
       }
     };
     init();
   }, [estimateId, isNew]);
+
+  // 初期化完了後、変更を検知してダーティフラグをセット
+  useEffect(() => {
+    if (!isInitialized.current) return;
+    isDirty.current = true;
+  }, [header, items]);
+
+  // ブラウザのタブ閉じ・リロード時に警告
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (!isDirty.current) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
 
   // ============================================================
   // ヘッダー入力ハンドラ
@@ -211,16 +237,16 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
   // ============================================================
   // 工種行追加
   const addCategory = () => {
-    const categories = items.filter(i => i.item_type === 'category');
+    const categories = items.filter(i => i.item_type === ITEM_TYPE.CATEGORY);
     const symbols = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
     const nextSymbol = symbols[categories.length] || '';
     const newRow = {
       ...newCategoryRow(items.length),
       category_symbol: nextSymbol,
     };
-    setItems(prev => [...prev.filter(i => i.item_type !== 'fixed'), newRow,
+    setItems(prev => [...prev.filter(i => i.item_type !== ITEM_TYPE.FIXED), newRow,
       newItemRow(null, null, items.length + 1),
-      ...prev.filter(i => i.item_type === 'fixed'),
+      ...prev.filter(i => i.item_type === ITEM_TYPE.FIXED),
     ]);
   };
 
@@ -238,10 +264,10 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
   const removeRow = (index) => {
     setItems(prev => {
       const target = prev[index];
-      if (target.item_type === 'category') {
+      if (target.item_type === ITEM_TYPE.CATEGORY) {
         // 工種行削除：配下の細別も削除（次のcategoryまで）
         let end = index + 1;
-        while (end < prev.length && prev[end].item_type === 'item') end++;
+        while (end < prev.length && prev[end].item_type === ITEM_TYPE.ITEM) end++;
         return prev.filter((_, i) => i < index || i >= end);
       }
       return prev.filter((_, i) => i !== index);
@@ -269,8 +295,8 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
   // 合計計算
   // ============================================================
   const visibleItems = items.filter(i =>
-    i.item_type === 'item' ||
-    (i.item_type === 'fixed' && header.show_fixed_fees)
+    i.item_type === ITEM_TYPE.ITEM ||
+    (i.item_type === ITEM_TYPE.FIXED && header.show_fixed_fees)
   );
   const totals = calcTotals(visibleItems, Number(header.tax_rate), {
     type: header.net_calc_type,
@@ -304,10 +330,10 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
     const result = {};
     let currentCatKey = null;
     items.forEach(item => {
-      if (item.item_type === 'category') {
+      if (item.item_type === ITEM_TYPE.CATEGORY) {
         currentCatKey = item.id || item._tempId || item.category_symbol;
         result[currentCatKey] = 0;
-      } else if (item.item_type === 'item' && currentCatKey) {
+      } else if (item.item_type === ITEM_TYPE.ITEM && currentCatKey) {
         result[currentCatKey] += Number(item.amount) || 0;
       }
     });
@@ -330,16 +356,16 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
     }
 
     // 工種・細別バリデーション（工種がある場合のみチェック）
-    const categories = items.filter(i => i.item_type === 'category');
+    const categories = items.filter(i => i.item_type === ITEM_TYPE.CATEGORY);
     let catIdx = 0;
     for (let i = 0; i < items.length; i++) {
-      if (items[i].item_type === 'category') {
+      if (items[i].item_type === ITEM_TYPE.CATEGORY) {
         const catName = items[i].name || items[i].category_symbol || `工種${catIdx + 1}`;
         // この工種配下に名称入力済みの細別があるか
         let hasItem = false;
         for (let j = i + 1; j < items.length; j++) {
-          if (items[j].item_type === 'category') break;
-          if (items[j].item_type === 'item' && items[j].name?.trim()) { hasItem = true; break; }
+          if (items[j].item_type === ITEM_TYPE.CATEGORY) break;
+          if (items[j].item_type === ITEM_TYPE.ITEM && items[j].name?.trim()) { hasItem = true; break; }
         }
         if (!hasItem) {
           setError(`「${catName}」に細別を最低1件追加してください。`);
@@ -371,17 +397,17 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
       // 合計行の自動生成（show_subtotals=ON 時）
       let finalItems = [...items];
       // まず既存のsubtotal行を除去
-      finalItems = finalItems.filter(i => i.item_type !== 'subtotal');
+      finalItems = finalItems.filter(i => i.item_type !== ITEM_TYPE.SUBTOTAL);
       if (header.show_subtotals) {
         const withSubtotals = [];
         let currentCatKey = null;
         let catAmount = 0;
         finalItems.forEach((item, idx) => {
-          if (item.item_type === 'category') {
+          if (item.item_type === ITEM_TYPE.CATEGORY) {
             // 前の工種の合計行を挿入
             if (currentCatKey !== null) {
               withSubtotals.push({
-                item_type: 'subtotal',
+                item_type: ITEM_TYPE.SUBTOTAL,
                 name: '合　計',
                 amount: catAmount,
                 sort_order: withSubtotals.length,
@@ -389,7 +415,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
             }
             currentCatKey = item.id || item._tempId || idx;
             catAmount = 0;
-          } else if (item.item_type === 'item') {
+          } else if (item.item_type === ITEM_TYPE.ITEM) {
             catAmount += Number(item.amount) || 0;
           }
           withSubtotals.push(item);
@@ -397,7 +423,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
         // 最後の工種の合計行
         if (currentCatKey !== null) {
           withSubtotals.push({
-            item_type: 'subtotal',
+            item_type: ITEM_TYPE.SUBTOTAL,
             name: '合　計',
             amount: catAmount,
             sort_order: withSubtotals.length,
@@ -408,8 +434,8 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
 
       // 税込合計を計算
       const savingVisibleItems = finalItems.filter(i =>
-        i.item_type === 'item' ||
-        (i.item_type === 'fixed' && header.show_fixed_fees)
+        i.item_type === ITEM_TYPE.ITEM ||
+        (i.item_type === ITEM_TYPE.FIXED && header.show_fixed_fees)
       );
       const savingTotals = calcTotals(savingVisibleItems, Number(header.tax_rate), {
         type: header.net_calc_type,
@@ -487,7 +513,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
             await supabase.from('Projects').insert([{
               name: header.title,
               customerId: header.customer_id,
-              status: '見積',
+              status: PROJECT_STATUS.ESTIMATE,
               order: nextOrder
             }]);
           }
@@ -497,6 +523,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
       }
 
       setOriginalStatus(header.status);
+      isDirty.current = false; // 保存完了後はダーティフラグをリセット
       onSaved?.();
     } catch (e) {
       setError('保存に失敗しました: ' + e.message);
@@ -521,7 +548,9 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
       <div className="flex items-center justify-between mb-5">
         <div className="flex items-center gap-3">
           <button
-            onClick={onBack}
+            onClick={() => isDirty.current ? setShowLeaveConfirm(true) : onBack()}
+            aria-label="一覧に戻る"
+            title="一覧に戻る"
             className="p-2 rounded-lg hover:bg-slate-100 text-slate-500 transition"
           >
             <ArrowLeft size={20} />
@@ -807,6 +836,8 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
                     <div className="flex items-center gap-2">
                       <input
                         type="number"
+                        min="0"
+                        max="100"
                         value={header.net_perc}
                         onChange={e => handleHeaderChange('net_perc', e.target.value)}
                         className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-blue-400"
@@ -821,6 +852,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
                       <span className="absolute left-3 top-1.5 text-slate-400 text-xs">¥</span>
                       <input
                         type="number"
+                        min="0"
                         value={header.net_amount}
                         onChange={e => handleHeaderChange('net_amount', e.target.value)}
                         className="w-full border border-slate-300 rounded-lg pl-6 pr-3 py-1.5 text-xs focus:ring-2 focus:ring-blue-400"
@@ -900,6 +932,17 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
 
         </div>
       </div>
+
+      {/* 未保存変更の離脱確認モーダル */}
+      <ConfirmModal
+        isOpen={showLeaveConfirm}
+        onClose={() => setShowLeaveConfirm(false)}
+        onConfirm={() => { setShowLeaveConfirm(false); isDirty.current = false; onBack(); }}
+        title="変更を破棄しますか？"
+        message="保存されていない変更があります。一覧に戻ると変更内容が失われます。"
+        confirmText="破棄して戻る"
+        cancelText="編集を続ける"
+      />
     </div>
   );
 };
@@ -912,11 +955,11 @@ const ItemTable = ({ items, showFixedFees, showSubtotals, categorySubtotals, onU
   const isLastItemBeforeNext = (index) => {
     if (!showSubtotals) return false;
     const item = items[index];
-    if (item.item_type !== 'item') return false;
+    if (item.item_type !== ITEM_TYPE.ITEM) return false;
     // 次の行がcategory, fixed, またはリスト末尾であれば最後のitem
     for (let j = index + 1; j < items.length; j++) {
-      if (items[j].item_type === 'category' || items[j].item_type === 'fixed') return true;
-      if (items[j].item_type === 'item') return false;
+      if (items[j].item_type === ITEM_TYPE.CATEGORY || items[j].item_type === ITEM_TYPE.FIXED) return true;
+      if (items[j].item_type === ITEM_TYPE.ITEM) return false;
     }
     return true; // リスト末尾
   };
@@ -924,7 +967,7 @@ const ItemTable = ({ items, showFixedFees, showSubtotals, categorySubtotals, onU
   // 直近の工種キーを取得
   const getCategoryKeyForIndex = (index) => {
     for (let i = index; i >= 0; i--) {
-      if (items[i].item_type === 'category') {
+      if (items[i].item_type === ITEM_TYPE.CATEGORY) {
         return items[i].id || items[i]._tempId || items[i].category_symbol;
       }
     }
@@ -950,8 +993,8 @@ const ItemTable = ({ items, showFixedFees, showSubtotals, categorySubtotals, onU
           </thead>
           <tbody>
             {items.map((item, index) => {
-              if (item.item_type === 'fixed' && !showFixedFees) return null;
-              if (item.item_type === 'subtotal') return null; // subtotalはUI上では表示しない（保存時に自動生成）
+              if (item.item_type === ITEM_TYPE.FIXED && !showFixedFees) return null;
+              if (item.item_type === ITEM_TYPE.SUBTOTAL) return null; // subtotalはUI上では表示しない（保存時に自動生成）
               return (
                 <React.Fragment key={item.id || item._tempId || index}>
                   <ItemRow
@@ -1009,7 +1052,7 @@ const ItemTable = ({ items, showFixedFees, showSubtotals, categorySubtotals, onU
 const ItemRow = ({ item, index, allItems, onChange, onAddItem, onRemove, disabled }) => {
   const [showUnitSug, setShowUnitSug] = useState(false);
 
-  if (item.item_type === 'category') {
+  if (item.item_type === ITEM_TYPE.CATEGORY) {
     return (
       <tr className="bg-blue-50 border-t border-blue-100">
         <td className="px-2 py-1.5 text-slate-400"><GripVertical size={14} /></td>
@@ -1044,7 +1087,7 @@ const ItemRow = ({ item, index, allItems, onChange, onAddItem, onRemove, disable
         </td>
         <td className="px-2 py-1.5">
           {!disabled && (
-            <button onClick={onRemove} className="text-red-400 hover:text-red-600">
+            <button onClick={onRemove} aria-label="行を削除" title="行を削除" className="text-red-400 hover:text-red-600">
               <Trash2 size={14} />
             </button>
           )}
@@ -1053,7 +1096,7 @@ const ItemRow = ({ item, index, allItems, onChange, onAddItem, onRemove, disable
     );
   }
 
-  if (item.item_type === 'fixed') {
+  if (item.item_type === ITEM_TYPE.FIXED) {
     return (
       <tr className="bg-amber-50 border-t border-amber-100">
         <td className="px-2 py-1.5"></td>
@@ -1065,6 +1108,7 @@ const ItemRow = ({ item, index, allItems, onChange, onAddItem, onRemove, disable
         <td className="px-2 py-1.5">
           <input
             type="number"
+            min="0"
             value={item.amount || ''}
             onChange={e => onChange('amount', e.target.value)}
             className="w-full border border-slate-300 rounded px-1 py-1 text-xs text-right bg-white"
@@ -1104,6 +1148,7 @@ const ItemRow = ({ item, index, allItems, onChange, onAddItem, onRemove, disable
       <td className="px-2 py-1.5">
         <input
           type="number"
+          min="0"
           value={item.quantity || ''}
           onChange={e => onChange('quantity', e.target.value)}
           className="w-full border border-slate-200 rounded px-1 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-400"
@@ -1139,6 +1184,7 @@ const ItemRow = ({ item, index, allItems, onChange, onAddItem, onRemove, disable
       <td className="px-2 py-1.5">
         <input
           type="number"
+          min="0"
           value={item.unit_price || ''}
           onChange={e => onChange('unit_price', e.target.value)}
           className="w-full border border-slate-200 rounded px-1 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-400"
@@ -1149,6 +1195,7 @@ const ItemRow = ({ item, index, allItems, onChange, onAddItem, onRemove, disable
       <td className="px-2 py-1.5">
         <input
           type="number"
+          min="0"
           value={item.amount || ''}
           onChange={e => onChange('amount', e.target.value)}
           className="w-full border border-slate-200 rounded px-1 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-400 bg-slate-50"
@@ -1168,7 +1215,7 @@ const ItemRow = ({ item, index, allItems, onChange, onAddItem, onRemove, disable
       </td>
       <td className="px-2 py-1.5">
         {!disabled && (
-          <button onClick={onRemove} className="text-red-400 hover:text-red-600">
+          <button onClick={onRemove} aria-label="行を削除" title="行を削除" className="text-red-400 hover:text-red-600">
             <Trash2 size={14} />
           </button>
         )}
