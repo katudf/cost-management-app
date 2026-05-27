@@ -3,10 +3,12 @@ import { AlertCircle, Edit3, PlusCircle, Wand2 } from 'lucide-react';
 
 const ImportModal = ({ info, isLoading, aliasName, setAliasName, onChoice, onCancel, onOptimize }) => {
     const [localData, setLocalData] = useState([]);
+    const [skipAi, setSkipAi] = useState(false);
 
     useEffect(() => {
         if (info && info.data) {
             setLocalData(info.data);
+            setSkipAi(false);
         }
     }, [info]);
 
@@ -32,6 +34,14 @@ const ImportModal = ({ info, isLoading, aliasName, setAliasName, onChoice, onCan
 
     // Filter status to show in subhead
     const validCount = localData.filter(d => !d.isExcluded).length;
+
+    const handleSkipAi = () => {
+        if (info.type === 'normal' && info.isEmpty) {
+            handleChoice('overwrite_empty');
+        } else {
+            setSkipAi(true);
+        }
+    };
 
     return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
@@ -97,7 +107,7 @@ const ImportModal = ({ info, isLoading, aliasName, setAliasName, onChoice, onCan
                         </table>
                     </div>
                 ) : (
-                    info.canOptimize && (
+                    info.canOptimize && !skipAi && (
                         <div className="mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-5 flex flex-col items-center justify-center gap-3">
                             <Wand2 className="text-blue-500" size={32} />
                             <div className="text-center">
@@ -108,13 +118,22 @@ const ImportModal = ({ info, isLoading, aliasName, setAliasName, onChoice, onCan
                                     長すぎる名前を短縮し、不要な間接経費などを自動で除外します。
                                 </p>
                             </div>
-                            <button
-                                onClick={onOptimize}
-                                disabled={isLoading}
-                                className="mt-2 bg-blue-600 text-white px-6 py-2.5 rounded-lg font-bold hover:bg-blue-700 transition flex items-center gap-2 disabled:opacity-50"
-                            >
-                                {isLoading ? '最適化中...' : 'AIを使用して項目を整理する'}
-                            </button>
+                            <div className="flex flex-col sm:flex-row gap-3 w-full justify-center mt-2">
+                                <button
+                                    onClick={onOptimize}
+                                    disabled={isLoading}
+                                    className="bg-blue-600 text-white px-6 py-2.5 rounded-lg font-bold hover:bg-blue-700 transition flex items-center justify-center gap-2 disabled:opacity-50"
+                                >
+                                    {isLoading ? '最適化中...' : 'AIを使用して項目を整理する'}
+                                </button>
+                                <button
+                                    onClick={handleSkipAi}
+                                    disabled={isLoading}
+                                    className="bg-white border border-slate-300 text-slate-700 px-6 py-2.5 rounded-lg font-bold hover:bg-slate-50 transition flex items-center justify-center gap-2 disabled:opacity-50"
+                                >
+                                    そのまま読み込む
+                                </button>
+                            </div>
                         </div>
                     )
                 )}
@@ -158,7 +177,7 @@ const ImportModal = ({ info, isLoading, aliasName, setAliasName, onChoice, onCan
                         </>
                     ) : (
                         <>
-                            {(!info.isEmpty || info.aiOptimized) && (
+                            {(!info.isEmpty || info.aiOptimized || skipAi) && (
                                 <button
                                     onClick={() => handleChoice(info.isEmpty ? 'overwrite_empty' : 'create_new')}
                                     className="p-4 border-2 border-blue-500 rounded-lg hover:bg-blue-50 transition text-left group disabled:opacity-50"
@@ -168,7 +187,7 @@ const ImportModal = ({ info, isLoading, aliasName, setAliasName, onChoice, onCan
                                         <PlusCircle size={20} /> {info.isEmpty ? 'この内容でインポート' : '新規作成 (新しい現場として作成)'}
                                     </div>
                                     <div className="text-sm text-slate-500">
-                                        {info.isEmpty ? 'AIの最適化結果を保存して現場にデータを追加します。' : `新しい現場「${info.fileName}」を作成し、そこにデータをインポートします。現在の現場データは一切変更されません。`}
+                                        {info.isEmpty ? 'Excelのデータを現場に追加します。' : `新しい現場「${info.fileName}」を作成し、そこにデータをインポートします。現在の現場データは一切変更されません。`}
                                     </div>
                                 </button>
                             )}
