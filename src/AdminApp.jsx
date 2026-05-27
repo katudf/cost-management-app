@@ -48,7 +48,7 @@ const App = () => {
         return new Date(today.setDate(diff)).toISOString().split('T')[0];
     });
 
-    const { projects, setProjects, workers, setWorkers, customers, setCustomers, hourlyWage, setHourlyWage, geminiApiKey, setGeminiApiKey, isLoading, setIsLoading, fetchAllData } = useSupabaseData(showToast);
+    const { projects, setProjects, workers, setWorkers, customers, setCustomers, hourlyWage, setHourlyWage, isGeminiEnabled, setIsGeminiEnabled, isLoading, setIsLoading, fetchAllData, fetchProjectDetails } = useSupabaseData(showToast);
 
     const workerOps = useWorkers({ workers, setWorkers, showToast });
     const projectOps = useProjects({ projects, setProjects, activeProjectId, setActiveProjectId, showToast, workers });
@@ -74,6 +74,16 @@ const App = () => {
         }
     }, [activeProjectId]);
 
+    // アクティブプロジェクトの変更を監視し、詳細データが空であれば遅延ロードする
+    useEffect(() => {
+        if (activeProjectId) {
+            const activeProj = projects.find(p => p.id === activeProjectId);
+            if (activeProj && activeProj._isLoaded === false) {
+                fetchProjectDetails(activeProjectId);
+            }
+        }
+    }, [activeProjectId, projects, fetchProjectDetails]);
+
     // --- Excelインポート ---
     const fileInputRef = useRef(null);
 
@@ -97,7 +107,7 @@ const App = () => {
                     customerName: parseRes.customerName,
                     duplicateId: duplicateProject?.id,
                     aiOptimized: false,
-                    canOptimize: !!geminiApiKey,
+                    canOptimize: isGeminiEnabled,
                     isEmpty: !duplicateProject && !(projectOps.activeProject.masterData && projectOps.activeProject.masterData.length > 0)
                 });
 
@@ -115,11 +125,11 @@ const App = () => {
     };
 
     const handleOptimizeRequest = async () => {
-        if (!geminiApiKey || !importModalInfo) return;
+        if (!isGeminiEnabled || !importModalInfo) return;
         setIsLoading(true);
         showToast("AIが項目を最適化しています...", "success");
         try {
-            const processedData = await optimizeItemsWithGemini(importModalInfo.data, geminiApiKey);
+            const processedData = await optimizeItemsWithGemini(importModalInfo.data);
             setImportModalInfo({ ...importModalInfo, data: processedData, aiOptimized: true });
         } catch (error) {
             console.error('AI Optimize Error:', error);
@@ -563,8 +573,8 @@ const App = () => {
                         <SystemSettingsTab
                             hourlyWage={hourlyWage}
                             setHourlyWage={setHourlyWage}
-                            geminiApiKey={geminiApiKey}
-                            setGeminiApiKey={setGeminiApiKey}
+                            isGeminiEnabled={isGeminiEnabled}
+                            setIsGeminiEnabled={setIsGeminiEnabled}
                             isLoading={isLoading}
                             setIsLoading={setIsLoading}
                             workers={workers}

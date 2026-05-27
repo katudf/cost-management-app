@@ -1,4 +1,4 @@
-export const calculateAge = (birthDateString) => {
+export const calculateAge = (birthDateString: string | null | undefined): number | string => {
     if (!birthDateString) return '-';
     const birthDate = new Date(birthDateString);
     const today = new Date();
@@ -10,7 +10,7 @@ export const calculateAge = (birthDateString) => {
     return age;
 };
 
-export const calculateTenure = (hireDateString, resignationDateString) => {
+export const calculateTenure = (hireDateString: string | null | undefined, resignationDateString?: string | null | undefined): string => {
     if (!hireDateString) return '-';
     const hireDate = new Date(hireDateString);
     const endDate = resignationDateString ? new Date(resignationDateString) : new Date();
@@ -37,25 +37,26 @@ export const calculateTenure = (hireDateString, resignationDateString) => {
     return `${years}年${months}ヶ月`;
 };
 
-
 // === 日付ヘルパー関数 (AssignmentChartTab / ScheduleViewApp 共通) ===
 
-export const toDateStr = (d) => {
+export const toDateStr = (d: Date): string => {
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
     return `${y}-${m}-${day}`;
 };
 
-export const addDays = (d, n) => {
+export const addDays = (d: Date | string | number, n: number): Date => {
     const r = new Date(d);
     r.setDate(r.getDate() + n);
     return r;
 };
 
-export const getDayOfWeek = (d) => ['日', '月', '火', '水', '木', '金', '土'][d.getDay()];
+export const getDayOfWeek = (d: Date): string => {
+    return ['日', '月', '火', '水', '木', '金', '土'][d.getDay()];
+};
 
-export const getMonday = (d) => {
+export const getMonday = (d: Date | string | number): Date => {
     const date = new Date(d);
     const day = date.getDay();
     const diff = day === 0 ? -6 : 1 - day;

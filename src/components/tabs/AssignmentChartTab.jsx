@@ -1,640 +1,77 @@
-import { useToast } from '../../components/Toast';
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { Calendar, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Loader2, X, Plus, Trash2, Download, ExternalLink } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
+import React from 'react';
+import { Calendar, ChevronLeft, ChevronRight, Download } from 'lucide-react';
 import { exportAssignmentChartToExcel } from '../../utils/assignmentChartExport';
-import { toDateStr, addDays, getDayOfWeek, getMonday } from '../../utils/dateUtils';
-import { DEFAULT_COLORS, SCHEDULE_TYPES, PROJECT_STATUS } from '../../utils/constants';
-
+import { addDays } from '../../utils/dateUtils';
+import { useToast } from '../../components/Toast';
+import { useAssignmentState } from '../../hooks/useAssignmentState';
+import EditColorPopup from '../assignment/EditColorPopup';
+import EditHolidayPopup from '../assignment/EditHolidayPopup';
+import AssignmentPopup from '../assignment/AssignmentPopup';
+import { SCHEDULE_TYPES } from '../../utils/constants';
 
 const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTab, setActiveProjectId, setProjects, customers }) => {
     const { showToast } = useToast();
-    const [isLoading, setIsLoading] = useState(true);
-    const [assignments, setAssignments] = useState([]);
-    const [taskRecords, setTaskRecords] = useState([]);
 
-    // 退社済みの作業員を除外
-    const activeWorkers = useMemo(() => {
-        return (workers || []).filter(w => !w.resignation_date);
-    }, [workers]);
-
-    const [barProjects, setBarProjects] = useState([]);
-    const [companyHolidays, setCompanyHolidays] = useState([]);
-    const [projectSuspensions, setProjectSuspensions] = useState([]);
-
-    // 顧客情報のMap
-    const customerMap = useMemo(() => {
-        const map = {};
-        (customers || []).forEach(c => {
-            map[c.id] = c.name;
-        });
-        return map;
-    }, [customers]);
-
-    // 会社休日のセル編集ポップアップ
-    const [editHolidayCell, setEditHolidayCell] = useState(null);
-
-    // プロジェクトカラー編集ポップアップ
-    const [editColorPopup, setEditColorPopup] = useState(null);
-
-    // セル編集ポップアップ
-    const [editCell, setEditCell] = useState(null);
-    const popupRef = useRef(null);
-    const tableContainerRef = useRef(null);
-
-    // ドラッグ選択
-    const [isDragging, setIsDragging] = useState(false);
-    const [dragWorkerId, setDragWorkerId] = useState(null);
-    const [dragCells, setDragCells] = useState([]); // 選択中のdateStr配列
-    const [dragSourceCell, setDragSourceCell] = useState(null); // ドラッグ開始セル
-
-    // ツールチップ表示用
-    const [hoverProjectStats, setHoverProjectStats] = useState(null);
-
-    // クリップボード (コピペ用)
-    const [clipboard, setClipboard] = useState(null);
-
-    const [draggingGantt, setDraggingGantt] = useState(null);
-
-    // ===== 日付・稼働日数ロジック (休日考慮) =====
-    const isHoliday = useCallback((dateObj) => {
-        const dow = dateObj.getDay();
-        const dStr = toDateStr(dateObj);
-        const isRegisteredHoliday = companyHolidays.some(h => h.date === dStr && h.description !== '会議' && h.description !== '社員旅行');
-
-        if (dow === 0) return true; // 日曜は常に休み
-        if (dow === 6) return isRegisteredHoliday; // 土曜は登録があれば休み
-        return isRegisteredHoliday; // 平日は登録があれば休み
-    }, [companyHolidays]);
-
-    const countWorkingDays = useCallback((startStr, endStr) => {
-        let count = 0;
-        const start = new Date(startStr + 'T00:00:00');
-        const end = new Date(endStr + 'T00:00:00');
-        if (start > end) return 0;
-
-        let p = new Date(start);
-        while (p <= end) {
-            if (!isHoliday(p)) count++;
-            p.setDate(p.getDate() + 1);
-        }
-        return count;
-    }, [isHoliday]);
-
-    const addWorkingDays = useCallback((startStr, daysToAdd) => {
-        let p = new Date(startStr + 'T00:00:00');
-        let remaining = daysToAdd;
-        while (remaining > 0) {
-            p.setDate(p.getDate() + 1);
-            if (!isHoliday(p)) remaining--;
-        }
-        return toDateStr(p);
-    }, [isHoliday]);
-
-    // 表示期間
-    const [startDate, setStartDate] = useState(() => getMonday(new Date()));
-    const totalDays = 56;
-
-    // 日付配列
-    const dateColumns = useMemo(() => {
-        const cols = [];
-        for (let i = 0; i < totalDays; i++) {
-            const d = addDays(startDate, i);
-            cols.push({
-                date: d,
-                dateStr: toDateStr(d),
-                day: d.getDate(),
-                month: d.getMonth() + 1,
-                dow: d.getDay(),
-                dowLabel: getDayOfWeek(d),
-                weekIdx: Math.floor(i / 7)
-            });
-        }
-        return cols;
-    }, [startDate]);
-
-    // 週グループ
-    const weekGroups = useMemo(() => {
-        const groups = [];
-        for (let i = 0; i < totalDays; i += 7) {
-            const weekStart = dateColumns[i];
-            groups.push({
-                label: `${weekStart.month}/${weekStart.day}`,
-                days: dateColumns.slice(i, i + 7)
-            });
-        }
-        return groups;
-    }, [dateColumns]);
-
-    // 今日の日付文字列
-    const todayStr = useMemo(() => toDateStr(new Date()), []);
-
-    // データ取得
-    const fetchAssignments = useCallback(async () => {
-        setIsLoading(true);
-        try {
-            const startStr = toDateStr(startDate);
-            const endStr = toDateStr(addDays(startDate, totalDays - 1));
-
-            const { data: aData } = await supabase
-                .from('Assignments')
-                .select('*')
-                .gte('date', startStr)
-                .lte('date', endStr);
-            setAssignments(aData || []);
-
-            // 過去(今日含む)日付の日報実績を取得
-            if (todayStr >= startStr) {
-                const pastEndStr = todayStr <= endStr ? todayStr : endStr;
-                const { data: trData } = await supabase
-                    .from('TaskRecords')
-                    .select('id, project_id, worker_name, date')
-                    .gte('date', startStr)
-                    .lte('date', pastEndStr);
-                setTaskRecords(trData || []);
-            } else {
-                setTaskRecords([]);
-            }
-
-            const { data: pData } = await supabase
-                .from('Projects')
-                .select('id, name, startDate, endDate, bar_color, status, display_order, customerId, is_prime_contractor')
-                .in('status', [PROJECT_STATUS.SCHEDULED, PROJECT_STATUS.IN_PROGRESS])
-                .order('display_order', { ascending: true, nullsFirst: false })
-                .order('created_at', { ascending: true });
-
-            const excludedNames = ["【会社】有給", "有給", "【有給】"];
-            setBarProjects((pData || [])
-                .filter(p => !excludedNames.includes(p.name))
-                .map((p, idx) => ({
-                    ...p,
-                    color: p.bar_color || DEFAULT_COLORS[idx % DEFAULT_COLORS.length]
-                }))
-            );
-
-            const { data: hData } = await supabase
-                .from('CompanyHolidays')
-                .select('id, date, description');
-
-            setCompanyHolidays(hData || []);
-
-            // 休工期間データの取得
-            const projectIds = (pData || []).map(p => p.id);
-            if (projectIds.length > 0) {
-                const { data: sData } = await supabase
-                    .from('ProjectSuspensions')
-                    .select('*')
-                    .in('project_id', projectIds);
-                setProjectSuspensions(sData || []);
-            } else {
-                setProjectSuspensions([]);
-            }
-        } catch (e) {
-            console.error('配置表データ取得エラー:', e);
-        } finally {
-            setIsLoading(false);
-        }
-    }, [startDate, todayStr]);
-
-    useEffect(() => {
-        fetchAssignments();
-
-        const channel = supabase
-            .channel('assignments_realtime')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'Assignments' }, (payload) => {
-                setAssignments(prev => {
-                    if (payload.eventType === 'INSERT') {
-                        if (prev.some(a => a.id === payload.new.id)) return prev;
-
-                        // 楽観的更新の中の未確定データ（temp-）と一致するか確認
-                        const pendingOptimistic = prev.some(a =>
-                            String(a.id).startsWith('temp-') &&
-                            a.workerId === payload.new.workerId &&
-                            a.date === payload.new.date &&
-                            a.projectId === payload.new.projectId &&
-                            a.title === payload.new.title
-                        );
-                        if (pendingOptimistic) return prev;
-
-                        return [...prev, payload.new];
-                    }
-                    if (payload.eventType === 'UPDATE') {
-                        return prev.map(a => a.id === payload.new.id ? payload.new : a);
-                    }
-                    if (payload.eventType === 'DELETE') {
-                        return prev.filter(a => a.id !== payload.old.id);
-                    }
-                    return prev;
-                });
-            })
-            .subscribe();
-
-        return () => {
-            supabase.removeChannel(channel);
-        };
-    }, [fetchAssignments]);
-
-    // ポップアップ外クリックで閉じる
-    useEffect(() => {
-        const handleClickOutside = (e) => {
-            if (popupRef.current && !popupRef.current.contains(e.target)) {
-                setEditCell(null);
-            }
-            if (editColorPopup && !e.target.closest('.color-popup')) {
-                setEditColorPopup(null);
-            }
-        };
-        if (editCell) {
-            document.addEventListener('mousedown', handleClickOutside);
-        }
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, [editCell]);
-
-    // ドラッグ中のmouseup（window全体）
-    useEffect(() => {
-        const handleMouseUp = () => {
-            if (isDragging && dragCells.length > 0 && dragWorkerId) {
-                // ドラッグ終了 → ポップアップを表示して配置先を選択
-                const lastDateStr = dragCells[dragCells.length - 1];
-                const firstDateStr = dragCells[0];
-                // ポップアップ位置は最初のセル基準
-                if (dragSourceCell) {
-                    setEditCell({
-                        workerId: dragWorkerId,
-                        dateStr: firstDateStr,
-                        dragDates: [...dragCells],
-                        top: dragSourceCell.top,
-                        left: dragSourceCell.left,
-                        showAbove: dragSourceCell.showAbove
-                    });
-                }
-            }
-            setIsDragging(false);
-        };
-
-        if (isDragging) {
-            window.addEventListener('mouseup', handleMouseUp);
-        }
-        return () => window.removeEventListener('mouseup', handleMouseUp);
-    }, [isDragging, dragCells, dragWorkerId, dragSourceCell]);
-
-    // === ガントチャート (案件バー) ドラッグ & リサイズ ===
-    const handleGanttPointerDown = useCallback((e, proj, mode) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const origWorkingDays = countWorkingDays(proj.startDate, proj.endDate);
-        setDraggingGantt({
-            projectId: proj.id,
-            mode,
-            initialStartStr: proj.startDate,
-            initialEndStr: proj.endDate,
-            origWorkingDays,
-            startX: e.clientX,
-            tempStartStr: proj.startDate,
-            tempEndStr: proj.endDate
-        });
-    }, [countWorkingDays]);
-
-    useEffect(() => {
-        if (!draggingGantt) return;
-
-        const handlePointerMove = (e) => {
-            e.preventDefault();
-            const dx = e.clientX - draggingGantt.startX;
-            const diffDays = Math.round(dx / 48); // 1セル=48px
-
-            let newStartStr = draggingGantt.initialStartStr;
-            let newEndStr = draggingGantt.initialEndStr;
-
-            if (draggingGantt.mode === 'move') {
-                newStartStr = toDateStr(addDays(new Date(draggingGantt.initialStartStr), diffDays));
-                newEndStr = addWorkingDays(newStartStr, Math.max(0, draggingGantt.origWorkingDays - 1));
-            } else if (draggingGantt.mode === 'start') {
-                newStartStr = toDateStr(addDays(new Date(draggingGantt.initialStartStr), diffDays));
-                if (newStartStr > newEndStr) newStartStr = newEndStr;
-            } else if (draggingGantt.mode === 'end') {
-                newEndStr = toDateStr(addDays(new Date(draggingGantt.initialEndStr), diffDays));
-                if (newEndStr < newStartStr) newEndStr = newStartStr;
-            }
-
-            setDraggingGantt(prev => ({
-                ...prev,
-                tempStartStr: newStartStr,
-                tempEndStr: newEndStr
-            }));
-        };
-
-        const handlePointerUp = async (e) => {
-            e.preventDefault();
-            const { projectId, tempStartStr, tempEndStr, initialStartStr, initialEndStr } = draggingGantt;
-            setDraggingGantt(null);
-
-            if (tempStartStr !== initialStartStr || tempEndStr !== initialEndStr) {
-                // Optimistic Update
-                setBarProjects(prev => prev.map(p =>
-                    p.id === projectId ? { ...p, startDate: tempStartStr, endDate: tempEndStr } : p
-                ));
-
-                // Global Status Sync (工事設定タブへの反映用)
-                if (setProjects) {
-                    setProjects(prev => prev.map(p =>
-                        p.id === projectId ? { ...p, startDate: tempStartStr, endDate: tempEndStr } : p
-                    ));
-                }
-
-                try {
-                    const { error } = await supabase.from('Projects').update({ startDate: tempStartStr, endDate: tempEndStr }).eq('id', projectId);
-                    if (error) throw error;
-                    showToast('工期を更新しました', 'success');
-                } catch (error) {
-                    console.error('工期更新エラー:', error);
-                    showToast('工期の更新に失敗しました', 'error');
-                }
-            } else {
-                setEditColorPopup({
-                    projectId: projectId,
-                    top: e.clientY,
-                    left: e.clientX
-                });
-            }
-        };
-
-        window.addEventListener('pointermove', handlePointerMove);
-        window.addEventListener('pointerup', handlePointerUp);
-        return () => {
-            window.removeEventListener('pointermove', handlePointerMove);
-            window.removeEventListener('pointerup', handlePointerUp);
-        };
-    }, [draggingGantt, addWorkingDays, showToast]);
-
-
-    // prj map
-    const projectMap = useMemo(() => {
-        const map = {};
-        projects.forEach((p, idx) => {
-            map[p.id] = {
-                name: p.siteName || '無題',
-                color: barProjects.find(bp => bp.id === p.id)?.color || DEFAULT_COLORS[idx % DEFAULT_COLORS.length]
-            };
-        });
-        return map;
-    }, [projects, barProjects]);
-
-    const allProjects = useMemo(() => {
-        const excludedNames = ["【会社】有給", "有給", "【有給】"];
-        return projects
-            .filter(p => (p.status === PROJECT_STATUS.SCHEDULED || p.status === PROJECT_STATUS.IN_PROGRESS) && !excludedNames.includes(p.siteName))
-            .map((p, idx) => ({
-                id: p.id,
-                name: p.siteName || '無題',
-                color: projectMap[p.id]?.color || DEFAULT_COLORS[idx % DEFAULT_COLORS.length]
-            }));
-    }, [projects, projectMap]);
-
-    const assignmentLookup = useMemo(() => {
-        const lookup = {};
-        assignments.forEach(a => {
-            const key = `${a.workerId}_${a.date}`;
-            if (!lookup[key]) lookup[key] = [];
-            lookup[key].push(a);
-        });
-        Object.keys(lookup).forEach(key => {
-            lookup[key].sort((a, b) => (a.assignment_order || 0) - (b.assignment_order || 0));
-        });
-        return lookup;
-    }, [assignments]);
-
-    // 日報実績ルックアップ（worker.id + date → 現場IDの配列）
-    const taskRecordLookup = useMemo(() => {
-        const workerNameToId = {};
-        (workers || []).forEach(w => { workerNameToId[w.name] = w.id; });
-        const lookup = {};
-        taskRecords.forEach(tr => {
-            const wId = workerNameToId[tr.worker_name];
-            if (!wId) return;
-            const key = `${wId}_${tr.date}`;
-            if (!lookup[key]) lookup[key] = new Set();
-            lookup[key].add(tr.project_id);
-        });
-        // Set → Array に変換
-        const result = {};
-        Object.keys(lookup).forEach(key => {
-            result[key] = Array.from(lookup[key]);
-        });
-        return result;
-    }, [taskRecords, workers]);
-
-    // === キーボードとUIからのアクションハンドラ (コピー・ペースト・削除) ===
-    const handleActionDelete = useCallback(async () => {
-        if (!editCell) return;
-        const targetDates = editCell.dragDates || [editCell.dateStr];
-        const workerId = editCell.workerId;
-        const toDelete = [];
-        targetDates.forEach(dateStr => {
-            const existing = assignmentLookup[`${workerId}_${dateStr}`] || [];
-            toDelete.push(...existing);
-        });
-        if (toDelete.length === 0) return;
-
-        const idsToDelete = toDelete.map(a => a.id);
-        setAssignments(prev => prev.filter(a => !idsToDelete.includes(a.id)));
-        try {
-            await supabase.from('Assignments').delete().in('id', idsToDelete);
-            showToast(`${toDelete.length}件の配置を削除しました`, 'success');
-        } catch (err) {
-            console.error('一括削除エラー', err);
-            showToast('削除に失敗しました', 'error');
-        }
-        setEditCell(null);
-        setDragCells([]);
-    }, [editCell, assignmentLookup, setAssignments, showToast]);
-
-    const handleActionCopy = useCallback(() => {
-        if (!editCell) return;
-        const targetDates = editCell.dragDates || [editCell.dateStr];
-        const workerId = editCell.workerId;
-        const baseDate = new Date(targetDates[0]);
-        const copiedData = [];
-
-        targetDates.forEach(dateStr => {
-            const existing = assignmentLookup[`${workerId}_${dateStr}`] || [];
-            const currentDate = new Date(dateStr);
-            const dayOffset = Math.round((currentDate - baseDate) / (1000 * 60 * 60 * 24));
-
-            existing.forEach(a => {
-                copiedData.push({
-                    dayOffset,
-                    projectId: a.projectId,
-                    title: a.title,
-                    assignment_order: a.assignment_order
-                });
-            });
-        });
-
-        if (copiedData.length > 0) {
-            setClipboard({ type: 'copy', data: copiedData });
-            showToast(`選択範囲（${copiedData.length}件）をコピーしました`, 'success');
-        }
-    }, [editCell, assignmentLookup, setClipboard, showToast]);
-
-    const handleActionCut = useCallback(async () => {
-        if (!editCell) return;
-        const targetDates = editCell.dragDates || [editCell.dateStr];
-        const workerId = editCell.workerId;
-        const baseDate = new Date(targetDates[0]);
-        const copiedData = [];
-        const toDelete = [];
-
-        targetDates.forEach(dateStr => {
-            const existing = assignmentLookup[`${workerId}_${dateStr}`] || [];
-            const currentDate = new Date(dateStr);
-            const dayOffset = Math.round((currentDate - baseDate) / (1000 * 60 * 60 * 24));
-
-            existing.forEach(a => {
-                copiedData.push({
-                    dayOffset,
-                    projectId: a.projectId,
-                    title: a.title,
-                    assignment_order: a.assignment_order
-                });
-                toDelete.push(a);
-            });
-        });
-
-        if (copiedData.length > 0) {
-            setClipboard({ type: 'cut', data: copiedData });
-
-            const idsToDelete = toDelete.map(a => a.id);
-            setAssignments(prev => prev.filter(a => !idsToDelete.includes(a.id)));
-            try {
-                await supabase.from('Assignments').delete().in('id', idsToDelete);
-                showToast(`${copiedData.length}件をカットしました`, 'success');
-            } catch (err) {
-                console.error('カットエラー', err);
-            }
-            setEditCell(null);
-            setDragCells([]);
-        }
-    }, [editCell, assignmentLookup, setClipboard, setAssignments, showToast]);
-
-    const handleActionPaste = useCallback(async () => {
-        if (!editCell || !clipboard || !clipboard.data || clipboard.data.length === 0) return;
-
-        const targetDates = editCell.dragDates || [editCell.dateStr];
-        const workerId = editCell.workerId;
-        const baseDateStr = targetDates[0];
-        const baseDate = new Date(baseDateStr);
-
-        const newRecords = [];
-        const tempIds = [];
-
-        // 1件から複数件への「1対多展開」判定
-        const isSingleDayCopy = clipboard.data.every(item => item.dayOffset === 0);
-        const isMultiDayPasteTarget = targetDates.length > 1;
-
-        if (isSingleDayCopy && isMultiDayPasteTarget) {
-            targetDates.forEach(tDateStr => {
-                clipboard.data.forEach(item => {
-                    const tempId = `temp-${Date.now()}-${Math.random()}`;
-                    tempIds.push(tempId);
-                    newRecords.push({
-                        id: tempId,
-                        workerId: workerId,
-                        projectId: item.projectId,
-                        date: tDateStr,
-                        title: item.title,
-                        assignment_order: item.assignment_order
-                    });
-                });
-            });
-        } else {
-            clipboard.data.forEach(item => {
-                const targetDate = new Date(baseDate);
-                targetDate.setDate(targetDate.getDate() + item.dayOffset);
-                const targetDateStr = targetDate.toISOString().split('T')[0];
-
-                const tempId = `temp-${Date.now()}-${Math.random()}`;
-                tempIds.push(tempId);
-                newRecords.push({
-                    id: tempId,
-                    workerId: workerId,
-                    projectId: item.projectId,
-                    date: targetDateStr,
-                    title: item.title,
-                    assignment_order: item.assignment_order
-                });
-            });
-        }
-
-        setAssignments(prev => [...prev, ...newRecords]);
-        try {
-            const inserts = newRecords.map(r => ({
-                workerId: r.workerId,
-                projectId: r.projectId,
-                date: r.date,
-                title: r.title,
-                assignment_order: r.assignment_order
-            }));
-
-            const { data, error } = await supabase.from('Assignments').insert(inserts).select();
-            if (error) throw error;
-            if (data) {
-                setAssignments(prev => {
-                    let updated = [...prev];
-                    data.forEach((d, i) => {
-                        if (tempIds[i]) {
-                            updated = updated.map(a => a.id === tempIds[i] ? d : a);
-                        }
-                    });
-                    return updated;
-                });
-            }
-            showToast(`${newRecords.length}件の配置を展開しました`, 'success');
-            setEditCell(null);
-            setDragCells([]);
-        } catch (err) {
-            console.error('ペーストエラー', err);
-            setAssignments(prev => prev.filter(a => !tempIds.includes(a.id)));
-            showToast('ペーストに失敗しました', 'error');
-        }
-    }, [editCell, clipboard, setAssignments, showToast]);
-
-    useEffect(() => {
-        const handleKeyDown = async (e) => {
-            // 入力中（input, textarea）などの場合は無視
-            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-            if (!editCell) return; // セルが選択（ポップアップが開いている）されていないと無効
-
-            if (e.key === 'Delete' || e.key === 'Backspace') {
-                e.preventDefault();
-                handleActionDelete();
-                return;
-            }
-            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
-                e.preventDefault();
-                handleActionCopy();
-                return;
-            }
-            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'x') {
-                e.preventDefault();
-                handleActionCut();
-                return;
-            }
-            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
-                e.preventDefault();
-                handleActionPaste();
-                return;
-            }
-        };
-
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [editCell, handleActionDelete, handleActionCopy, handleActionCut, handleActionPaste]);
-
-    const shortenName = (name) => {
-        if (!name) return '';
-        return name.length > 6 ? name.substring(0, 6) : name;
-    };
+    const {
+        isLoading,
+        assignments,
+        barProjects,
+        companyHolidays,
+        projectSuspensions,
+        editHolidayCell,
+        setEditHolidayCell,
+        editColorPopup,
+        setEditColorPopup,
+        editCell,
+        setEditCell,
+        isDragging,
+        dragCells,
+        hoverProjectStats,
+        setHoverProjectStats,
+        clipboard,
+        draggingGantt,
+        startDate,
+        totalDays,
+        activeWorkers,
+        customerMap,
+        dateColumns,
+        weekGroups,
+        todayStr,
+        projectMap,
+        allProjects,
+        assignmentLookup,
+        taskRecordLookup,
+        handleGanttPointerDown,
+        handleActionDelete,
+        handleActionCopy,
+        handleActionCut,
+        handleActionPaste,
+        addAssignment,
+        removeAssignment,
+        handleAssignmentReorder,
+        handleProjectReorder,
+        updateProjectColor,
+        updateCompanyHoliday,
+        handleCellMouseDown,
+        handleCellMouseEnter,
+        handleCellClick,
+        handleProjectNameMouseEnter,
+        handlePopupAssign,
+        movePeriod,
+        goToToday,
+        getBarSpan,
+        popupRef,
+        tableContainerRef
+    } = useAssignmentState({
+        projects,
+        workers,
+        customers,
+        setProjects,
+        showToast,
+        setActiveProjectId,
+        setActiveTab,
+        allProjectsSummary
+    });
 
     const getDayHeaderStyle = (dow, dateStr) => {
         const registered = companyHolidays.find(h => h.date === dateStr);
@@ -644,424 +81,14 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         return {};
     };
 
-    const movePeriod = (weeks) => {
-        setEditCell(null);
-        setStartDate(prev => addDays(prev, weeks * 7));
-    };
-
-    const goToToday = () => {
-        setEditCell(null);
-        setStartDate(getMonday(new Date()));
-    };
-
-    const getBarSpan = (project) => {
-        if (!project.startDate || !project.endDate) return null;
-        const pStart = new Date(project.startDate + 'T00:00:00');
-        const pEnd = new Date(project.endDate + 'T00:00:00');
-        const viewStart = startDate;
-        const viewEnd = addDays(startDate, totalDays - 1);
-
-        if (pEnd < viewStart || pStart > viewEnd) return null;
-
-        const startIdx = Math.max(0, Math.round((pStart - viewStart) / (1000 * 60 * 60 * 24)));
-        const endIdx = Math.min(totalDays - 1, Math.round((pEnd - viewStart) / (1000 * 60 * 60 * 24)));
-
-        return { startIdx, endIdx, span: endIdx - startIdx + 1 };
-    };
-
-    // === 配置編集アクション（楽観的更新） ===
-
-    const addAssignment = async (workerId, dateStr, projectId, title = null) => {
-        const existingForCell = assignmentLookup[`${workerId}_${dateStr}`] || [];
-        if (projectId && existingForCell.some(a => a.projectId === projectId)) return;
-        if (title && existingForCell.some(a => a.title === title)) return;
-
-        const tempId = `temp-${Date.now()}-${Math.random()}`;
-        const optimisticRecord = {
-            id: tempId,
-            workerId,
-            projectId: projectId || null,
-            date: dateStr,
-            title: title || null,
-            assignment_order: existingForCell.length + 1
-        };
-        setAssignments(prev => [...prev, optimisticRecord]);
-
-        try {
-            const { data, error } = await supabase
-                .from('Assignments')
-                .insert([{
-                    workerId,
-                    projectId: projectId || null,
-                    date: dateStr,
-                    title: title || null,
-                    assignment_order: existingForCell.length + 1
-                }])
-                .select();
-
-            if (error) throw error;
-            if (data && data[0]) {
-                setAssignments(prev => prev.map(a => a.id === tempId ? data[0] : a));
-            }
-        } catch (e) {
-            console.error('配置追加エラー:', e);
-            setAssignments(prev => prev.filter(a => a.id !== tempId));
-        }
-    };
-
-    // 複数日にまとめて配置（ドラッグ用）
-    const addAssignmentBatch = async (workerId, dateStrs, projectId, title = null) => {
-        const newRecords = [];
-        const tempIds = [];
-
-        for (const dateStr of dateStrs) {
-            const existingForCell = assignmentLookup[`${workerId}_${dateStr}`] || [];
-            if (projectId && existingForCell.some(a => a.projectId === projectId)) continue;
-            if (title && existingForCell.some(a => a.title === title)) continue;
-
-            const tempId = `temp-${Date.now()}-${Math.random()}`;
-            tempIds.push(tempId);
-            newRecords.push({
-                id: tempId,
-                workerId,
-                projectId: projectId || null,
-                date: dateStr,
-                title: title || null,
-                assignment_order: existingForCell.length + 1
-            });
-        }
-
-        if (newRecords.length === 0) return;
-
-        // UI即時反映
-        setAssignments(prev => [...prev, ...newRecords]);
-
-        // DB一括保存
-        try {
-            const inserts = newRecords.map(r => ({
-                workerId: r.workerId,
-                projectId: r.projectId,
-                date: r.date,
-                title: r.title,
-                assignment_order: r.assignment_order
-            }));
-
-            const { data, error } = await supabase
-                .from('Assignments')
-                .insert(inserts)
-                .select();
-
-            if (error) throw error;
-            if (data) {
-                setAssignments(prev => {
-                    let updated = [...prev];
-                    data.forEach((d, i) => {
-                        if (tempIds[i]) {
-                            updated = updated.map(a => a.id === tempIds[i] ? d : a);
-                        }
-                    });
-                    return updated;
-                });
-            }
-        } catch (e) {
-            console.error('一括配置追加エラー:', e);
-            setAssignments(prev => prev.filter(a => !tempIds.includes(a.id)));
-            showToast('配置の追加に失敗しました。', 'error');
-        }
-    };
-
-    const removeAssignment = async (assignmentId) => {
-        const removed = assignments.find(a => a.id === assignmentId);
-        setAssignments(prev => prev.filter(a => a.id !== assignmentId));
-
-        try {
-            const { error } = await supabase
-                .from('Assignments')
-                .delete()
-                .eq('id', assignmentId);
-
-            if (error) throw error;
-        } catch (e) {
-            console.error('配置削除エラー:', e);
-            if (removed) setAssignments(prev => [...prev, removed]);
-            showToast('配置の削除に失敗しました。', 'error');
-        }
-    };
-
-    const handleAssignmentReorder = async (draggedId, targetId) => {
-        if (!editCell) return;
-        if (draggedId === targetId) return;
-
-        const items = [...editCellAssignments];
-        const dragIdx = items.findIndex(a => a.id === draggedId);
-        const targetIdx = items.findIndex(a => a.id === targetId);
-
-        if (dragIdx === -1 || targetIdx === -1) return;
-
-        const nextItems = [...items];
-        const [draggedItem] = nextItems.splice(dragIdx, 1);
-        nextItems.splice(targetIdx, 0, draggedItem);
-
-        // 順番を振り直す
-        const updatedItems = nextItems.map((item, i) => ({ ...item, assignment_order: i + 1 }));
-
-        // Optimistic UI
-        setAssignments(prev => {
-            const next = [...prev];
-            updatedItems.forEach(updated => {
-                const idx = next.findIndex(a => a.id === updated.id);
-                if (idx !== -1) next[idx] = updated;
-            });
-            return next;
-        });
-
-        // DB Update
-        try {
-            const promises = updatedItems.map(item =>
-                supabase.from('Assignments').update({ assignment_order: item.assignment_order }).eq('id', item.id)
-            );
-            await Promise.all(promises);
-        } catch (e) {
-            console.error('順番変更エラー:', e);
-            showToast('順番の変更に失敗しました。', 'error');
-        }
-    };
-
-    const handleProjectReorder = async (draggedId, targetId) => {
-        if (draggedId === targetId) return;
-
-        setBarProjects(prev => {
-            const dragIdx = prev.findIndex(p => p.id === draggedId);
-            const targetIdx = prev.findIndex(p => p.id === targetId);
-            if (dragIdx === -1 || targetIdx === -1) return prev;
-
-            const next = [...prev];
-            const [draggedItem] = next.splice(dragIdx, 1);
-            next.splice(targetIdx, 0, draggedItem);
-
-            // データベースの非同期更新（一意制約の競合を回避するため、MAX値を取得して新しい順序を振る）
-            const performAsyncDBUpdate = async () => {
-                try {
-                    const { data: maxData } = await supabase
-                        .from('Projects')
-                        .select('display_order')
-                        .not('display_order', 'is', null)
-                        .order('display_order', { ascending: false })
-                        .limit(1);
-
-                    const currentMax = maxData && maxData.length > 0 && maxData[0].display_order ? maxData[0].display_order : 0;
-
-                    const newProjectsData = next.map((p, idx) => ({ ...p, display_order: currentMax + idx + 1 }));
-
-                    const promises = newProjectsData.map(p =>
-                        supabase.from('Projects').update({ display_order: p.display_order }).eq('id', p.id)
-                    );
-                    await Promise.all(promises);
-
-                    // 状態の display_order を更新
-                    setBarProjects(current => {
-                        return current.map(p => {
-                            const found = newProjectsData.find(np => np.id === p.id);
-                            return found ? { ...p, display_order: found.display_order } : p;
-                        });
-                    });
-                } catch (err) {
-                    console.error('案件並び順更新エラー:', err);
-                    showToast('並び順の保存に失敗しました。', 'error');
-                }
-            };
-
-            performAsyncDBUpdate();
-
-            return next;
-        });
-    };
-
-    const updateProjectColor = async (projectId, color) => {
-        // Optimistic UI update
-        setBarProjects(prev => prev.map(p => p.id === projectId ? { ...p, color } : p));
-        if (setProjects) {
-            setProjects(prev => prev.map(p => p.id === projectId ? { ...p, bar_color: color } : p));
-        }
-
-        try {
-            const { error } = await supabase.from('Projects').update({ bar_color: color }).eq('id', projectId);
-            if (error) throw error;
-            showToast('配置表カラーを更新しました', 'success');
-        } catch (e) {
-            console.error('カラー更新エラー:', e);
-            showToast('カラーの更新に失敗しました', 'error');
-        }
-        setEditColorPopup(null);
+    const shortenName = (name) => {
+        if (!name) return '';
+        return name.length > 6 ? name.substring(0, 6) : name;
     };
 
     const handleProjectCellClick = async (proj, dateStr) => {
         // すでに工期が設定されている場合は、バー上での別の操作（カラー変更など）を優先するため何もしない
         if (proj.startDate && proj.endDate) return;
-
-        // デバッグ用（あとで消すか、そのまま正常通知として利用）
-        console.log('handleProjectCellClick:', proj.name, dateStr);
-
-        try {
-            // ステートを即時更新（楽観的更新）
-            const updatedProj = { ...proj, startDate: dateStr, endDate: dateStr };
-            setBarProjects(prev => prev.map(p => p.id === proj.id ? updatedProj : p));
-            if (setProjects) {
-                setProjects(prev => prev.map(p => p.id === proj.id ? { ...p, startDate: dateStr, endDate: dateStr } : p));
-            }
-
-            const { error } = await supabase
-                .from('Projects')
-                .update({ startDate: dateStr, endDate: dateStr, status: proj.status || PROJECT_STATUS.SCHEDULED })
-                .eq('id', proj.id);
-
-            if (error) throw error;
-            showToast(`${proj.name} の工期を設定しました`, 'success');
-        } catch (e) {
-            console.error('工期設定エラー:', e);
-            showToast('工期の設定に失敗しました', 'error');
-            fetchAssignments();
-        }
-    };
-
-    const updateCompanyHoliday = async (dateStr, description, existingId) => {
-        try {
-            if (description === null && existingId) {
-                // 削除
-                const { error } = await supabase.from('CompanyHolidays').delete().eq('id', existingId);
-                if (error) throw error;
-                setCompanyHolidays(prev => prev.filter(h => h.id !== existingId));
-                showToast('予定を削除しました', 'success');
-            } else if (description !== null) {
-                // 追加 or 更新
-                const payload = {
-                    date: dateStr,
-                    description: description === '休日' ? null : description
-                };
-                if (existingId) {
-                    const { data, error } = await supabase.from('CompanyHolidays').update(payload).eq('id', existingId).select();
-                    if (error) throw error;
-                    if (data && data.length > 0) setCompanyHolidays(prev => prev.map(h => h.id === existingId ? data[0] : h));
-                } else {
-                    const { data, error } = await supabase.from('CompanyHolidays').insert(payload).select();
-                    if (error) throw error;
-                    if (data && data.length > 0) setCompanyHolidays(prev => [...prev, data[0]]);
-                }
-                showToast('予定を保存しました', 'success');
-            }
-            setEditHolidayCell(null);
-        } catch (err) {
-            console.error('会社行事/休日 更新エラー:', err);
-            showToast('保存に失敗しました', 'error');
-        }
-    };
-
-    // === ドラッグハンドラ ===
-
-    const handleCellMouseDown = (e, workerId, dateStr) => {
-        // 右クリック無視
-        if (e.button !== 0) return;
-        e.preventDefault();
-        setEditCell(null);
-        setEditHolidayCell(null);
-
-        const cellRect = e.currentTarget.getBoundingClientRect();
-        const containerRect = tableContainerRef.current?.getBoundingClientRect();
-        const spaceBelow = window.innerHeight - cellRect.bottom;
-        const showAbove = spaceBelow < 350;
-
-        setIsDragging(true);
-        setDragWorkerId(workerId);
-        setDragCells([dateStr]);
-        setDragSourceCell({
-            top: showAbove 
-                ? cellRect.top - (containerRect?.top || 0) + (tableContainerRef.current?.scrollTop || 0)
-                : cellRect.bottom - (containerRect?.top || 0) + (tableContainerRef.current?.scrollTop || 0),
-            left: cellRect.left - (containerRect?.left || 0) + (tableContainerRef.current?.scrollLeft || 0),
-            showAbove
-        });
-    };
-
-    const handleCellMouseEnter = (workerId, dateStr) => {
-        if (!isDragging || workerId !== dragWorkerId) return;
-        setDragCells(prev => {
-            if (prev.length === 0) return [dateStr];
-            if (prev[prev.length - 1] === dateStr) return prev; // 変更なし
-
-            const startD = new Date(prev[0] + 'T00:00:00');
-            const currentD = new Date(dateStr + 'T00:00:00');
-            const step = startD <= currentD ? 1 : -1;
-
-            const newCells = [];
-            let tempD = new Date(startD);
-            while (true) {
-                const y = tempD.getFullYear();
-                const m = String(tempD.getMonth() + 1).padStart(2, '0');
-                const d = String(tempD.getDate()).padStart(2, '0');
-                newCells.push(`${y}-${m}-${d}`);
-
-                if (tempD.getTime() === currentD.getTime()) break;
-                tempD.setDate(tempD.getDate() + step);
-            }
-
-            if (prev.length === newCells.length && prev.every((v, i) => v === newCells[i])) {
-                return prev;
-            }
-            return newCells;
-        });
-    };
-
-    // セルクリック（ドラッグなし → ポップアップ）
-    const handleCellClick = (e, workerId, dateStr) => {
-        setEditHolidayCell(null);
-        // ドラッグ中はクリック無視（mouseupで処理）
-        if (isDragging) return;
-        const cellRect = e.currentTarget.getBoundingClientRect();
-        const containerRect = tableContainerRef.current?.getBoundingClientRect();
-        const spaceBelow = window.innerHeight - cellRect.bottom;
-        const showAbove = spaceBelow < 350;
-
-        setEditCell({
-            workerId,
-            dateStr,
-            dragDates: null,
-            top: showAbove 
-                ? cellRect.top - (containerRect?.top || 0) + (tableContainerRef.current?.scrollTop || 0)
-                : cellRect.bottom - (containerRect?.top || 0) + (tableContainerRef.current?.scrollTop || 0),
-            left: cellRect.left - (containerRect?.left || 0) + (tableContainerRef.current?.scrollLeft || 0),
-            showAbove
-        });
-    };
-
-    // 現場名ホバーハンドラ
-    const handleProjectNameMouseEnter = (e, project) => {
-        if (!allProjectsSummary) return;
-        const stats = allProjectsSummary.find(p => p.id === project.id);
-        if (!stats) return;
-
-        const rect = e.currentTarget.getBoundingClientRect();
-        setHoverProjectStats({
-            data: stats,
-            foremanName: workers.find(w => w.id === stats.foreman_worker_id)?.name || '未設定',
-            startDate: project.startDate,
-            endDate: project.endDate,
-            top: rect.top,
-            left: rect.right
-        });
-    };
-
-
-
-    // ポップアップからの配置追加（ドラッグ選択対応）
-    const handlePopupAssign = async (projectId, title = null) => {
-        if (!editCell) return;
-        const dates = editCell.dragDates || [editCell.dateStr];
-        if (dates.length === 1) {
-            addAssignment(editCell.workerId, dates[0], projectId, title);
-        } else {
-            addAssignmentBatch(editCell.workerId, dates, projectId, title);
-        }
-        setDragCells([]);
     };
 
     const periodLabel = `${startDate.getFullYear()}/${startDate.getMonth() + 1}/${startDate.getDate()} 〜 ${addDays(startDate, totalDays - 1).getMonth() + 1}/${addDays(startDate, totalDays - 1).getDate()}`;
@@ -1078,7 +105,9 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
     if (isLoading && assignments.length === 0) {
         return (
             <div className="p-6 flex items-center justify-center min-h-[400px]">
-                <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                <div className="flex flex-col items-center gap-2">
+                    <span className="text-slate-500 font-bold text-sm">配置表データを読み込んでいます...</span>
+                </div>
             </div>
         );
     }
@@ -1248,7 +277,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                         const suspensionMatch = isInBar ? projectSuspensions.find(s => s.project_id === proj.id && col.dateStr >= s.start_date && col.dateStr <= s.end_date) : null;
                                         const isSuspended = !!suspensionMatch;
                                         const isSuspensionStart = isSuspended && col.dateStr === suspensionMatch.start_date;
-                                        // 休工期間の表示スパン計算（表示範囲内のみ）
+                                        // 休工期間の表示スパン計算
                                         const suspensionSpan = isSuspensionStart ? (() => {
                                             const endIdx = dateColumns.findIndex(c => c.dateStr === suspensionMatch.end_date);
                                             const startIdx = i;
@@ -1257,7 +286,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                         return (
                                             <td
                                                 key={i}
-                                                onMouseDown={() => handleProjectCellClick(proj, col.dateStr)}
+                                                onClick={() => handleProjectCellClick(proj, col.dateStr)}
                                                 className={`border border-slate-200 p-0 relative ${isInBar ? 'cursor-pointer' : (!proj.startDate || !proj.endDate) ? 'cursor-pointer hover:bg-blue-50/50' : ''}`}
                                                 style={{
                                                     backgroundColor: (isInBar && !isHolidayOrWeekend && !isSuspended)
@@ -1527,257 +556,58 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                     </tbody>
                 </table>
 
-                {/* 編集ポップアップおよびツールチップ群 */}
-                {editCell && (
-                    <div
-                        ref={popupRef}
-                        className={`absolute z-50 flex gap-2 ${editCell.showAbove ? 'flex-col-reverse' : 'flex-col'}`}
-                        style={{
-                            top: `${editCell.showAbove ? editCell.top - 4 : editCell.top + 4}px`,
-                            left: `${Math.max(0, editCell.left - 100)}px`,
-                            transform: editCell.showAbove ? 'translateY(-100%)' : 'none'
-                        }}
-                    >
-                        {/* メイン編集ポップアップ */}
-                        <div
-                            className="bg-white rounded-xl shadow-2xl border border-slate-200 w-64 overflow-hidden"
-                        >
-                            {/* ヘッダー */}
-                            <div className="bg-slate-700 text-white px-3 py-2 flex items-center justify-between">
-                                <div className="text-xs font-bold">
-                                    {workers.find(w => w.id === editCell.workerId)?.name} ー {
-                                        editCell.dragDates && editCell.dragDates.length > 1
-                                            ? `${editCell.dragDates[0].slice(5).replace('-', '/')} 〜 ${editCell.dragDates[editCell.dragDates.length - 1].slice(5).replace('-', '/')} (${editCell.dragDates.length}日)`
-                                            : editCell.dateStr.slice(5).replace('-', '/')
-                                    }
-                                </div>
-                                <button
-                                    onClick={() => { setEditCell(null); setDragCells([]); }}
-                                    className="p-0.5 hover:bg-slate-600 rounded transition"
-                                >
-                                    <X size={14} />
-                                </button>
-                            </div>
-
-                            {/* 現在の配置（単一セルの場合のみ） */}
-                            {(!editCell.dragDates || editCell.dragDates.length <= 1) && editCellAssignments.length > 0 && (
-                                <div className="px-3 py-2 border-b border-slate-100">
-                                    <div className="text-[10px] font-bold text-slate-400 mb-1.5 uppercase">現在の配置</div>
-                                    <div className="space-y-1">
-                                        {editCellAssignments.map((a, index) => {
-                                            const pInfo = a.projectId ? projectMap[a.projectId] : null;
-                                            const schedType = !a.projectId && a.title ? SCHEDULE_TYPES.find(s => s.title === a.title) : null;
-                                            const itemColor = schedType?.color || pInfo?.color || '#94A3B8';
-                                            const itemName = schedType ? `${schedType.icon} ${schedType.title}` : (pInfo?.name || '不明');
-                                            return (
-                                                <div
-                                                    key={a.id}
-                                                    className="flex items-center justify-between gap-2 p-1.5 rounded-lg border border-transparent hover:border-blue-200 cursor-grab active:cursor-grabbing transition"
-                                                    style={{ backgroundColor: itemColor + '20' }}
-                                                    draggable={true}
-                                                    onDragStart={(e) => {
-                                                        e.dataTransfer.setData('assignmentid', a.id.toString());
-                                                        e.dataTransfer.effectAllowed = 'copyMove';
-                                                    }}
-                                                    onDragOver={(e) => {
-                                                        e.preventDefault();
-                                                        e.dataTransfer.dropEffect = 'move';
-                                                        e.currentTarget.classList.add('bg-slate-200');
-                                                    }}
-                                                    onDragLeave={(e) => {
-                                                        e.currentTarget.classList.remove('bg-slate-200');
-                                                    }}
-                                                    onDrop={(e) => {
-                                                        e.preventDefault();
-                                                        e.currentTarget.classList.remove('bg-slate-200');
-                                                        const draggedAssignmentId = e.dataTransfer.getData('assignmentid');
-                                                        if (draggedAssignmentId) {
-                                                            handleAssignmentReorder(parseInt(draggedAssignmentId, 10), a.id);
-                                                        }
-                                                    }}
-                                                >
-                                                    <div className="flex items-center gap-1.5 min-w-0">
-                                                        <div
-                                                            className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
-                                                            style={{ backgroundColor: itemColor }}
-                                                        ></div>
-                                                        <span className="text-xs font-bold text-slate-700 truncate">
-                                                            {itemName}
-                                                        </span>
-                                                        {a.projectId && (
-                                                            <button
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    if (setActiveProjectId && setActiveTab) {
-                                                                        setActiveProjectId(a.projectId);
-                                                                        setActiveTab('master');
-                                                                    }
-                                                                }}
-                                                                className="text-slate-400 hover:text-blue-600 p-0.5 rounded hover:bg-blue-50 transition"
-                                                                title="現場の詳細設定を開く"
-                                                            >
-                                                                <ExternalLink size={12} />
-                                                            </button>
-                                                        )}
-                                                    </div>
-                                                    <div className="flex items-center gap-0.5 flex-shrink-0">
-                                                        <button
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                removeAssignment(a.id);
-                                                            }}
-                                                            className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition ml-1"
-                                                            title="配置を解除"
-                                                        >
-                                                            <Trash2 size={12} />
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            )}
-
-
-                            {/* 現場の追加 */}
-                            {unassignedProjects.length > 0 && (
-                                <div className="px-3 py-2 border-b border-slate-100 max-h-48 overflow-y-auto custom-scrollbar">
-                                    <div className="text-[10px] font-bold text-slate-400 mb-1.5 uppercase">現場の追加</div>
-                                    <div className="flex flex-col gap-1">
-                                        {unassignedProjects.map(p => (
-                                            <button
-                                                key={p.id}
-                                                onClick={() => { handlePopupAssign(p.id, null); }}
-                                                className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg hover:opacity-80 transition text-left"
-                                                style={{ backgroundColor: p.color + '20', border: `1px solid ${p.color}40` }}
-                                            >
-                                                <div className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: p.color }}></div>
-                                                <span className="text-[11px] font-bold text-slate-700 truncate">{p.name}</span>
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* スケジュール種別 */}
-                            <div className="px-3 py-2">
-                                <div className="text-[10px] font-bold text-slate-400 mb-1.5 uppercase">その他</div>
-                                <div className="flex flex-wrap gap-1">
-                                    {SCHEDULE_TYPES
-                                        .filter(s => !editCellAssignments.some(a => a.title === s.title))
-                                        .map(s => (
-                                            <button
-                                                key={s.title}
-                                                onClick={() => { handlePopupAssign(null, s.title); }}
-                                                className="flex items-center gap-1 px-2 py-1.5 rounded-lg hover:opacity-80 transition text-left"
-                                                style={{ backgroundColor: s.color + '20', border: `1px solid ${s.color}40` }}
-                                            >
-                                                <span className="text-xs">{s.icon}</span>
-                                                <span className="text-[10px] font-bold" style={{ color: s.color }}>
-                                                    {s.title}
-                                                </span>
-                                            </button>
-                                        ))}
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* 分離されたショートカットヒント兼アクションボタン */}
-                        <div className="bg-slate-800/95 backdrop-blur-sm text-slate-200 px-3 py-2 rounded-lg shadow-lg border border-slate-700 text-[10px] flex gap-4 justify-between min-w-[200px]">
-                            <div className="flex gap-2">
-                                <div className="flex flex-col gap-1 items-center">
-                                    <span className="text-slate-400">コピー:</span>
-                                    <button onClick={handleActionCopy} className="font-mono text-[9px] bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 hover:bg-slate-700 hover:text-white transition cursor-pointer">Ctrl+C</button>
-                                </div>
-                                <div className="flex flex-col gap-1 items-center">
-                                    <span className="text-slate-400">カット:</span>
-                                    <button onClick={handleActionCut} className="font-mono text-[9px] bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 hover:bg-slate-700 hover:text-white transition cursor-pointer">Ctrl+X</button>
-                                </div>
-                                <div className="flex flex-col gap-1 items-center">
-                                    <span className="text-slate-400">ペースト:</span>
-                                    <button onClick={handleActionPaste} className={`font-mono text-[9px] bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 transition ${clipboard?.data?.length > 0 ? 'hover:bg-slate-700 hover:text-white cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}>Ctrl+V</button>
-                                </div>
-                            </div>
-                            <div className="flex flex-col gap-1 items-center border-l border-slate-600 pl-4">
-                                <span className="text-slate-400">一括削除:</span>
-                                <button onClick={handleActionDelete} className="font-mono text-[9px] bg-red-900/50 text-red-200 border border-red-800 rounded px-1.5 py-0.5 hover:bg-red-800 hover:text-white transition cursor-pointer">Delete</button>
-                            </div>
-                        </div>
-                    </div>
-                )}
+                {/* 配置セルの編集ポップアップ */}
+                <AssignmentPopup
+                    ref={popupRef}
+                    editCell={editCell}
+                    onClose={() => { setEditCell(null); }}
+                    workers={workers}
+                    projectMap={projectMap}
+                    allProjects={allProjects}
+                    editCellAssignments={editCellAssignments}
+                    unassignedProjects={unassignedProjects}
+                    clipboard={clipboard}
+                    handleAssignmentReorder={handleAssignmentReorder}
+                    removeAssignment={removeAssignment}
+                    handlePopupAssign={handlePopupAssign}
+                    handleActionCopy={handleActionCopy}
+                    handleActionCut={handleActionCut}
+                    handleActionPaste={handleActionPaste}
+                    handleActionDelete={handleActionDelete}
+                    setActiveProjectId={setActiveProjectId}
+                    setActiveTab={setActiveTab}
+                />
 
                 {/* 会社行事・休日編集ポップアップ */}
-                {editHolidayCell && (
-                    <div
-                        className="absolute z-50 bg-white rounded-xl shadow-2xl border border-slate-200 w-56 overflow-hidden"
-                        style={{
-                            top: `${editHolidayCell.top + 4}px`,
-                            left: `${Math.max(0, editHolidayCell.left - 50)}px`
-                        }}
-                    >
-                        <div className="bg-slate-700 text-white px-3 py-2 flex items-center justify-between">
-                            <div className="text-xs font-bold">
-                                {editHolidayCell.dateStr.slice(5).replace('-', '/')} の予定
-                            </div>
-                            <button
-                                onClick={() => setEditHolidayCell(null)}
-                                className="p-0.5 hover:bg-slate-600 rounded transition"
-                            >
-                                <X size={14} />
-                            </button>
-                        </div>
-                        <div className="p-2 flex flex-col gap-1">
-                            <button
-                                onClick={() => updateCompanyHoliday(editHolidayCell.dateStr, '休日', editHolidayCell.existingId)}
-                                className="text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded font-bold"
-                            >
-                                休日
-                            </button>
-                            <button
-                                onClick={() => updateCompanyHoliday(editHolidayCell.dateStr, '会議', editHolidayCell.existingId)}
-                                className="text-left px-3 py-2 text-sm text-sky-700 hover:bg-sky-50 rounded font-bold"
-                            >
-                                会議
-                            </button>
-                            <button
-                                onClick={() => updateCompanyHoliday(editHolidayCell.dateStr, '社員旅行', editHolidayCell.existingId)}
-                                className="text-left px-3 py-2 text-sm text-violet-700 hover:bg-violet-50 rounded font-bold"
-                            >
-                                社員旅行
-                            </button>
-
-                            {editHolidayCell.existingId && (
-                                <>
-                                    <div className="border-t border-slate-100 my-1"></div>
-                                    <button
-                                        onClick={() => updateCompanyHoliday(editHolidayCell.dateStr, null, editHolidayCell.existingId)}
-                                        className="text-left px-3 py-2 text-sm text-slate-500 hover:bg-slate-100 rounded"
-                                    >
-                                        予定を解除 (通常営業日)
-                                    </button>
-                                </>
-                            )}
-                        </div>
-                    </div>
-                )}
-
+                <EditHolidayPopup
+                    editHolidayCell={editHolidayCell}
+                    onClose={() => setEditHolidayCell(null)}
+                    onUpdateHoliday={updateCompanyHoliday}
+                />
             </div>
 
             {/* 現場名ホバー時のツールチップ */}
             {hoverProjectStats && (
                 <div
                     className="fixed z-50 bg-slate-800 text-white rounded-lg shadow-xl p-3 w-56 text-xs pointer-events-none transform -translate-y-1/2"
-                    style={{ top: hoverProjectStats.top + 16, left: hoverProjectStats.left + 5 }}
+                    style={{
+                        top: `${hoverProjectStats.top}px`,
+                        left: `${hoverProjectStats.left + 8}px`
+                    }}
                 >
-                    <div className="font-bold text-sm mb-2 text-blue-200 border-b border-slate-600 pb-1">{hoverProjectStats.data.siteName}</div>
-                    <div className="flex flex-col gap-1.5">
-                        <div className="flex justify-between items-center mb-1 bg-slate-700/50 p-1.5 rounded border border-slate-600/50">
-                            <span className="text-slate-400">工期:</span>
-                            <span className="font-bold text-right text-[10px]">
-                                {hoverProjectStats.startDate && hoverProjectStats.endDate
-                                    ? `${hoverProjectStats.startDate.replace(/-/g, '/')} 〜 ${hoverProjectStats.endDate.replace(/-/g, '/')}`
-                                    : '未設定'}
+                    <div className="font-bold text-[13px] border-b border-slate-700 pb-1.5 mb-1.5 flex items-center gap-1">
+                        <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: hoverProjectStats.data.bar_color || '#94A3B8' }} />
+                        {hoverProjectStats.data.name}
+                    </div>
+                    <div className="space-y-1 text-slate-300">
+                        <div className="flex justify-between items-center">
+                            <span className="text-slate-400">施工元請:</span>
+                            <span className="font-bold">
+                                {hoverProjectStats.data.is_prime_contractor 
+                                    ? '元請' 
+                                    : hoverProjectStats.data.customerId 
+                                        ? (customerMap[hoverProjectStats.data.customerId] || '未設定') 
+                                        : '未設定'}
                             </span>
                         </div>
                         <div className="flex justify-between items-center">
@@ -1803,42 +633,13 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
             )}
 
             {/* カラー選択ポップアップ */}
-            {editColorPopup && (
-                <div
-                    className="fixed z-[100] bg-white rounded-xl shadow-2xl border border-slate-200 p-3 color-popup"
-                    style={{
-                        top: `${Math.min(window.innerHeight - 150, editColorPopup.top + 10)}px`,
-                        left: `${Math.min(window.innerWidth - 200, editColorPopup.left)}px`
-                    }}
-                >
-                    <div className="flex items-center justify-between mb-2 gap-4">
-                        <div className="text-[10px] font-bold text-slate-400 uppercase">配置表カラーを選択</div>
-                        <button
-                            onClick={() => setEditColorPopup(null)}
-                            className="p-1 hover:bg-slate-100 rounded-full text-slate-400 transition"
-                            title="閉じる"
-                        >
-                            <X size={14} />
-                        </button>
-                    </div>
-                    <div className="grid grid-cols-4 gap-2">
-                        {DEFAULT_COLORS.map(c => (
-                            <button
-                                key={c}
-                                onClick={() => updateProjectColor(editColorPopup.projectId, c)}
-                                className="w-8 h-8 rounded-full transition-all hover:scale-110 shadow-sm border border-slate-100"
-                                style={{ backgroundColor: c }}
-                            />
-                        ))}
-                    </div>
-                </div>
-            )}
-
-
+            <EditColorPopup
+                editColorPopup={editColorPopup}
+                onClose={() => setEditColorPopup(null)}
+                onSelectColor={updateProjectColor}
+            />
         </div>
     );
 };
 
 export default React.memo(AssignmentChartTab);
-
-

@@ -1,0 +1,21 @@
+# タスクリスト: 巨大コンポーネントのリファクタリング
+
+- [ ] 配置表 (`AssignmentChartTab.jsx`) のリファクタリング
+  - [ ] ポップアップUIコンポーネントの切り出し
+    - [ ] `src/components/assignment/EditColorPopup.jsx` の新規作成
+    - [ ] `src/components/assignment/EditHolidayPopup.jsx` の新規作成
+    - [ ] `src/components/assignment/AssignmentPopup.jsx` の新規作成
+  - [ ] 状態管理フックの切り出し
+    - [ ] `src/hooks/useAssignmentState.js` の新規作成とロジック移植
+  - [ ] `AssignmentChartTab.jsx` のリファクタリング (フックとコンポーネントの結合、UIのみに軽量化)
+- [ ] システム設定 (`SystemSettingsTab.jsx`) のリファクタリング
+  - [ ] 資格管理コンポーネントの切り出し
+    - [ ] `src/components/tabs/settings/CertificationManager.jsx` の新規作成
+  - [ ] 自社情報コンポーネントの切り出し
+    - [ ] `src/components/tabs/settings/CompanyInfoSettings.jsx` の新規作成
+  - [ ] `SystemSettingsTab.jsx` のリファクタリング (サブ設定コンポーネントの統合、UIルーティングのみに軽量化)
+- [ ] 動作検証と動作確認
+  - [ ] 配置表（アサイン、ガントチャートドラッグ、コピペ、削除）の動作確認
+  - [ ] システム設定（資格マスターの登録・削除、自社情報の登録・画像アップロード）の動作確認
+  - [ ] エラーログの確認と再レンダリングパフォーマンスの検証
+  - [ ] `walkthrough.md` の作成

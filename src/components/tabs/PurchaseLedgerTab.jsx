@@ -393,7 +393,6 @@ const PurchaseLedgerTab = () => {
                             if (currentPage > totalPages) setCurrentPage(totalPages);
                         }}
                         className="w-16 px-2 py-1 border border-slate-300 rounded text-center focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        min={1}
                         max={totalPages}
                     />
                     <span className="font-semibold text-slate-700">of {totalPages}</span>

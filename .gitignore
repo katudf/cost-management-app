@@ -27,3 +27,14 @@ dist-ssr
 .env
 .env.*
 !.env.example
+
+# Temporary scripts & Test outputs
+test-*.mjs
+test_out.txt
+scratch/
+
+# AI Agent / CLI metadata
+.agents/
+.claude/
+.goose/
+skills-lock.json

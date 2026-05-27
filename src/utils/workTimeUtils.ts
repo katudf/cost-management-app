@@ -9,21 +9,35 @@
 // 定数: 時刻を分単位 (0:00 = 0, 8:00 = 480, etc.) で管理
 // ============================================================
 
-const toMinutes = (timeStr) => {
+const toMinutes = (timeStr: string | null | undefined): number | null => {
     if (!timeStr) return null;
     const [h, m] = timeStr.split(':').map(Number);
     return h * 60 + m;
 };
 
-const SEASON_CONFIGS = {
+export interface BreakRange {
+    s: number;
+    e: number;
+}
+
+export interface SeasonConfig {
+    label: string;
+    scheduledStart: number;
+    scheduledEnd: number;
+    breaks: BreakRange[];
+    totalBreakMinutes: number;
+    scheduledWorkHours: number;
+}
+
+const SEASON_CONFIGS: { summer: SeasonConfig; winter: SeasonConfig } = {
     summer: {
         label: '夏季',
-        scheduledStart: toMinutes('08:00'),  // 480
-        scheduledEnd: toMinutes('17:30'),    // 1050
+        scheduledStart: toMinutes('08:00') as number,  // 480
+        scheduledEnd: toMinutes('17:30') as number,    // 1050
         breaks: [
-            { s: toMinutes('10:00'), e: toMinutes('10:30') },  // 30min
-            { s: toMinutes('12:00'), e: toMinutes('13:00') },  // 60min
-            { s: toMinutes('15:00'), e: toMinutes('15:30') },  // 30min
+            { s: toMinutes('10:00') as number, e: toMinutes('10:30') as number },  // 30min
+            { s: toMinutes('12:00') as number, e: toMinutes('13:00') as number },  // 60min
+            { s: toMinutes('15:00') as number, e: toMinutes('15:30') as number },  // 30min
         ],
         totalBreakMinutes: 120,
         // 定時実労働時間: (17:30-8:00) - 120min = 9.5h - 2h = 7.5h
@@ -31,12 +45,12 @@ const SEASON_CONFIGS = {
     },
     winter: {
         label: '冬季',
-        scheduledStart: toMinutes('08:00'),  // 480
-        scheduledEnd: toMinutes('17:00'),    // 1020
+        scheduledStart: toMinutes('08:00') as number,  // 480
+        scheduledEnd: toMinutes('17:00') as number,    // 1020
         breaks: [
-            { s: toMinutes('10:00'), e: toMinutes('10:15') },  // 15min
-            { s: toMinutes('12:00'), e: toMinutes('13:00') },  // 60min
-            { s: toMinutes('15:00'), e: toMinutes('15:15') },  // 15min
+            { s: toMinutes('10:00') as number, e: toMinutes('10:15') as number },  // 15min
+            { s: toMinutes('12:00') as number, e: toMinutes('13:00') as number },  // 60min
+            { s: toMinutes('15:00') as number, e: toMinutes('15:15') as number },  // 15min
         ],
         totalBreakMinutes: 90,
         // 定時実労働時間: (17:00-8:00) - 90min = 9h - 1.5h = 7.5h
@@ -50,9 +64,9 @@ const SEASON_CONFIGS = {
 
 /**
  * @param {string} dateStr - "YYYY-MM-DD"
- * @returns {object} シーズン設定
+ * @returns {SeasonConfig} シーズン設定
  */
-export const getSeasonConfig = (dateStr) => {
+export const getSeasonConfig = (dateStr: string | null | undefined): SeasonConfig => {
     if (!dateStr) return SEASON_CONFIGS.summer;
     const month = new Date(dateStr).getMonth() + 1; // 1-12
     // 夏季: 3月〜10月, 冬季: 11月〜2月
@@ -66,7 +80,7 @@ export const getSeasonConfig = (dateStr) => {
 // 重複計算ヘルパー (2つの時間範囲の重なり)
 // ============================================================
 
-const overlapMinutes = (aStart, aEnd, bStart, bEnd) => {
+const overlapMinutes = (aStart: number, aEnd: number, bStart: number, bEnd: number): number => {
     const start = Math.max(aStart, bStart);
     const end = Math.min(aEnd, bEnd);
     return Math.max(0, end - start);
@@ -76,14 +90,27 @@ const overlapMinutes = (aStart, aEnd, bStart, bEnd) => {
 // calculateWorkHours: メイン計算関数
 // ============================================================
 
+export interface WorkHoursResult {
+    grossMinutes: number;
+    breakMinutes: number;
+    netWorkHours: number;
+    overtimeHours: number;
+    regularHours: number;
+}
+
 /**
  * @param {string} startTime - "HH:MM"
  * @param {string} endTime   - "HH:MM"
  * @param {string} dateStr   - "YYYY-MM-DD"
  * @param {boolean} isOvernight - 翌日（日跨ぎ）フラグ
- * @returns {object} { grossMinutes, breakMinutes, netWorkHours, overtimeHours, regularHours }
+ * @returns {WorkHoursResult} { grossMinutes, breakMinutes, netWorkHours, overtimeHours, regularHours }
  */
-export const calculateWorkHours = (startTime, endTime, dateStr, isOvernight = false) => {
+export const calculateWorkHours = (
+    startTime: string | null | undefined, 
+    endTime: string | null | undefined, 
+    dateStr: string | null | undefined, 
+    isOvernight = false
+): WorkHoursResult => {
     const startMin = toMinutes(startTime);
     let endMin = toMinutes(endTime);
 
@@ -98,7 +125,7 @@ export const calculateWorkHours = (startTime, endTime, dateStr, isOvernight = fa
     }
 
     if (isOvernight) {
-        endMin += + 1440; // 24時間を追加
+        endMin += 1440; // 24時間を追加
     }
 
     if (endMin <= startMin) {
@@ -180,7 +207,7 @@ export const calculateWorkHours = (startTime, endTime, dateStr, isOvernight = fa
  * @param {string} dateStr - "YYYY-MM-DD"
  * @returns {number} 人工数 (小数第1位)
  */
-export const calculateNinku = (totalWorkHours, dateStr) => {
+export const calculateNinku = (totalWorkHours: number, dateStr: string | null | undefined): number => {
     const config = getSeasonConfig(dateStr);
     if (config.scheduledWorkHours <= 0) return 0;
     return Math.round((totalWorkHours / config.scheduledWorkHours) * 10) / 10;
@@ -190,7 +217,7 @@ export const calculateNinku = (totalWorkHours, dateStr) => {
 // formatTimeDisplay: 時刻の表示用フォーマット
 // ============================================================
 
-export const formatTimeDisplay = (timeStr) => {
+export const formatTimeDisplay = (timeStr: string | null | undefined): string => {
     if (!timeStr) return '';
     // "HH:MM:SS" → "HH:MM" or "HH:MM" → "HH:MM"
     return timeStr.substring(0, 5);

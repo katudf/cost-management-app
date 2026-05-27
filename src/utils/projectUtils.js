@@ -24,11 +24,16 @@ export const calculateProjectsSummary = (projects, hourlyWage) => {
         const overallProgressValue = totalTarget > 0 ? (masterData.reduce((sum, m) => sum + ((progressData[m.id] || 0) * m.target), 0) / totalTarget) : 0;
         const subcontractorCost = (proj.subcontractors || []).reduce((sum, s) => sum + (Number(s.worker_count) * Number(s.unit_price || 0)), 0);
 
+        let overallProgress = Math.round(overallProgressValue);
+        if (proj.status === '完了' && masterData.length === 0) {
+            overallProgress = 100;
+        }
+
         return {
             ...proj,
             totalActual,
             totalTarget,
-            overallProgress: Math.round(overallProgressValue),
+            overallProgress,
             predictedProfitLoss: totalPredictedLoss - subcontractorCost
         };
     });
