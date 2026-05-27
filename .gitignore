@@ -38,3 +38,8 @@ scratch/
 .claude/
 .goose/
 skills-lock.json
+
+# Playwright test runs
+test-results/
+playwright-report/
+blob-report/
