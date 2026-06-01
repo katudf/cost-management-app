@@ -694,9 +694,6 @@ const WorkerApp = () => {
                                             ¥{Math.abs(foremanSummary.predictedProfitLoss).toLocaleString()}
                                             <span className="text-sm ml-1">{foremanSummary.predictedProfitLoss >= 0 ? '' : '赤字'}</span>
                                         </div>
-                                        <div className={`text-[10px] font-bold mt-1 ${foremanSummary.predictedProfitLoss >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                                            {foremanSummary.predictedProfitLoss >= 0 ? '現在のペースなら目標達成可能！' : 'このままだとマイナスだ。至急対策を！'}
-                                        </div>
                                     </div>
                                 </div>
                             </div>

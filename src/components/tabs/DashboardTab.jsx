@@ -20,9 +20,6 @@ const DashboardTab = ({
                         {summaryData.totalPredictedProfitLoss >= 0 ? <TrendingUp size={32} /> : <TrendingDown size={32} />}
                         ¥{Math.abs(Math.round(summaryData.totalPredictedProfitLoss)).toLocaleString()}
                     </div>
-                    <div className={`text-[10px] font-bold mt-1 ${summaryData.totalPredictedProfitLoss >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                        {summaryData.totalPredictedProfitLoss >= 0 ? '現在のペースなら目標達成可能！' : 'このままだとマイナスだ。至急対策を！'}
-                    </div>
                 </div>
 
                 <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200 flex flex-col justify-center">
