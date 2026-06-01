@@ -128,6 +128,41 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
         await supabase.from('ProjectTasks').update(updateData).eq('id', dbItemId);
     };
 
+    const reorderMasterItems = async (newMasterData) => {
+        if (!activeProjectId) return;
+
+        // 1. ローカル状態を先行更新（楽観的UI更新）
+        updateLayer(p => ({
+            masterData: newMasterData
+        }));
+
+        try {
+            // 2. 一意性制約の衝突を防ぐため、一時的に order を負の数に退避
+            const tempPromises = newMasterData.map((item, idx) =>
+                supabase.from('ProjectTasks')
+                    .update({ order: -(idx + 1) })
+                    .eq('id', item.id)
+            );
+            await Promise.all(tempPromises);
+
+            // 3. 正しい順序を設定
+            const updatePromises = newMasterData.map((item, idx) =>
+                supabase.from('ProjectTasks')
+                    .update({ order: idx + 1 })
+                    .eq('id', item.id)
+            );
+            const results = await Promise.all(updatePromises);
+            
+            const errorResult = results.find(r => r.error);
+            if (errorResult) {
+                throw errorResult.error;
+            }
+        } catch (error) {
+            console.error('仕様項目の並び替えに失敗しました:', error);
+            showToast('並び替えの保存に失敗しました: ' + error.message, 'error');
+        }
+    };
+
     const addMasterItem = async () => {
         if (!activeProjectId) return;
 
@@ -271,6 +306,7 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
         confirmRemoveProject,
         updateMasterItemLocal,
         saveMasterItemDB,
+        reorderMasterItems,
         addMasterItem,
         removeMasterItem,
         saveProgressDB,

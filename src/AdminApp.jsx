@@ -533,6 +533,7 @@ const App = () => {
                             customers={customers}
                             updateMasterItemLocal={projectOps.updateMasterItemLocal}
                             saveMasterItemDB={projectOps.saveMasterItemDB}
+                            reorderMasterItems={projectOps.reorderMasterItems}
                             removeMasterItem={projectOps.removeMasterItem}
                             addMasterItem={projectOps.addMasterItem}
                             HOURLY_WAGE={hourlyWage}

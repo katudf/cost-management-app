@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Settings, Loader2, Upload, Trash, PlusCircle, Trash2, Clipboard, Table as TableIcon, ExternalLink, PauseCircle, X } from 'lucide-react';
+import { Settings, Loader2, Upload, Trash, PlusCircle, Trash2, Clipboard, Table as TableIcon, ExternalLink, PauseCircle, X, GripVertical } from 'lucide-react';
 import { DEFAULT_COLORS, PROJECT_STATUS, PROJECT_STATUS_LIST } from '../../utils/constants';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../Toast';
@@ -22,6 +22,7 @@ const MasterTab = ({
     customers = [],
     updateMasterItemLocal,
     saveMasterItemDB,
+    reorderMasterItems,
     removeMasterItem,
     addMasterItem,
     HOURLY_WAGE,
@@ -47,6 +48,47 @@ const MasterTab = ({
     const { showToast } = useToast();
     const [suspensions, setSuspensions] = useState([]);
     const [newSuspension, setNewSuspension] = useState({ start_date: '', end_date: '', reason: '' });
+
+    // ドラッグ＆ドロップ関連の状態
+    const [draggedIndex, setDraggedIndex] = useState(null);
+    const [dragOverIndex, setDragOverIndex] = useState(null);
+
+    const handleDragStart = (e, index) => {
+        setDraggedIndex(index);
+        e.dataTransfer.effectAllowed = 'move';
+    };
+
+    const handleDragOver = (e, index) => {
+        e.preventDefault();
+        if (draggedIndex === null || draggedIndex === index) return;
+        if (dragOverIndex !== index) {
+            setDragOverIndex(index);
+        }
+    };
+
+    const handleDragLeave = () => {
+        setDragOverIndex(null);
+    };
+
+    const handleDrop = (e, targetIndex) => {
+        e.preventDefault();
+        setDragOverIndex(null);
+        if (draggedIndex === null || draggedIndex === targetIndex) return;
+
+        const newMasterData = [...activeProject.masterData];
+        const draggedItem = newMasterData[draggedIndex];
+        // 移動元から削除し、移動先に挿入
+        newMasterData.splice(draggedIndex, 1);
+        newMasterData.splice(targetIndex, 0, draggedItem);
+
+        reorderMasterItems(newMasterData);
+        setDraggedIndex(null);
+    };
+
+    const handleDragEnd = () => {
+        setDraggedIndex(null);
+        setDragOverIndex(null);
+    };
 
     // 休工期間データの取得
     const fetchSuspensions = useCallback(async () => {
@@ -302,8 +344,29 @@ const MasterTab = ({
                         <div className="grid lg:grid-cols-3 gap-8">
                             <div className="lg:col-span-2 space-y-3">
                                 <h3 className="text-sm font-bold text-slate-500 mb-2 uppercase">仕様項目ごとの目標設定</h3>
-                                {activeProject.masterData.map((m) => (
-                                    <div key={m.id} className="flex items-center gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:border-blue-300 transition">
+                                {activeProject.masterData.map((m, index) => (
+                                    <div
+                                        key={m.id}
+                                        onDragOver={(e) => handleDragOver(e, index)}
+                                        onDragLeave={handleDragLeave}
+                                        onDrop={(e) => handleDrop(e, index)}
+                                        className={`flex items-center gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:border-blue-300 transition ${
+                                            draggedIndex === index ? 'opacity-40 border-dashed border-blue-400 bg-blue-50/30' : ''
+                                        } ${
+                                            dragOverIndex === index ? 'border-t-2 border-t-blue-500 shadow-md transform translate-y-1' : ''
+                                        }`}
+                                    >
+                                        {/* ドラッグハンドル */}
+                                        <div
+                                            draggable
+                                            onDragStart={(e) => handleDragStart(e, index)}
+                                            onDragEnd={handleDragEnd}
+                                            className="cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600 p-1 flex items-center justify-center rounded transition animate-pulse-on-hover"
+                                            title="ドラッグして順序を入れ替え"
+                                        >
+                                            <GripVertical size={18} />
+                                        </div>
+
                                         <div className="flex-1">
                                             <label className="text-[9px] font-bold text-slate-400 block mb-1 uppercase tracking-tighter">作業項目 (仕様)</label>
                                             <input
