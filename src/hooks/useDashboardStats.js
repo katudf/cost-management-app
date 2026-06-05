@@ -78,8 +78,15 @@ export function useDashboardStats({ projects, activeProject, hourlyWage }) {
             );
         }
 
-        // 常に作成順（新しい順）でソート
-        list.sort((a, b) => b.id - a.id);
+        // order順（昇順）でソート。同値またはnullの場合は id順（新しい順）
+        list.sort((a, b) => {
+            const orderA = a.order ?? 999999;
+            const orderB = b.order ?? 999999;
+            if (orderA !== orderB) {
+                return orderA - orderB;
+            }
+            return b.id - a.id;
+        });
         
         return list;
     }, [allProjectsSummary, searchQuery]);

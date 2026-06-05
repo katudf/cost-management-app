@@ -26,7 +26,7 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
         }
         const nextOrder = projects.length > 0 ? Math.max(...projects.map(p => p.order || 0)) + 1 : 0;
         const tempName = `__NEW_PROJECT__${Date.now()}`;
-        const { data, error } = await supabase.from('Projects').insert([{ name: tempName, order: nextOrder, status: PROJECT_STATUS.ESTIMATE }]).select();
+        const { data, error } = await supabase.from('Projects').insert([{ name: tempName, order: nextOrder, status: PROJECT_STATUS.ESTIMATE, show_on_home: true }]).select();
         if (error) {
             console.error(error); showToast('現場の作成に失敗しました: ' + error.message, 'error');
             return;
@@ -34,7 +34,7 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
         const newProj = data[0];
 
         setProjects(prev => [...prev, {
-            id: newProj.id, order: newProj.order, siteName: '', status: newProj.status || PROJECT_STATUS.ESTIMATE, masterData: [], records: [], progressData: {}
+            id: newProj.id, order: newProj.order, siteName: '', status: newProj.status || PROJECT_STATUS.ESTIMATE, show_on_home: true, masterData: [], records: [], progressData: {}
         }]);
         setActiveProjectId(newProj.id);
     };
@@ -99,6 +99,107 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
     const handleProjectStatusChange = async (id, newStatus) => {
         updateLayer(p => ({ status: newStatus }));
         await supabase.from('Projects').update({ status: newStatus }).eq('id', id);
+    };
+
+    const updateProjectVisibilityAndStatus = async (id, newStatus, showOnHome) => {
+        setProjects(prev => prev.map(p =>
+            p.id === id ? { ...p, status: newStatus, show_on_home: showOnHome } : p
+        ));
+        await supabase.from('Projects').update({ status: newStatus, show_on_home: showOnHome }).eq('id', id);
+    };
+
+    const reorderAndMoveProjects = async (draggedId, targetStatus, targetProjectId, position = 'before') => {
+        if (!draggedId) return;
+
+        // 1. ローカルの projects を order 順にソートしてコピー
+        const sortedProjects = [...projects].sort((a, b) => (a.order || 0) - (b.order || 0));
+        const draggedIndex = sortedProjects.findIndex(p => p.id === draggedId);
+        if (draggedIndex === -1) return;
+
+        // ドラッグしたプロジェクトを取り出し、ステータスとホーム表示を変更
+        const [draggedProject] = sortedProjects.splice(draggedIndex, 1);
+        draggedProject.status = targetStatus;
+        draggedProject.show_on_home = true;
+
+        // 挿入インデックスの決定
+        let insertIndex = sortedProjects.length;
+
+        if (targetProjectId) {
+            // カードの上にドロップされた場合: position が 'after' ならそのカードの直後、'before' なら直前に挿入
+            const index = sortedProjects.findIndex(p => p.id === targetProjectId);
+            if (index !== -1) {
+                insertIndex = position === 'after' ? index + 1 : index;
+            }
+        } else {
+            // カラムの余白にドロップされた場合（末尾への移動）:
+            // ドロップ先カラムの「最後のプロジェクト」を探し、その直後に挿入する
+            const targetStatusProjects = sortedProjects.filter(p => p.status === targetStatus);
+            if (targetStatusProjects.length > 0) {
+                const lastTargetProject = targetStatusProjects[targetStatusProjects.length - 1];
+                const lastIndex = sortedProjects.findIndex(p => p.id === lastTargetProject.id);
+                if (lastIndex !== -1) {
+                    insertIndex = lastIndex + 1;
+                }
+            } else {
+                // カラムが空の場合は配列の末尾
+                insertIndex = sortedProjects.length;
+            }
+        }
+
+        // 指定位置に挿入
+        sortedProjects.splice(insertIndex, 0, draggedProject);
+
+        // 全体の order を 1 から再構築
+        sortedProjects.forEach((p, idx) => {
+            p.order = idx + 1;
+        });
+
+        // 楽観的UI更新
+        setProjects(sortedProjects);
+
+        try {
+            // DBの一意性制約エラー（Projects_order_key）を防ぐため、
+            // まずは全プロジェクトの order カラムを一時的に絶対に重複しないユニークな値（10000 + id）に退避する。
+            const tempPromises = sortedProjects.map(p =>
+                supabase.from('Projects')
+                    .update({ order: 10000 + Number(p.id) })
+                    .eq('id', p.id)
+            );
+            await Promise.all(tempPromises);
+
+            // 本番の order および status でコミットする。
+            // 全てが一度 10000 以上の値に退避されているため、順次/並列で書き戻しても衝突が発生しない。
+            const finalPromises = sortedProjects.map(p =>
+                supabase.from('Projects')
+                    .update({ 
+                        status: p.status, 
+                        order: p.order, 
+                        show_on_home: p.show_on_home 
+                    })
+                    .eq('id', p.id)
+            );
+            const results = await Promise.all(finalPromises);
+            const errorResult = results.find(r => r.error);
+            if (errorResult) throw errorResult.error;
+
+        } catch (error) {
+            console.error('プロジェクトの並び替え・移動の保存に失敗しました:', error);
+            showToast('順序の保存に失敗しました: ' + error.message, 'error');
+            // エラー時はDBから再取得してリカバリ
+            if (activeProjectId) {
+                const savedId = activeProjectId;
+                const { data: pData } = await supabase.from('Projects').select('*').order('created_at', { ascending: true });
+                if (pData) {
+                    setProjects(prev => prev.map(p => {
+                        const dbP = pData.find(dp => dp.id === p.id);
+                        if (dbP) {
+                            return { ...p, status: dbP.status, order: dbP.order, show_on_home: dbP.show_on_home ?? true };
+                        }
+                        return p;
+                    }));
+                }
+            }
+        }
     };
 
     const handleProjectDateChange = async (id, field, value) => {
@@ -300,6 +401,8 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
         handleSiteNameBlur,
         handleForemanChange,
         handleProjectStatusChange,
+        updateProjectVisibilityAndStatus,
+        reorderAndMoveProjects,
         handleProjectDateChange,
         isDeleteModalOpen,
         setIsDeleteModalOpen,

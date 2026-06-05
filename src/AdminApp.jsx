@@ -11,8 +11,8 @@ import { DEFAULT_MASTER_DATA, PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATU
 import { calculateAge } from './utils/dateUtils';
 import { calculateProjectsSummary } from './utils/projectUtils';
 import { parseExcelForImport } from './utils/excelImportUtils';
-import { exportToExcel, generateWorkerReportExcel } from './utils/excelExportUtils';
-import { generateWorkerReportPDF } from './utils/pdfExportUtils';
+import { exportToExcel, generateWorkerReportExcel, generateMultipleWorkersReportExcel } from './utils/excelExportUtils';
+import { generateWorkerReportPDF, generateMultipleWorkersReportPDF } from './utils/pdfExportUtils';
 import { optimizeItemsWithGemini } from './utils/aiOptimizeUtils';
 import ImportModal from './components/ImportModal';
 import WorkerEditModal from './components/WorkerEditModal';
@@ -40,6 +40,145 @@ const App = () => {
 
     const [activeProjectId, setActiveProjectId] = useState(null);
     const [dashboardPages, setDashboardPages] = useState({ 見積: 1, 予定: 1, 施工中: 1, 完了: 1 });
+
+    const [dashboardSubTab, setDashboardSubTab] = useState('all'); // 'all', 'estimate', 'completed'
+    const [draggedProjectId, setDraggedProjectId] = useState(null);
+    const [isDragOverTab, setIsDragOverTab] = useState({ all: false, estimate: false, completed: false });
+
+    const handleTabDrop = async (targetSubTab) => {
+        setIsDragOverTab({ all: false, estimate: false, completed: false });
+        if (!draggedProjectId) return;
+
+        const proj = projects.find(p => p.id === draggedProjectId);
+        if (!proj) return;
+
+        let newStatus = proj.status;
+        let showOnHome = proj.show_on_home;
+
+        if (targetSubTab === 'all') {
+            showOnHome = true;
+        } else if (targetSubTab === 'estimate') {
+            newStatus = PROJECT_STATUS.ESTIMATE;
+            showOnHome = false;
+        } else if (targetSubTab === 'completed') {
+            newStatus = PROJECT_STATUS.COMPLETED;
+            showOnHome = false;
+        }
+
+        try {
+            await projectOps.updateProjectVisibilityAndStatus(draggedProjectId, newStatus, showOnHome);
+            showToast(`「${proj.siteName || '無題'}」を移動しました。`, 'success');
+        } catch (error) {
+            console.error('Drop update error:', error);
+            showToast('プロジェクトの移動に失敗しました。', 'error');
+        } finally {
+            setDraggedProjectId(null);
+        }
+    };
+
+    const [dragOverProjectId, setDragOverProjectId] = useState(null);
+    const [dragOverPosition, setDragOverPosition] = useState('before'); // 'before' or 'after'
+
+    const handleDragStart = (e, id) => {
+        setDraggedProjectId(id);
+    };
+
+    const handleDragOverCard = (e, id) => {
+        e.preventDefault();
+        if (draggedProjectId === id) return;
+
+        const rect = e.currentTarget.getBoundingClientRect();
+        const relativeY = e.clientY - rect.top;
+        const threshold = rect.height / 2;
+
+        if (relativeY > threshold) {
+            setDragOverPosition('after');
+        } else {
+            setDragOverPosition('before');
+        }
+        setDragOverProjectId(id);
+    };
+
+    const handleDragEnd = () => {
+        setDraggedProjectId(null);
+        setDragOverProjectId(null);
+        setDragOverPosition('before');
+        setIsDragOverTab({ all: false, estimate: false, completed: false });
+    };
+
+    const handleCardDrop = async (e, targetStatus, targetProjectId) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const position = dragOverPosition; // キャプチャ
+        setDragOverProjectId(null);
+        if (!draggedProjectId || draggedProjectId === targetProjectId) return;
+
+        try {
+            await projectOps.reorderAndMoveProjects(draggedProjectId, targetStatus, targetProjectId, position);
+            showToast('プロジェクトの順序/ステータスを更新しました。', 'success');
+        } catch (error) {
+            console.error('Card drop error:', error);
+            showToast('移動に失敗しました。', 'error');
+        } finally {
+            setDraggedProjectId(null);
+        }
+    };
+
+    const handleColumnDrop = async (e, targetStatus) => {
+        e.preventDefault();
+        if (!draggedProjectId) return;
+
+        // ドロップ先カラムの表示中プロジェクトを取得
+        const rawProjects = groupedProjects[targetStatus] || [];
+        let columnProjects = [];
+        if (dashboardSubTab === 'all') {
+            if (targetStatus === PROJECT_STATUS.ESTIMATE || targetStatus === PROJECT_STATUS.COMPLETED) {
+                columnProjects = rawProjects.filter(p => p.show_on_home !== false);
+            } else {
+                columnProjects = rawProjects;
+            }
+        } else if (dashboardSubTab === 'estimate') {
+            columnProjects = rawProjects.filter(p => p.show_on_home === false);
+        } else if (dashboardSubTab === 'completed') {
+            columnProjects = rawProjects.filter(p => p.show_on_home === false);
+        }
+
+        // ページネーションを考慮する
+        const ITEMS_PER_PAGE = 10;
+        const totalPages = Math.max(1, Math.ceil(columnProjects.length / ITEMS_PER_PAGE));
+        const currentPage = dashboardPages[targetStatus] || 1;
+        const validPage = Math.min(Math.max(1, currentPage), totalPages);
+        const startIndex = (validPage - 1) * ITEMS_PER_PAGE;
+        const visibleProjects = columnProjects.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+
+        // 最後のプロジェクトがある場合、その直後に挿入する
+        let targetProjectId = null;
+        let position = 'after';
+
+        if (visibleProjects.length > 0) {
+            const lastProject = visibleProjects[visibleProjects.length - 1];
+            // ドラッグ中のプロジェクト自体が末尾にいる場合は、その一つ前をターゲットにする
+            if (lastProject.id === draggedProjectId) {
+                if (visibleProjects.length > 1) {
+                    targetProjectId = visibleProjects[visibleProjects.length - 2].id;
+                } else {
+                    targetProjectId = null;
+                }
+            } else {
+                targetProjectId = lastProject.id;
+            }
+        }
+
+        try {
+            await projectOps.reorderAndMoveProjects(draggedProjectId, targetStatus, targetProjectId, position);
+            showToast('プロジェクトの順序/ステータスを更新しました。', 'success');
+        } catch (error) {
+            console.error('Column drop error:', error);
+            showToast('移動に失敗しました。', 'error');
+        } finally {
+            setDraggedProjectId(null);
+        }
+    };
 
     const [exportWeekStart, setExportWeekStart] = useState(() => {
         const today = new Date();
@@ -249,6 +388,8 @@ const App = () => {
             });
             const weekPrefix = exportWeekStart.replace(/-/g, '').slice(0, 8);
 
+            const workersDataList = [];
+
             for (const workerName of workerNames) {
                 const { data: recordsData } = await supabase.from('TaskRecords')
                     .select('*, ProjectTasks(name, projectId)')
@@ -268,11 +409,25 @@ const App = () => {
                     if (subData) subcontractorsData = subData;
                 }
 
-                generateWorkerReportExcel(workerName, weekPrefix, days, recordsData, projects, subcontractorsData);
+                workersDataList.push({
+                    workerName,
+                    days,
+                    recordsData,
+                    projects,
+                    subcontractorsData
+                });
+            }
+
+            if (workersDataList.length > 0) {
+                generateMultipleWorkersReportExcel(workersDataList, weekPrefix);
             }
 
             workerOps.setExportModalWorker(null);
-            if (workerNames.length > 1) showToast(`${workerNames.length}名分のExcelを出力しました`, 'success');
+            if (workerNames.length > 1) {
+                showToast(`${workerNames.length}名分の日報を1つのExcelにまとめて出力しました`, 'success');
+            } else {
+                showToast('日報Excelを出力しました', 'success');
+            }
 
         } catch (e) {
             console.error(e);
@@ -300,6 +455,8 @@ const App = () => {
             // 会社休日の取得
             const { data: holidayData } = await supabase.from('CompanyHolidays').select('date');
 
+            const workersDataList = [];
+
             for (const workerName of workerNames) {
                 const { data: recordsData } = await supabase.from('TaskRecords')
                     .select('*, ProjectTasks(name, projectId)')
@@ -318,11 +475,25 @@ const App = () => {
                     if (subData) subcontractorsData = subData;
                 }
 
-                generateWorkerReportPDF(workerName, weekPrefix, days, recordsData, projects, subcontractorsData, holidayData || []);
+                workersDataList.push({
+                    workerName,
+                    days,
+                    recordsData,
+                    projects,
+                    subcontractorsData
+                });
+            }
+
+            if (workersDataList.length > 0) {
+                generateMultipleWorkersReportPDF(workersDataList, weekPrefix, holidayData || []);
             }
 
             workerOps.setExportModalWorker(null);
-            if (workerNames.length > 1) showToast(`${workerNames.length}名分のPDFを出力しました`, 'success');
+            if (workerNames.length > 1) {
+                showToast(`${workerNames.length}名分の日報をまとめてPDF出力しました`, 'success');
+            } else {
+                showToast('日報PDFを出力しました', 'success');
+            }
         } catch (e) {
             console.error(e);
             showToast('PDF出力中にエラーが発生しました。', 'error');
@@ -397,8 +568,43 @@ const App = () => {
 
                     {activeTab === 'dashboard' && (
                         <div className={`p-6 bg-slate-100 min-h-full ${isLoading ? 'opacity-50 pointer-events-none' : ''}`}>
+                            {/* サブホーム切り替えタブ */}
+                            <div className="flex gap-2 mb-6">
+                                {[
+                                    { key: 'all', label: '工事一覧' },
+                                    { key: 'estimate', label: '見積' },
+                                    { key: 'completed', label: '完了' }
+                                ].map(({ key, label }) => (
+                                    <button
+                                        key={key}
+                                        onClick={() => setDashboardSubTab(key)}
+                                        onDragOver={(e) => e.preventDefault()}
+                                        onDragEnter={() => setIsDragOverTab(prev => ({ ...prev, [key]: true }))}
+                                        onDragLeave={() => setIsDragOverTab(prev => ({ ...prev, [key]: false }))}
+                                        onDrop={() => handleTabDrop(key)}
+                                        className={`px-6 py-2.5 rounded-xl font-black text-sm transition-all shadow-sm border-2 duration-200
+                                            ${dashboardSubTab === key 
+                                                ? 'bg-blue-600 text-white border-blue-600 scale-[1.02] shadow-md' 
+                                                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-slate-300'
+                                            }
+                                            ${isDragOverTab[key] 
+                                                ? 'bg-amber-100 border-amber-400 text-amber-800 animate-pulse scale-105 border-dashed border-2 shadow-lg' 
+                                                : ''
+                                            }
+                                        `}
+                                    >
+                                        {label}
+                                    </button>
+                                ))}
+                            </div>
+
                             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-                                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Home className="text-blue-600" /> 登録済み工事一覧</h2>
+                                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                                    <Home className="text-blue-600" /> 
+                                    {dashboardSubTab === 'all' && '登録済み工事一覧'}
+                                    {dashboardSubTab === 'estimate' && '見積サブホーム（非表示工事）'}
+                                    {dashboardSubTab === 'completed' && '完了サブホーム（非表示工事）'}
+                                </h2>
 
                                 {projects.length > 0 && (
                                     <div className="relative group w-full md:w-64">
@@ -426,8 +632,25 @@ const App = () => {
                                 <div className="text-center py-10 bg-white rounded-xl border border-dashed border-slate-300 text-slate-400 font-bold">該当する条件の現場がありません。</div>
                             ) : (
                                 <div className="flex flex-row gap-4 overflow-x-auto pb-4 items-start">
-                                    {PROJECT_STATUS_LIST.map(status => {
-                                        const columnProjects = groupedProjects[status] || [];
+                                    {PROJECT_STATUS_LIST.filter(status => {
+                                        if (dashboardSubTab === 'estimate') return status === PROJECT_STATUS.ESTIMATE;
+                                        if (dashboardSubTab === 'completed') return status === PROJECT_STATUS.COMPLETED;
+                                        return true;
+                                    }).map(status => {
+                                        let columnProjects = [];
+                                        const rawProjects = groupedProjects[status] || [];
+                                        if (dashboardSubTab === 'all') {
+                                            if (status === PROJECT_STATUS.ESTIMATE || status === PROJECT_STATUS.COMPLETED) {
+                                                columnProjects = rawProjects.filter(p => p.show_on_home !== false);
+                                            } else {
+                                                columnProjects = rawProjects;
+                                            }
+                                        } else if (dashboardSubTab === 'estimate') {
+                                            columnProjects = rawProjects.filter(p => p.show_on_home === false);
+                                        } else if (dashboardSubTab === 'completed') {
+                                            columnProjects = rawProjects.filter(p => p.show_on_home === false);
+                                        }
+
                                         const ITEMS_PER_PAGE = 10;
                                         const totalPages = Math.max(1, Math.ceil(columnProjects.length / ITEMS_PER_PAGE));
                                         const currentPage = dashboardPages[status] || 1;
@@ -441,7 +664,12 @@ const App = () => {
                                         };
 
                                         return (
-                                            <div key={status} className="flex flex-col flex-1 min-w-[280px] sm:min-w-[320px] w-full bg-slate-200/50 rounded-xl p-3">
+                                            <div 
+                                                key={status} 
+                                                onDragOver={(e) => e.preventDefault()}
+                                                onDrop={(e) => handleColumnDrop(e, status)}
+                                                className="flex flex-col flex-1 min-w-[280px] sm:min-w-[320px] w-full bg-slate-200/50 rounded-xl p-3"
+                                            >
                                                 <div className="flex items-center justify-between mb-3 px-1">
                                                     <h3 className="font-bold text-slate-700 flex items-center gap-2">
                                                         <span className={`w-3 h-3 rounded-full ${PROJECT_STATUS_COLOR[status] || 'bg-slate-400'}`}></span>
@@ -450,7 +678,11 @@ const App = () => {
                                                     <span className="text-xs font-bold text-slate-500 bg-white px-2 py-0.5 rounded-full shadow-sm">{columnProjects.length}件</span>
                                                 </div>
 
-                                                <div className="flex flex-col gap-3 flex-1">
+                                                <div 
+                                                    onDragOver={(e) => e.preventDefault()}
+                                                    onDrop={(e) => handleColumnDrop(e, status)}
+                                                    className="flex flex-col gap-3 flex-1"
+                                                >
                                                     {visibleProjects.map(proj => (
                                                         <div
                                                             key={proj.id}
@@ -458,7 +690,16 @@ const App = () => {
                                                                 setActiveProjectId(proj.id);
                                                                 setActiveTab('master');
                                                             }}
-                                                            className="bg-white rounded-lg border border-slate-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 hover:border-blue-400 transition-all cursor-pointer overflow-hidden flex flex-col group p-4"
+                                                            draggable="true"
+                                                            onDragStart={(e) => handleDragStart(e, proj.id)}
+                                                            onDragOver={(e) => handleDragOverCard(e, proj.id)}
+                                                            onDragEnd={handleDragEnd}
+                                                            onDrop={(e) => handleCardDrop(e, status, proj.id)}
+                                                            className={`bg-white rounded-lg border-2 shadow-sm hover:shadow-md hover:-translate-y-0.5 hover:border-blue-400 transition-all cursor-grab active:cursor-grabbing overflow-hidden flex flex-col group p-4
+                                                                ${draggedProjectId === proj.id ? 'opacity-40 border-dashed border-blue-300' : 'border-slate-200'}
+                                                                ${dragOverProjectId === proj.id && dragOverPosition === 'before' ? 'shadow-[inset_0_4px_0_0_#3b82f6]' : ''}
+                                                                ${dragOverProjectId === proj.id && dragOverPosition === 'after' ? 'shadow-[inset_0_-4px_0_0_#3b82f6]' : ''}
+                                                            `}
                                                         >
                                                             <div className="mb-3">
                                                                 <h4 className="font-bold text-slate-800 line-clamp-2 leading-tight group-hover:text-blue-700 transition-colors text-sm">

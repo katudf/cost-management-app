@@ -1,180 +1,9 @@
 import { calculateNinku, formatTimeDisplay } from './workTimeUtils';
 
 /**
- * 就労日報のPDF出力（ブラウザ印刷ダイアログ経由）
- * 手書き日報フォームに準拠したレイアウト
+ * 共通のCSSスタイル定義
  */
-export const generateWorkerReportPDF = (workerName, weekPrefix, days, recordsData, projects, subcontractorsData, companyHolidays = []) => {
-    const dayNames = ["(月)", "(火)", "(水)", "(木)", "(金)", "(土)", "(日)"];
-
-    // 日付ごと・現場ごとのグループ化
-    const dateProjectMap = {};
-    days.forEach(d => {
-        const dayRecords = (recordsData || []).filter(r => r.date === d);
-        const projGroups = {};
-        dayRecords.forEach(r => {
-            const pid = r.ProjectTasks?.projectId || r.project_id;
-            if (!projGroups[pid]) {
-                const proj = projects.find(p => p.id === pid);
-                projGroups[pid] = {
-                    siteName: proj?.siteName || proj?.name || '不明な現場',
-                    items: [],
-                    sumHours: 0,
-                    sumOvertime: 0,
-                    timeSlots: [],
-                };
-            }
-            projGroups[pid].items.push(r.ProjectTasks?.name || '不明な作業');
-            projGroups[pid].sumHours += Number(r.hours || 0);
-            projGroups[pid].sumOvertime += Number(r.overtime_hours || 0);
-            if (r.start_time && r.end_time) {
-                projGroups[pid].timeSlots.push({
-                    start: formatTimeDisplay(r.start_time),
-                    end: formatTimeDisplay(r.end_time),
-                });
-            }
-        });
-        dateProjectMap[d] = Object.values(projGroups);
-    });
-
-    // 日付ヘッダー
-    const dateHeaders = days.map((d, i) => {
-        const parts = d.split('-');
-        const isSunday = i === 6; // 月曜始まりの7番目
-        const isHoliday = companyHolidays.some(h => h.date === d);
-        const style = (isSunday || isHoliday) ? ' style="background-color: #fee2e2; color: #dc2626;"' : '';
-        return `<th class="day-header"${style} colspan="2">${parseInt(parts[1])}/${parseInt(parts[2])}<br/>${dayNames[i]}</th>`;
-    }).join('');
-
-    // ======== 現場ブロック（現場①②③ 各3行）========
-    let siteRowsHTML = '';
-    for (let g = 0; g < 3; g++) {
-        let nameRow = `<td rowspan="3" class="group-cell">現場&#${9312 + g};</td><td class="item-cell" colspan="2" style="font-size: 12px;">現場名</td>`;
-        let timeRow = `<td class="item-cell" colspan="2" style="font-size: 12px;">時間</td>`;
-        let contentRow = `<td class="item-cell" colspan="2" style="font-size: 12px;">作業<br/>内容</td>`;
-
-        days.forEach(d => {
-            const group = (dateProjectMap[d] || [])[g];
-            if (group) {
-                nameRow += `<td class="data-cell site-name" colspan="2">${esc(group.siteName)}</td>`;
-                let timeText = '';
-                let timeStyle = '';
-                if (group.timeSlots.length > 0) {
-                    const slotTexts = group.timeSlots.map(s => `${s.start} 〜 ${s.end}`);
-                    const unique = [...new Set(slotTexts)];
-                    timeText = unique.join('<br/>');
-
-                    if (unique.length >= 3) {
-                        timeStyle = 'font-size: 7.0px; line-height: 1.1;';
-                    } else if (unique.length === 2) {
-                        timeStyle = 'font-size: 9.5px; line-height: 1.1;';
-                    }
-                }
-                timeRow += `<td class="data-cell time-data" colspan="2" style="${timeStyle}">${timeText || ': 　〜　:'}</td>`;
-                const uniqueItems = [...new Set(group.items)];
-                let contentStyle = '';
-                if (uniqueItems.length >= 6) {
-                    contentStyle = 'font-size: 7.0px; line-height: 1.1;';
-                } else if (uniqueItems.length === 5) {
-                    contentStyle = 'font-size: 8.5px; line-height: 1.1;';
-                } else if (uniqueItems.length === 4) {
-                    contentStyle = 'font-size: 9.5px; line-height: 1.1;';
-                }
-                contentRow += `<td class="data-cell content-data" colspan="2" style="${contentStyle}">${uniqueItems.map(i => esc(i)).join('<br/>')}</td>`;
-            } else {
-                nameRow += `<td class="data-cell site-name" colspan="2">&nbsp;</td>`;
-                timeRow += `<td class="data-cell time-data" colspan="2">: 　〜　:</td>`;
-                contentRow += `<td class="data-cell content-data" colspan="2">&nbsp;</td>`;
-            }
-        });
-        siteRowsHTML += `<tr>${nameRow}</tr><tr>${timeRow}</tr><tr>${contentRow}</tr>`;
-    }
-
-    // ======== 協力会社（3社 × 1行 = 3行）========
-    let subRowsHTML = '';
-    for (let c = 0; c < 3; c++) {
-        const isFirst = c === 0;
-        let row = isFirst ? `<td rowspan="3" class="group-cell">協力会社</td>` : '';
-        row += `<td class="item-cell item-label-name">社名${['①', '②', '③'][c]}</td>`;
-        row += `<td class="item-cell item-label-qty sub-item">人数</td>`;
-        days.forEach(d => {
-            const daySubs = (subcontractorsData || []).filter(s => s.date === d);
-            const sub = daySubs[c];
-            row += `<td class="data-cell data-cell-l">${sub ? esc(sub.company_name) : '&nbsp;'}</td>`;
-            row += `<td class="data-cell data-cell-r">${sub ? sub.worker_count : '&nbsp;'}</td>`;
-        });
-        subRowsHTML += `<tr style="${c < 2 ? 'border-bottom: 1px dashed #cbd5e1;' : ''}">${row}</tr>`;
-    }
-
-    // ======== 使用材料（3行 × 1行 = 3行）========
-    let materialRowsHTML = '';
-    for (let m = 0; m < 3; m++) {
-        const isFirst = m === 0;
-        let matRow = isFirst ? `<td rowspan="3" class="group-cell">使用材料</td>` : '';
-        matRow += `<td class="item-cell item-label-name">材料名</td>`;
-        matRow += `<td class="item-cell item-label-qty sub-item">数量</td>`;
-        for (let i = 0; i < 7; i++) {
-            matRow += `<td class="data-cell data-cell-l">&nbsp;</td>`;
-            matRow += `<td class="data-cell data-cell-r">&nbsp;</td>`;
-        }
-        materialRowsHTML += `<tr style="${m < 2 ? 'border-bottom: 1px dashed #cbd5e1;' : ''}">${matRow}</tr>`;
-    }
-
-    // ======== 作業手当（1行：時間(H) / 承認サイン を横並び）========
-    let otRow = `<td class="group-cell">作業手当</td>`;
-    otRow += `<td class="item-cell item-label-name" style="writing-mode: horizontal-tb; text-align: center; vertical-align: middle; font-size: 12px; line-height: 1.1;">時<br/>間<br/>(H)</td>`;
-    otRow += `<td class="item-cell item-label-qty sub-item vertical-label">承認サイン</td>`;
-    days.forEach(d => {
-        const dayRecords = (recordsData || []).filter(r => r.date === d);
-        const dayOt = dayRecords.reduce((sum, r) => sum + Number(r.overtime_hours || 0), 0);
-        otRow += `<td class="data-cell data-cell-l">${dayOt > 0 ? dayOt.toFixed(1) + 'H' : '&nbsp;'}</td>`;
-        otRow += `<td class="data-cell data-cell-r sign-cell">&nbsp;</td>`;
-    });
-
-    // ======== 日計（1行）========
-    let dailyTotalRow = `<td class="group-cell daily-total-label">日計</td><td class="item-cell daily-total-label" colspan="2">実働/人工</td>`;
-    days.forEach(d => {
-        const dayRecords = (recordsData || []).filter(r => r.date === d);
-        const dayTotal = dayRecords.reduce((sum, r) => sum + Number(r.hours || 0), 0);
-        if (dayTotal > 0) {
-            const dayNinku = calculateNinku(dayTotal, d);
-            dailyTotalRow += `<td class="data-cell daily-total" colspan="2">${dayTotal.toFixed(1)}h<br/>(${dayNinku}人工)</td>`;
-        } else {
-            dailyTotalRow += `<td class="data-cell" colspan="2"></td>`;
-        }
-    });
-
-    // ======== 備考欄（3行分の空白、日ごとに分割）========
-    let noteRowsHTML = '';
-    for (let n = 0; n < 3; n++) {
-        const isFirst = n === 0;
-        let row = isFirst ? `<td rowspan="3" class="group-cell">備考</td>` : '';
-        row += `<td class="item-cell" colspan="2"></td>`;
-        for (let i = 0; i < 7; i++) {
-            row += `<td class="data-cell note-cell" colspan="2"></td>`;
-        }
-        noteRowsHTML += `<tr>${row}</tr>`;
-    }
-
-    // 週合計の計算
-    let weekTotalHours = 0, weekTotalOvertime = 0;
-    days.forEach(d => {
-        const dayRecords = (recordsData || []).filter(r => r.date === d);
-        weekTotalHours += dayRecords.reduce((sum, r) => sum + Number(r.hours || 0), 0);
-        weekTotalOvertime += dayRecords.reduce((sum, r) => sum + Number(r.overtime_hours || 0), 0);
-    });
-    const weekNinku = (weekTotalHours / 7.5).toFixed(2);
-
-    // 期間表示
-    const sp = days[0].split('-'), ep = days[6].split('-');
-    const periodStr = `${parseInt(sp[1])}/${parseInt(sp[2])} 〜 ${parseInt(ep[1])}/${parseInt(ep[2])}`;
-
-    const html = `<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="UTF-8">
-<title>就労日報 - ${esc(workerName)} (${weekPrefix})</title>
-<style>
+const COMMON_CSS_STYLE = `
     @page {
         size: A4 landscape;
         margin-top: 10mm;
@@ -189,6 +18,12 @@ export const generateWorkerReportPDF = (workerName, weekPrefix, days, recordsDat
         color: #111;
         -webkit-print-color-adjust: exact;
         print-color-adjust: exact;
+    }
+
+    /* ===== コンテンツ用コンテナ（一括時のマージン調整） ===== */
+    .report-wrapper {
+        width: 100%;
+        page-break-inside: avoid;
     }
 
     /* ===== ヘッダー ===== */
@@ -346,70 +181,245 @@ export const generateWorkerReportPDF = (workerName, weekPrefix, days, recordsDat
         cursor: pointer;
     }
     .print-btn-bar button:hover { background: #1d4ed8; }
-</style>
-</head>
-<body>
-    <div class="print-btn-bar no-print">
-        <button onclick="window.print()">🖨 印刷 / PDF保存</button>
-    </div>
+`;
 
-    <div class="report-header">
-        <h1>就 労 日 報（R8）</h1>
-        <div class="week-summary">
-            <span>期間: ${periodStr}</span>
-            <span>週合計実働: <span class="val">${weekTotalHours.toFixed(1)}h</span></span>
-            <span>週合計時間外: <span class="val">${weekTotalOvertime.toFixed(1)}h</span></span>
-            <span>週合計人工: <span class="val">${weekNinku}</span></span>
+/**
+ * 日報用HTMLパーツ（単一作業員用）を生成するヘルパー
+ */
+const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, subcontractorsData, companyHolidays) => {
+    const dayNames = ["(月)", "(火)", "(水)", "(木)", "(金)", "(土)", "(日)"];
+
+    // 日付ごと・現場ごとのグループ化
+    const dateProjectMap = {};
+    days.forEach(d => {
+        const dayRecords = (recordsData || []).filter(r => r.date === d);
+        const projGroups = {};
+        dayRecords.forEach(r => {
+            const pid = r.ProjectTasks?.projectId || r.project_id;
+            if (!projGroups[pid]) {
+                const proj = projects.find(p => p.id === pid);
+                projGroups[pid] = {
+                    siteName: proj?.siteName || proj?.name || '不明な現場',
+                    items: [],
+                    sumHours: 0,
+                    sumOvertime: 0,
+                    timeSlots: [],
+                };
+            }
+            const taskName = r.ProjectTasks?.name || '不明な作業';
+            const displayName = r.note ? `${taskName}(${r.note})` : taskName;
+            projGroups[pid].items.push(displayName);
+            projGroups[pid].sumHours += Number(r.hours || 0);
+            projGroups[pid].sumOvertime += Number(r.overtime_hours || 0);
+            if (r.start_time && r.end_time) {
+                projGroups[pid].timeSlots.push({
+                    start: formatTimeDisplay(r.start_time),
+                    end: formatTimeDisplay(r.end_time),
+                });
+            }
+        });
+        dateProjectMap[d] = Object.values(projGroups);
+    });
+
+    // 日付ヘッダー
+    const dateHeaders = days.map((d, i) => {
+        const parts = d.split('-');
+        const isSunday = i === 6; // 月曜始まりの7番目
+        const isHoliday = companyHolidays.some(h => h.date === d);
+        const style = (isSunday || isHoliday) ? ' style="background-color: #fee2e2; color: #dc2626;"' : '';
+        return `<th class="day-header"${style} colspan="2">${parseInt(parts[1])}/${parseInt(parts[2])}<br/>${dayNames[i]}</th>`;
+    }).join('');
+
+    // ======== 現場ブロック（現場①②③ 各3行）========
+    let siteRowsHTML = '';
+    for (let g = 0; g < 3; g++) {
+        let nameRow = `<td rowspan="3" class="group-cell">現場&#${9312 + g};</td><td class="item-cell" colspan="2" style="font-size: 12px;">現場名</td>`;
+        let timeRow = `<td class="item-cell" colspan="2" style="font-size: 12px;">時間</td>`;
+        let contentRow = `<td class="item-cell" colspan="2" style="font-size: 12px;">作業<br/>内容</td>`;
+
+        days.forEach(d => {
+            const group = (dateProjectMap[d] || [])[g];
+            if (group) {
+                nameRow += `<td class="data-cell site-name" colspan="2">${esc(group.siteName)}</td>`;
+                let timeText = '';
+                let timeStyle = '';
+                if (group.timeSlots.length > 0) {
+                    const slotTexts = group.timeSlots.map(s => `${s.start} 〜 ${s.end}`);
+                    const unique = [...new Set(slotTexts)];
+                    timeText = unique.join('<br/>');
+
+                    if (unique.length >= 3) {
+                        timeStyle = 'font-size: 7.0px; line-height: 1.1;';
+                    } else if (unique.length === 2) {
+                        timeStyle = 'font-size: 9.5px; line-height: 1.1;';
+                    }
+                }
+                timeRow += `<td class="data-cell time-data" colspan="2" style="${timeStyle}">${timeText || ': 　〜　:'}</td>`;
+                const uniqueItems = [...new Set(group.items)];
+                let contentStyle = '';
+                if (uniqueItems.length >= 6) {
+                    contentStyle = 'font-size: 7.0px; line-height: 1.1;';
+                } else if (uniqueItems.length === 5) {
+                    contentStyle = 'font-size: 8.5px; line-height: 1.1;';
+                } else if (uniqueItems.length === 4) {
+                    contentStyle = 'font-size: 9.5px; line-height: 1.1;';
+                }
+                contentRow += `<td class="data-cell content-data" colspan="2" style="${contentStyle}">${uniqueItems.map(i => esc(i)).join('<br/>')}</td>`;
+            } else {
+                nameRow += `<td class="data-cell site-name" colspan="2">&nbsp;</td>`;
+                timeRow += `<td class="data-cell time-data" colspan="2">: 　〜　:</td>`;
+                contentRow += `<td class="data-cell content-data" colspan="2">&nbsp;</td>`;
+            }
+        });
+        siteRowsHTML += `<tr>${nameRow}</tr><tr>${timeRow}</tr><tr>${contentRow}</tr>`;
+    }
+
+    // ======== 協力会社（3社 × 1行 = 3行）========
+    let subcontractorsHTML = '';
+    for (let c = 0; c < 3; c++) {
+        const isFirst = c === 0;
+        let row = isFirst ? `<td rowspan="3" class="group-cell">協力会社</td>` : '';
+        row += `<td class="item-cell item-label-name">社名${['①', '②', '③'][c]}</td>`;
+        row += `<td class="item-cell item-label-qty sub-item">人数</td>`;
+        days.forEach(d => {
+            const daySubs = (subcontractorsData || []).filter(s => s.date === d);
+            const sub = daySubs[c];
+            row += `<td class="data-cell data-cell-l">${sub ? esc(sub.company_name) : '&nbsp;'}</td>`;
+            row += `<td class="data-cell data-cell-r">${sub ? sub.worker_count : '&nbsp;'}</td>`;
+        });
+        subcontractorsHTML += `<tr style="${c < 2 ? 'border-bottom: 1px dashed #cbd5e1;' : ''}">${row}</tr>`;
+    }
+
+    // ======== 使用材料（3行 × 1行 = 3行）========
+    let materialRowsHTML = '';
+    for (let m = 0; m < 3; m++) {
+        const isFirst = m === 0;
+        let matRow = isFirst ? `<td rowspan="3" class="group-cell">使用材料</td>` : '';
+        matRow += `<td class="item-cell item-label-name">材料名</td>`;
+        matRow += `<td class="item-cell item-label-qty sub-item">数量</td>`;
+        for (let i = 0; i < 7; i++) {
+            matRow += `<td class="data-cell data-cell-l">&nbsp;</td>`;
+            matRow += `<td class="data-cell data-cell-r">&nbsp;</td>`;
+        }
+        materialRowsHTML += `<tr style="${m < 2 ? 'border-bottom: 1px dashed #cbd5e1;' : ''}">${matRow}</tr>`;
+    }
+
+    // ======== 作業手当（1行：時間(H) / 承認サイン を横並び）========
+    let otRow = `<td class="group-cell">作業手当</td>`;
+    otRow += `<td class="item-cell item-label-name" style="writing-mode: horizontal-tb; text-align: center; vertical-align: middle; font-size: 12px; line-height: 1.1;">時<br/>感<br/>(H)</td>`;
+    otRow += `<td class="item-cell item-label-qty sub-item vertical-label">承認サイン</td>`;
+    days.forEach(d => {
+        const dayRecords = (recordsData || []).filter(r => r.date === d);
+        const dayOt = dayRecords.reduce((sum, r) => sum + Number(r.overtime_hours || 0), 0);
+        otRow += `<td class="data-cell data-cell-l">${dayOt > 0 ? dayOt.toFixed(1) + 'H' : '&nbsp;'}</td>`;
+        otRow += `<td class="data-cell data-cell-r sign-cell">&nbsp;</td>`;
+    });
+
+    // ======== 日計（1行）========
+    let dailyTotalRow = `<td class="group-cell daily-total-label">日計</td><td class="item-cell daily-total-label" colspan="2">実働/人工</td>`;
+    days.forEach(d => {
+        const dayRecords = (recordsData || []).filter(r => r.date === d);
+        const dayTotal = dayRecords.reduce((sum, r) => sum + Number(r.hours || 0), 0);
+        if (dayTotal > 0) {
+            const dayNinku = calculateNinku(dayTotal, d);
+            dailyTotalRow += `<td class="data-cell daily-total" colspan="2">${dayTotal.toFixed(1)}h<br/>(${dayNinku}人工)</td>`;
+        } else {
+            dailyTotalRow += `<td class="data-cell" colspan="2"></td>`;
+        }
+    });
+
+    // ======== 備考欄（3行分の空白、日ごとに分割）========
+    let noteRowsHTML = '';
+    for (let n = 0; n < 3; n++) {
+        const isFirst = n === 0;
+        let row = isFirst ? `<td rowspan="3" class="group-cell">備考</td>` : '';
+        row += `<td class="item-cell" colspan="2"></td>`;
+        for (let i = 0; i < 7; i++) {
+            row += `<td class="data-cell note-cell" colspan="2"></td>`;
+        }
+        noteRowsHTML += `<tr>${row}</tr>`;
+    }
+
+    // 週合計の計算
+    let weekTotalHours = 0, weekTotalOvertime = 0;
+    days.forEach(d => {
+        const dayRecords = (recordsData || []).filter(r => r.date === d);
+        weekTotalHours += dayRecords.reduce((sum, r) => sum + Number(r.hours || 0), 0);
+        weekTotalOvertime += dayRecords.reduce((sum, r) => sum + Number(r.overtime_hours || 0), 0);
+    });
+    const weekNinku = (weekTotalHours / 7.5).toFixed(2);
+
+    // 期間表示
+    const sp = days[0].split('-'), ep = days[6].split('-');
+    const periodStr = `${parseInt(sp[1])}/${parseInt(sp[2])} 〜 ${parseInt(ep[1])}/${parseInt(ep[2])}`;
+
+    const startYear = new Date(days[0]).getFullYear();
+    const reiwaYear = startYear - 2018;
+
+    return `
+    <div class="report-wrapper">
+        <div class="report-header">
+            <h1>就 労 日 報（R${reiwaYear}）</h1>
+            <div class="week-summary">
+                <span>期間: ${periodStr}</span>
+                <span>週合計実働: <span class="val">${weekTotalHours.toFixed(1)}h</span></span>
+                <span>週合計時間外: <span class="val">${weekTotalOvertime.toFixed(1)}h</span></span>
+                <span>週合計人工: <span class="val">${weekNinku}</span></span>
+            </div>
+            <div class="worker-info">作業者名：<span>${esc(workerName)}</span></div>
         </div>
-        <div class="worker-info">作業者名：<span>${esc(workerName)}</span></div>
+
+        <div class="page-wrap">
+            <table>
+                <colgroup>
+                    <col style="width: 36px;"> <!-- グループラベル（現場、協力等） -->
+                    <col style="width: 32px;"> <!-- 項目名（左） -->
+                    <col style="width: 25px;"> <!-- 項目名（右：人数・数量） -->
+                    <!-- 7日間 × 2列（内容・数値） -->
+                    <col><col style="width: 25px;">
+                    <col><col style="width: 25px;">
+                    <col><col style="width: 25px;">
+                    <col><col style="width: 25px;">
+                    <col><col style="width: 25px;">
+                    <col><col style="width: 25px;">
+                    <col><col style="width: 25px;">
+                </colgroup>
+                <thead>
+                    <tr>
+                        <th class="corner-cell" style="width:36px">日付<br/>項目</th>
+                        <th class="corner-cell" colspan="2"></th>
+                        ${dateHeaders}
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- 現場①②③ -->
+                    ${siteRowsHTML}
+
+                    <!-- 協力会社（3社 × 2行） -->
+                    ${subcontractorsHTML}
+
+                    <!-- 使用材料（3行 × 2行） -->
+                    ${materialRowsHTML}
+
+                    <!-- 作業手当 -->
+                    <tr>${otRow}</tr>
+
+                    <!-- 備考（3行分の手書き欄） -->
+                    ${noteRowsHTML}
+
+                    <!-- 日計 -->
+                    <tr>${dailyTotalRow}</tr>
+                </tbody>
+            </table>
+        </div>
     </div>
+    `;
+};
 
-    <div class="page-wrap">
-        <table>
-            <colgroup>
-                <col style="width: 36px;"> <!-- グループラベル（現場、協力等） -->
-                <col style="width: 32px;"> <!-- 項目名（左） -->
-                <col style="width: 25px;"> <!-- 項目名（右：人数・数量） -->
-                <!-- 7日間 × 2列（内容・数値） -->
-                <col><col style="width: 25px;">
-                <col><col style="width: 25px;">
-                <col><col style="width: 25px;">
-                <col><col style="width: 25px;">
-                <col><col style="width: 25px;">
-                <col><col style="width: 25px;">
-                <col><col style="width: 25px;">
-            </colgroup>
-            <thead>
-                <tr>
-                    <th class="corner-cell" style="width:36px">日付<br/>項目</th>
-                    <th class="corner-cell" colspan="2"></th>
-                    ${dateHeaders}
-                </tr>
-            </thead>
-            <tbody>
-                <!-- 現場①②③ -->
-                ${siteRowsHTML}
-
-                <!-- 協力会社（3社 × 2行） -->
-                ${subRowsHTML}
-
-                <!-- 使用材料（3行 × 2行） -->
-                ${materialRowsHTML}
-
-                <!-- 作業手当 -->
-                <tr>${otRow}</tr>
-
-                <!-- 備考（3行分の手書き欄） -->
-                ${noteRowsHTML}
-
-                <!-- 日計 -->
-                <tr>${dailyTotalRow}</tr>
-            </tbody>
-        </table>
-    </div>
-</body>
-</html>`;
-
+/**
+ * 印刷用ウィンドウを開いて印刷ダイアログを表示する共通処理
+ */
+const openPrintWindow = (html) => {
     const printWindow = window.open('', '_blank', 'width=1200,height=800');
     if (printWindow) {
         printWindow.document.write(html);
@@ -420,6 +430,73 @@ export const generateWorkerReportPDF = (workerName, weekPrefix, days, recordsDat
     } else {
         alert('ポップアップがブロックされました。ブラウザの設定でポップアップを許可してください。');
     }
+};
+
+/**
+ * 就労日報のPDF出力（ブラウザ印刷ダイアログ経由）
+ * 手書き日報フォームに準拠したレイアウト
+ */
+export const generateWorkerReportPDF = (workerName, weekPrefix, days, recordsData, projects, subcontractorsData, companyHolidays = []) => {
+    const part = createWorkerReportHTMLPart(workerName, days, recordsData, projects, subcontractorsData, companyHolidays);
+
+    const html = `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>就労日報 - ${esc(workerName)} (${weekPrefix})</title>
+<style>
+    ${COMMON_CSS_STYLE}
+</style>
+</head>
+<body>
+    <div class="print-btn-bar no-print">
+        <button onclick="window.print()">🖨 印刷 / PDF保存</button>
+    </div>
+    ${part}
+</body>
+</html>`;
+
+    openPrintWindow(html);
+};
+
+/**
+ * 複数名分の就労日報をまとめて1つの印刷用HTML（改ページ区切り）として出力する
+ */
+export const generateMultipleWorkersReportPDF = (workersDataList, weekPrefix, companyHolidays = []) => {
+    if (!workersDataList || workersDataList.length === 0) return;
+
+    const parts = workersDataList.map((data, idx) => {
+        const { workerName, days, recordsData, projects, subcontractorsData } = data;
+        const part = createWorkerReportHTMLPart(workerName, days, recordsData, projects, subcontractorsData, companyHolidays);
+        const isLast = idx === workersDataList.length - 1;
+        const breakDiv = isLast ? '' : '<div class="page-break"></div>';
+        return part + breakDiv;
+    }).join('\n');
+
+    const html = `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>就労日報_一括出力_${weekPrefix}</title>
+<style>
+    ${COMMON_CSS_STYLE}
+
+    /* 一括印刷用の改ページ制御 */
+    .page-break {
+        page-break-after: always;
+        break-after: page;
+    }
+</style>
+</head>
+<body>
+    <div class="print-btn-bar no-print">
+        <button onclick="window.print()">🖨 一括印刷 / PDF保存</button>
+    </div>
+    ${parts}
+</body>
+</html>`;
+
+    openPrintWindow(html);
 };
 
 function esc(str) {

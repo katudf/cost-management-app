@@ -43,3 +43,8 @@ skills-lock.json
 test-results/
 playwright-report/
 blob-report/
+
+# Temporary Excel test files
+test_orient.xlsx
+test_orient_unzipped/
+

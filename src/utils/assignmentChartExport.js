@@ -109,7 +109,7 @@ export const exportAssignmentChartToExcel = (
             // タイトル行
             if (R === 0) {
                 cell.s = {
-                    font: { bold: true, sz: 14 },
+                    font: { bold: true, sz: 14, name: 'BIZ UDゴシック' },
                     alignment: { vertical: 'center' }
                 };
                 continue;
@@ -122,7 +122,7 @@ export const exportAssignmentChartToExcel = (
             cell.s = {
                 border: borderThin,
                 alignment: { vertical: 'center', horizontal: 'center', wrapText: true },
-                font: { sz: 9 }
+                font: { sz: 9, name: 'BIZ UDゴシック' }
             };
 
             // バーチャートヘッダー / セパレーターヘッダー
@@ -130,7 +130,7 @@ export const exportAssignmentChartToExcel = (
                 const dow = C > 0 ? dateColumns[C - 1]?.dow : null;
                 cell.s = {
                     ...cell.s,
-                    font: { bold: true, sz: 9, color: { rgb: 'FFFFFF' } },
+                    font: { bold: true, sz: 9, color: { rgb: 'FFFFFF' }, name: 'BIZ UDゴシック' },
                     fill: { fgColor: { rgb: '334155' } }
                 };
                 if (C > 0 && dow === 0) {
@@ -146,7 +146,7 @@ export const exportAssignmentChartToExcel = (
             if (C === 0 && R !== 0 && R !== 1) {
                 cell.s = {
                     ...cell.s,
-                    font: { bold: true, sz: 10 },
+                    font: { bold: true, sz: 10, name: 'BIZ UDゴシック' },
                     alignment: { vertical: 'center', horizontal: 'left' }
                 };
             }

@@ -1,5 +1,7 @@
 import * as xlsx from 'xlsx-js-style';
-import { getSeasonConfig, calculateNinku, formatTimeDisplay } from './workTimeUtils';
+import { calculateNinku, formatTimeDisplay } from './workTimeUtils';
+import layoutData from '../layout_react.json';
+import * as fflate from 'fflate';
 
 /**
  * A4横向き・1ページに収まる印刷設定を適用する共通ヘルパー
@@ -92,11 +94,12 @@ export const exportToExcel = (activeProject, summaryData) => {
         right: { style: "thin" }
     };
     const headerStyle = {
-        font: { bold: true },
+        font: { bold: true, name: "BIZ UDゴシック" },
         fill: { fgColor: { rgb: "EFEFEF" } },
         border: borderStyle
     };
     const dataStyle = {
+        font: { name: "BIZ UDゴシック" },
         border: borderStyle
     };
 
@@ -114,7 +117,7 @@ export const exportToExcel = (activeProject, summaryData) => {
                 if (!ws[cellRef]) continue;
                 if (R === 0) {
                     ws[cellRef].s = {
-                        font: { bold: true, sz: 12 },
+                        font: { bold: true, sz: 12, name: "BIZ UDゴシック" },
                         alignment: { vertical: "center", horizontal: "left" }
                     };
                 } else if (R === 1) {
@@ -183,27 +186,196 @@ export const exportToExcel = (activeProject, summaryData) => {
     xlsx.utils.book_append_sheet(wb, ws3, "作業員別集計");
 
     const today = new Date().toISOString().split('T')[0];
-    xlsx.writeFile(wb, `${activeProject.siteName}_工数管理レポート_${today}.xlsx`);
+    const raw = xlsx.write(wb, { bookType: 'xlsx', type: 'array' });
+    const rawUint8 = new Uint8Array(raw);
+    const ps = {
+        paperSize: 9, // A4
+        orientation: 'landscape' // 横向き
+    };
+    injectPageSetupAndSave(rawUint8, `${activeProject.siteName}_工数管理レポート_${today}.xlsx`, ps);
 };
 
 
 /**
- * 就労日報のExcel出力を生成
- * 時刻入力方式対応版: 開始〜終了時刻、実労働時間、時間外、人工数を表示
+ * layout_react.json のボーダー文字列を xlsx-js-style のボーダーオブジェクトに変換する
+ * 例: "2px solid #000" → { style: "medium", color: { rgb: "000000" } }
+ *     "1px dotted #000" → { style: "dotted", color: { rgb: "000000" } }
  */
-export const generateWorkerReportExcel = (workerName, weekPrefix, days, recordsData, projects, subcontractorsData) => {
-    const sheetData = [];
-    sheetData.push(["就労日報 (R8)", null, null, null, null, `作業者名: ${workerName}`, null, null]);
+const parseBorder = (borderStr) => {
+    if (!borderStr) return undefined;
+    const parts = borderStr.trim().split(/\s+/);
+    if (parts.length < 3) return { style: "thin" };
+    const widthPx = parseFloat(parts[0]);
+    const lineStyle = parts[1]; // solid, dotted, dashed
+    const colorHex = parts[2].replace('#', '');
 
-    const dateRow = ["日付", "項目"];
-    const dayNames = ["(月)", "(火)", "(水)", "(木)", "(金)", "(土)", "(日)"];
-    days.forEach((d, i) => {
-        const parts = d.split('-');
-        dateRow.push(`${parseInt(parts[1])}/${parseInt(parts[2])}\n${dayNames[i]}`);
+    let xlStyle = 'thin';
+    if (lineStyle === 'dotted') xlStyle = 'dotted';
+    else if (lineStyle === 'dashed') xlStyle = 'dashed';
+    else if (widthPx >= 2) xlStyle = 'medium';
+    else xlStyle = 'thin';
+
+    return { style: xlStyle, color: { rgb: colorHex.padStart(6, '0').toUpperCase() } };
+};
+
+/**
+ * layout_react.json のセル定義から xlsx-js-style のスタイルオブジェクトを生成する
+ */
+const buildCellStyle = (cellDef) => {
+    const style = {};
+
+    // Border
+    const border = {};
+    if (cellDef.border) {
+        if (cellDef.border.top) border.top = parseBorder(cellDef.border.top);
+        if (cellDef.border.bottom) border.bottom = parseBorder(cellDef.border.bottom);
+        if (cellDef.border.left) border.left = parseBorder(cellDef.border.left);
+        if (cellDef.border.right) border.right = parseBorder(cellDef.border.right);
+        if (cellDef.border.diagonal) {
+            border.diagonal = {
+                style: cellDef.border.diagonal.style || "thin",
+                color: { rgb: (cellDef.border.diagonal.color || "#000000").replace('#', '').padStart(6, '0').toUpperCase() }
+            };
+            if (cellDef.border.diagonalUp != null) border.diagonalUp = !!cellDef.border.diagonalUp;
+            if (cellDef.border.diagonalDown != null) border.diagonalDown = !!cellDef.border.diagonalDown;
+        }
+    }
+    if (Object.keys(border).length > 0) style.border = border;
+
+    // Font
+    const font = {};
+    if (cellDef.font) {
+        if (cellDef.font.bold) font.bold = true;
+        if (cellDef.font.size) font.sz = Math.round(cellDef.font.size);
+        if (cellDef.font.color) font.color = { rgb: cellDef.font.color.replace('#', '').padStart(6, '0').toUpperCase() };
+    }
+    font.name = "BIZ UDゴシック";
+    style.font = font;
+
+    // Alignment
+    const alignment = {};
+    if (cellDef.align) {
+        if (cellDef.align.h === 'center') alignment.horizontal = 'center';
+        else if (cellDef.align.h === 'right') alignment.horizontal = 'right';
+        else alignment.horizontal = 'left';
+
+        if (cellDef.align.v === 'center') alignment.vertical = 'center';
+        else if (cellDef.align.v === 'top') alignment.vertical = 'top';
+        else alignment.vertical = 'bottom';
+
+        if (cellDef.align.wrap) alignment.wrapText = true;
+        if (cellDef.align.textRotation != null) alignment.textRotation = cellDef.align.textRotation;
+    }
+    if (Object.keys(alignment).length > 0) style.alignment = alignment;
+
+    // Background color
+    if (cellDef.bgColor) {
+        style.fill = { fgColor: { rgb: cellDef.bgColor.replace('#', '').padStart(6, '0').toUpperCase() } };
+    }
+
+    return style;
+};
+
+/**
+ * 列番号（1始まり）をアルファベットに変換
+ */
+const colNumToLetter = (n) => {
+    let s = '';
+    while (n > 0) {
+        const r = (n - 1) % 26;
+        s = String.fromCharCode(65 + r) + s;
+        n = Math.floor((n - 1) / 26);
+    }
+    return s;
+};
+
+/**
+ * 列アルファベットを列番号（1始まり）に変換
+ */
+const letterToColNum = (s) => {
+    let n = 0;
+    for (let i = 0; i < s.length; i++) {
+        n = n * 26 + (s.charCodeAt(i) - 64);
+    }
+    return n;
+};
+
+/**
+ * xlsx-js-style が未対応の pageSetup（向き・用紙・fitToPage）を
+ * fflate で XLSX ZIP の sheet1.xml に直接注入してファイル保存する
+ */
+function injectPageSetupAndSave(uint8arr, fileName, ps) {
+    // ZIP を解凍
+    const unzipped = fflate.unzipSync(uint8arr);
+
+    // xl/worksheets/sheet*.xml をすべて取得して処理
+    const sheetKeys = Object.keys(unzipped).filter(k => k.match(/xl\/worksheets\/sheet\d+\.xml/));
+    if (sheetKeys.length === 0) { console.error('sheet xml not found'); return; }
+
+    sheetKeys.forEach(sheetKey => {
+        let xml = new TextDecoder().decode(unzipped[sheetKey]);
+
+        // ① <sheetPr> に fitToPage="1" を追加
+        if (xml.includes('<sheetPr')) {
+            if (!xml.includes('pageSetUpPr')) {
+                // 自己終了タグ <sheetPr ... /> の場合
+                if (xml.match(/<sheetPr([^>]*)\/>/)) {
+                    xml = xml.replace(/<sheetPr([^>]*)\/>/, (m, attrs) => {
+                        return `<sheetPr${attrs}><pageSetUpPr fitToPage="1"/></sheetPr>`;
+                    });
+                } else {
+                    // 通常の開始タグ <sheetPr ...> の場合
+                    xml = xml.replace(/<sheetPr([^>]*)>/, (m, attrs) => {
+                        return `<sheetPr${attrs}><pageSetUpPr fitToPage="1"/>`;
+                    });
+                }
+            }
+        } else {
+            // sheetPr 要素自体がない場合は <dimension> の前に挿入
+            xml = xml.replace('<dimension', '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension');
+        }
+
+        // ② <pageSetup> を挿入
+        const pageSetupXml = `<pageSetup paperSize="${ps.paperSize}" orientation="${ps.orientation}" fitToWidth="1" fitToHeight="1" r:id="rId1"/>`;
+        if (!xml.includes('<pageSetup')) {
+            if (xml.includes('</pageMargins>')) {
+                xml = xml.replace('</pageMargins>', `</pageMargins>${pageSetupXml}`);
+            } else if (xml.includes('<ignoredErrors')) {
+                xml = xml.replace('<ignoredErrors', `${pageSetupXml}<ignoredErrors`);
+            } else {
+                xml = xml.replace('</worksheet>', `${pageSetupXml}</worksheet>`);
+            }
+        }
+
+        // 修正した XML を UTF-8 バイト列に戻して ZIP に上書き
+        unzipped[sheetKey] = fflate.strToU8(xml);
     });
-    sheetData.push(dateRow);
 
-    // 日付ごと・現場ごとのグループ化（時刻情報含む）
+    // 再圧縮
+    const zipped = fflate.zipSync(unzipped);
+
+    // ブラウザでダウンロード
+    const blob = new Blob([zipped], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+/**
+ * 就労日報の単一ワークシートを生成する内部ヘルパー
+ */
+const createWorkerReportSheet = (workerName, days, recordsData, projects, subcontractorsData) => {
+    const { rows: ROWS, cells: templateCells, mergedCells, colWidths, rowHeights } = layoutData;
+    const COLS_COUNT = 17; // A〜Q
+
+    // 7曜日の日付列 D, F, H, J, L, N, P → 1-indexed: 4, 6, 8, 10, 12, 14, 16
+    const dayMainCols = [4, 6, 8, 10, 12, 14, 16];
+    const daySubCols  = [5, 7, 9, 11, 13, 15, 17];
+
+    // ---- データの前処理 ----
     const dateProjectMap = {};
     days.forEach(d => {
         const dayRecords = (recordsData || []).filter(r => r.date === d);
@@ -217,13 +389,14 @@ export const generateWorkerReportExcel = (workerName, weekPrefix, days, recordsD
                     items: [],
                     sumHours: 0,
                     sumOvertime: 0,
-                    timeSlots: [],  // 開始〜終了時刻の配列
+                    timeSlots: [],
                 };
             }
-            projGroups[pid].items.push(r.ProjectTasks?.name || '不明な作業');
+            const taskName = r.ProjectTasks?.name || '不明な作業';
+            const displayName = r.note ? `${taskName}(${r.note})` : taskName;
+            projGroups[pid].items.push(displayName);
             projGroups[pid].sumHours += Number(r.hours || 0);
             projGroups[pid].sumOvertime += Number(r.overtime_hours || 0);
-            // 時刻情報を記録
             if (r.start_time && r.end_time) {
                 projGroups[pid].timeSlots.push({
                     start: formatTimeDisplay(r.start_time),
@@ -234,153 +407,199 @@ export const generateWorkerReportExcel = (workerName, weekPrefix, days, recordsD
         dateProjectMap[d] = Object.values(projGroups);
     });
 
-    // 現場ブロック（最大3現場分）
-    for (let g = 0; g < 3; g++) {
-        const genbaNameRow = [`現場${g + 1}`, "現場名"];
-        const timeRow = ["", "時間"];
-        const contentRow = ["", "作業内容"];
-
-        days.forEach(d => {
-            const group = dateProjectMap[d][g];
-            if (group) {
-                genbaNameRow.push(group.siteName);
-
-                // 時刻スロット表示: "08:00~12:00\n14:00~17:30" 形式
-                let timeText = '';
-                if (group.timeSlots.length > 0) {
-                    const slotTexts = group.timeSlots.map(s => `${s.start}~${s.end}`);
-                    // 重複除去
-                    const uniqueSlots = [...new Set(slotTexts)];
-                    timeText = uniqueSlots.join('\n');
-                }
-
-                // 実働時間・時間外サマリー
-                let summaryText = `実働${group.sumHours.toFixed(1)}h`;
-                if (group.sumOvertime > 0) {
-                    summaryText += ` (外${group.sumOvertime.toFixed(1)}h)`;
-                }
-                // 人工数（日付ベースの季節設定で算出）
-                const ninku = calculateNinku(group.sumHours, d);
-                summaryText += ` [${ninku}人工]`;
-
-                timeRow.push(timeText ? `${timeText}\n${summaryText}` : summaryText);
-
-                // 作業内容（重複除去）
-                const uniqueItems = [...new Set(group.items)];
-                contentRow.push(uniqueItems.join('\n'));
-            } else {
-                genbaNameRow.push("");
-                timeRow.push("");
-                contentRow.push("");
+    // ---- グリッドをテンプレートの静的値で初期化 ----
+    // フォーミュラ(=...)はスキップして空文字にする
+    const grid = [];
+    for (let R = 0; R < ROWS; R++) {
+        const row = [];
+        for (let C = 0; C < COLS_COUNT; C++) {
+            const key = `${colNumToLetter(C + 1)}${R + 1}`;
+            const cellDef = templateCells[key];
+            let val = '';
+            if (cellDef?.value != null) {
+                const v = String(cellDef.value);
+                val = v.startsWith('=') ? '' : cellDef.value;
             }
-        });
-        sheetData.push(genbaNameRow);
-        sheetData.push(timeRow);
-        sheetData.push(contentRow);
+            row.push(val);
+        }
+        grid.push(row);
     }
 
-    // 協力会社
+    // ---- 動的データでセルを上書き ----
+    const startYear = new Date(days[0]).getFullYear();
+    const reiwaYear = startYear - 2018;
+    grid[0][0] = `就　労　日　報 (R${reiwaYear})`;
+
+    // Row 1: 作業者名 (M1 = index[0][12])
+    grid[0][12] = workerName;
+
+    // Row 2: 日付
+    days.forEach((d, i) => {
+        const parts = d.split('-');
+        grid[1][dayMainCols[i] - 1] = `${parseInt(parts[1])}/${parseInt(parts[2])}`;
+        grid[1][daySubCols[i] - 1] = '';
+    });
+
+    // Row 3: 曜日（テンプレートの値をそのまま使用するが、実際の曜日に合わせて上書き）
+    const DOW_LABELS = ['(日)', '(月)', '(火)', '(水)', '(木)', '(金)', '(土)'];
+    days.forEach((d, i) => {
+        const dow = new Date(d).getDay();
+        grid[2][dayMainCols[i] - 1] = DOW_LABELS[dow];
+        grid[2][daySubCols[i] - 1] = '';
+    });
+
+    // Rows 4-12: 現場①②③ブロック（データ列をクリア後、実績で埋める）
+    for (let g = 0; g < 3; g++) {
+        const baseRow = 3 + g * 3; // 0-indexed
+        // データ列をクリア
+        for (let di = 0; di < 7; di++) {
+            const mc = dayMainCols[di] - 1;
+            const sc = daySubCols[di] - 1;
+            grid[baseRow][mc] = '';     grid[baseRow][sc] = '';
+            grid[baseRow + 1][mc] = ''; grid[baseRow + 1][sc] = '';
+            grid[baseRow + 2][mc] = ''; grid[baseRow + 2][sc] = '';
+        }
+        // 実績データを埋める
+        days.forEach((d, i) => {
+            const group = dateProjectMap[d][g];
+            const mc = dayMainCols[i] - 1;
+            if (!group) return;
+
+            grid[baseRow][mc] = group.siteName;
+
+            if (group.timeSlots.length > 0) {
+                const slotTexts = group.timeSlots.map(s => `${s.start}～${s.end}`);
+                grid[baseRow + 1][mc] = [...new Set(slotTexts)].join('\n');
+            }
+
+            const uniqueItems = [...new Set(group.items)];
+            grid[baseRow + 2][mc] = uniqueItems.join('\n');
+        });
+    }
+
+    // Rows 13-15: 協力会社
     for (let c = 0; c < 3; c++) {
-        const compRow = c === 0 ? ["協力会社", `会社名①`] : ["", `会社名${c === 1 ? '②' : '③'}`];
-        days.forEach(d => {
+        const row = 12 + c;
+        days.forEach((d, i) => {
             const daySubs = (subcontractorsData || []).filter(s => s.date === d);
             const sub = daySubs[c];
-            if (sub) {
-                compRow.push(`${sub.company_name} ( ${sub.worker_count}名 )`);
-            } else {
-                compRow.push("");
-            }
+            grid[row][dayMainCols[i] - 1] = sub?.company_name || '';
+            grid[row][daySubCols[i] - 1]  = sub?.worker_count ? `${sub.worker_count}` : '';
         });
-        sheetData.push(compRow);
     }
 
-    // 使用材料
-    const pRow1 = ["使用材料", "材料名"];
-    const pRow2 = ["", "数量"];
-    for (let i = 0; i < 7; i++) { pRow1.push(""); pRow2.push(""); }
-    sheetData.push(pRow1);
-    sheetData.push(pRow2);
+    // Rows 16-18: 使用材料（データなし、テンプレートの空セルのまま）
 
-    // 作業手当（時間外の集計）
-    const otRow = ["作業手当", "時間(H)"];
-    days.forEach(d => {
+    // Row 19: 作業手当
+    days.forEach((d, i) => {
         const dayRecords = (recordsData || []).filter(r => r.date === d);
         const dayOt = dayRecords.reduce((sum, r) => sum + Number(r.overtime_hours || 0), 0);
-        otRow.push(dayOt > 0 ? `${dayOt.toFixed(1)}H` : "");
+        grid[18][dayMainCols[i] - 1] = dayOt > 0 ? dayOt.toFixed(1) : '';
+        grid[18][daySubCols[i] - 1]  = '';
     });
-    sheetData.push(otRow);
 
-    // 日計行（1日の全現場合計）
-    const dailyTotalRow = ["日計", "実働/人工"];
-    days.forEach(d => {
+    // Row 20: 備考（実働時間 + 人工数サマリー）
+    days.forEach((d, i) => {
         const dayRecords = (recordsData || []).filter(r => r.date === d);
         const dayTotal = dayRecords.reduce((sum, r) => sum + Number(r.hours || 0), 0);
-        if (dayTotal > 0) {
-            const dayNinku = calculateNinku(dayTotal, d);
-            dailyTotalRow.push(`${dayTotal.toFixed(1)}h (${dayNinku}人工)`);
-        } else {
-            dailyTotalRow.push("");
-        }
+        grid[19][dayMainCols[i] - 1] = dayTotal > 0
+            ? `${dayTotal.toFixed(1)}h (${calculateNinku(dayTotal, d)}人工)` : '';
+        grid[19][daySubCols[i] - 1]  = '';
     });
-    sheetData.push(dailyTotalRow);
 
-    const sigRow = ["", "承認サイン"];
-    for (let i = 0; i < 7; i++) { sigRow.push(""); }
-    sheetData.push(sigRow);
+    // ---- ワークシートを構築 ----
+    const ws = xlsx.utils.aoa_to_sheet(grid);
 
-    sheetData.push(["備考", "※手当対象作業：...サンダーケレン、早出・残業（残業予定時間を事前に報告のこと）...", "", "", "", "", "", ""]);
+    // ---- layout_react.json のスタイルを全セルに適用 ----
+    for (const [key, cellDef] of Object.entries(templateCells)) {
+        if (!cellDef) continue;
+        const match = key.match(/^([A-Z]+)(\d+)$/);
+        if (!match) continue;
+        const colNum = letterToColNum(match[1]);
+        const rowNum = parseInt(match[2]);
+        if (rowNum > ROWS || colNum > COLS_COUNT) continue;
 
-    const ws = xlsx.utils.aoa_to_sheet(sheetData);
-
-    // セルマージの定義（行数が1行増えて20行になった）
-    ws['!merges'] = [
-        { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } },      // タイトル
-        { s: { r: 0, c: 5 }, e: { r: 0, c: 8 } },      // 作業者名
-        { s: { r: 2, c: 0 }, e: { r: 4, c: 0 } },      // 現場1
-        { s: { r: 5, c: 0 }, e: { r: 7, c: 0 } },      // 現場2
-        { s: { r: 8, c: 0 }, e: { r: 10, c: 0 } },     // 現場3
-        { s: { r: 11, c: 0 }, e: { r: 13, c: 0 } },    // 協力会社
-        { s: { r: 14, c: 0 }, e: { r: 15, c: 0 } },    // 使用材料
-        { s: { r: 19, c: 1 }, e: { r: 19, c: 8 } }     // 備考
-    ];
-
-    const totalRows = sheetData.length;
-    const range = xlsx.utils.decode_range(ws['!ref']);
-    for (let R = range.s.r; R <= range.e.r; ++R) {
-        for (let C = range.s.c; C <= range.e.c; ++C) {
-            const cellRefBase = xlsx.utils.encode_cell({ r: R, c: C });
-            let cell = ws[cellRefBase];
-            if (!cell) {
-                ws[cellRefBase] = { t: "s", v: "" };
-                cell = ws[cellRefBase];
-            }
-
-            if (R < totalRows - 1) {
-                cell.s = {
-                    border: {
-                        top: { style: "thin" }, bottom: { style: "thin" },
-                        left: { style: "thin" }, right: { style: "thin" }
-                    },
-                    alignment: { vertical: "center", horizontal: "center", wrapText: true }
-                };
-            } else {
-                cell.s = { font: { sz: 9 } };
-            }
-
-            if (R === 0) {
-                cell.s = { ...cell.s, font: { bold: true, sz: 14 }, border: {} };
-                cell.s.alignment = { horizontal: C === 0 ? "center" : "right" };
-            }
-        }
+        const cellRef = xlsx.utils.encode_cell({ r: rowNum - 1, c: colNum - 1 });
+        if (!ws[cellRef]) ws[cellRef] = { t: 's', v: '' };
+        ws[cellRef].s = buildCellStyle(cellDef);
     }
 
-    ws['!cols'] = [{ wch: 6 }, { wch: 10 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }];
+    // ---- セル結合: layout_react.json の mergedCells をそのまま使用 ----
+    ws['!merges'] = mergedCells.map(m => ({
+        s: { r: m.minRow - 1, c: m.minCol - 1 },
+        e: { r: m.maxRow - 1, c: Math.min(m.maxCol, COLS_COUNT) - 1 },
+    }));
 
-    // A4横向き印刷設定
-    applyA4LandscapePrintSettings(ws);
+    // ---- 列幅: wpx でピクセル値を直接指定（wch 近似変換より正確） ----
+    const COL_LETTERS = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q'];
+    ws['!cols'] = COL_LETTERS.map(l => ({
+        wpx: colWidths[l] || 64,
+    }));
+
+    // ---- 行高さ: hpx でピクセル値を直接指定（pt 近似変換より正確） ----
+    ws['!rows'] = [];
+    for (let r = 1; r <= ROWS; r++) {
+        const hpx = rowHeights[String(r)] || rowHeights[r] || 20;
+        ws['!rows'].push({ hpx });
+    }
+
+    // ---- 余白（xlsx-js-style が対応している唯一の印刷設定） ----
+    const ps = layoutData.pageSetup;
+    ws['!margins'] = {
+        left:   ps.margins.left_mm   / 25.4,
+        right:  ps.margins.right_mm  / 25.4,
+        top:    ps.margins.top_mm    / 25.4,
+        bottom: ps.margins.bottom_mm / 25.4,
+        header: ps.margins.header_mm / 25.4,
+        footer: ps.margins.footer_mm / 25.4,
+    };
+
+    return { ws, ps };
+};
+
+/**
+ * 就労日報のExcel出力を生成
+ * layout_react.json のレイアウト（罫線・フォント・結合・サイズ）を忠実に再現する
+ */
+export const generateWorkerReportExcel = (workerName, weekPrefix, days, recordsData, projects, subcontractorsData) => {
+    const { ws, ps } = createWorkerReportSheet(workerName, days, recordsData, projects, subcontractorsData);
+    const wb = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(wb, ws, '就労日報');
+
+    // ---- xlsx-js-style は pageSetup(向き・用紙・fitToPage)を未サポートのため
+    //      fflate で XLSX ZIP を解凍し sheet*.xml に直接 XML を注入する ----
+    const raw = xlsx.write(wb, { bookType: 'xlsx', type: 'array' });
+    injectPageSetupAndSave(new Uint8Array(raw), `${workerName}_就労日報_${weekPrefix}.xlsx`, ps);
+};
+
+/**
+ * 複数名分の就労日報をまとめて1つのブック（各作業員名シート）で出力する
+ */
+export const generateMultipleWorkersReportExcel = (workersDataList, weekPrefix) => {
+    if (!workersDataList || workersDataList.length === 0) return;
 
     const wb = xlsx.utils.book_new();
-    xlsx.utils.book_append_sheet(wb, ws, "就労日報");
-    xlsx.writeFile(wb, `${workerName}_就労日報_${weekPrefix}.xlsx`);
+    let globalPs = null;
+
+    workersDataList.forEach(data => {
+        const { workerName, days, recordsData, projects, subcontractorsData } = data;
+        const { ws, ps } = createWorkerReportSheet(workerName, days, recordsData, projects, subcontractorsData);
+        // シート名は作業員名にする（Excelのシート名制限31字に収まるようにスライス）
+        const sheetName = workerName.slice(0, 31);
+        xlsx.utils.book_append_sheet(wb, ws, sheetName);
+        if (!globalPs) globalPs = ps;
+    });
+
+    const raw = xlsx.write(wb, { bookType: 'xlsx', type: 'array' });
+    
+    // ファイル名（単一の場合は作業員名、複数の場合は「N名分_就労日報」とする）
+    let fileName = '';
+    if (workersDataList.length === 1) {
+        fileName = `${workersDataList[0].workerName}_就労日報_${weekPrefix}.xlsx`;
+    } else {
+        fileName = `${workersDataList.length}名分_就労日報_${weekPrefix}.xlsx`;
+    }
+
+    injectPageSetupAndSave(new Uint8Array(raw), fileName, globalPs);
 };
 

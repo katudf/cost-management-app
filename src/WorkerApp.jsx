@@ -82,7 +82,30 @@ const WorkerApp = () => {
             setSaveMessage('');
             try {
                 const targetDate = selectedDate;
-                const { data: tData } = await supabase.from('ProjectTasks').select('*').eq('projectId', selectedProjectId).order('order', { ascending: true });
+                let { data: tData } = await supabase.from('ProjectTasks').select('*').eq('projectId', selectedProjectId).order('order', { ascending: true });
+
+                // 有給・社内業務などの特別な共通現場で作業項目が未登録の場合は自動生成する
+                const project = projects.find(p => p.id === Number(selectedProjectId));
+                const COMMON_PROJECT_NAMES = ["【会社】社内業務・雑務", "【会社】有給", "有給", "【有給】"];
+                if (project && COMMON_PROJECT_NAMES.includes(project.name) && (!tData || tData.length === 0)) {
+                    let defaultTaskName = '社内業務・雑務';
+                    if (project.name.includes('有給')) {
+                        defaultTaskName = '有給休暇';
+                    }
+                    const newItem = {
+                        projectId: Number(selectedProjectId),
+                        name: defaultTaskName,
+                        target_hours: 0,
+                        estimated_amount: 0,
+                        order: 1,
+                        progress_percentage: 0
+                    };
+                    const { data: insertedData, error: insertError } = await supabase.from('ProjectTasks').insert([newItem]).select();
+                    if (!insertError && insertedData && insertedData.length > 0) {
+                        tData = insertedData;
+                    }
+                }
+
                 const { data: rData } = await supabase.from('TaskRecords').select('*').eq('project_id', selectedProjectId).eq('worker_name', loggedInWorker.name).eq('date', targetDate);
                 const { data: sData } = await supabase.from('SubcontractorRecords').select('*').eq('project_id', selectedProjectId).eq('date', targetDate);
 
@@ -115,7 +138,6 @@ const WorkerApp = () => {
                 setDeletedSubcontractorIds([]);
                 setHasUnsavedChanges(false);
 
-                const project = projects.find(p => p.id === Number(selectedProjectId));
                 if (project && project.foreman_worker_id === loggedInWorker.id) {
                     const { data: allRecords } = await supabase.from('TaskRecords').select('*').eq('project_id', selectedProjectId);
                     setAllProjectRecords(allRecords || []);

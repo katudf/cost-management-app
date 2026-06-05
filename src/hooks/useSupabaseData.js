@@ -42,7 +42,7 @@ export function useSupabaseData(showToast) {
             if (custData) setCustomers(custData);
 
             // Projects取得 (一覧用のため全件取得)
-            const { data: pData, error: pError } = await supabase.from('Projects').select('*').order('created_at', { ascending: true });
+            const { data: pData, error: pError } = await supabase.from('Projects').select('*').order('order', { ascending: true });
             if (pError) throw pError;
 
             // アクティブなプロジェクトIDリスト（完了以外 ＋ 現在表示予定のアクティブID）
@@ -102,6 +102,7 @@ export function useSupabaseData(showToast) {
                         startDate: p.startDate || null,
                         endDate: p.endDate || null,
                         bar_color: p.bar_color || null,
+                        show_on_home: p.show_on_home ?? true,
                         masterData: [],
                         records: [],
                         progressData: {},
@@ -148,6 +149,7 @@ export function useSupabaseData(showToast) {
                     startDate: p.startDate || null,
                     endDate: p.endDate || null,
                     bar_color: p.bar_color || null,
+                    show_on_home: p.show_on_home ?? true,
                     masterData,
                     records,
                     progressData,
