@@ -365,6 +365,25 @@ function injectPageSetupAndSave(uint8arr, fileName, ps) {
 }
 
 /**
+ * 現場名が長い場合に全角10文字（半角を0.5文字換算）相当で切り詰め、末尾に３点リーダーを追加する
+ */
+const truncateSiteName = (name, maxLength = 10) => {
+    if (!name) return '';
+    let len = 0;
+    let result = '';
+    for (let i = 0; i < name.length; i++) {
+        const char = name[i];
+        const isHalf = char.match(/^[\x20-\x7e\uff61-\uff9f]$/);
+        len += isHalf ? 0.5 : 1;
+        if (len > maxLength) {
+            return result + '…';
+        }
+        result += char;
+    }
+    return name;
+};
+
+/**
  * 就労日報の単一ワークシートを生成する内部ヘルパー
  */
 const createWorkerReportSheet = (workerName, days, recordsData, projects, subcontractorsData) => {
@@ -465,7 +484,7 @@ const createWorkerReportSheet = (workerName, days, recordsData, projects, subcon
             const mc = dayMainCols[i] - 1;
             if (!group) return;
 
-            grid[baseRow][mc] = group.siteName;
+            grid[baseRow][mc] = truncateSiteName(group.siteName);
 
             if (group.timeSlots.length > 0) {
                 const slotTexts = group.timeSlots.map(s => `${s.start}～${s.end}`);
