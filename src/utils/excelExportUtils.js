@@ -405,25 +405,50 @@ const createWorkerReportSheet = (workerName, days, recordsData, projects, subcon
                 const proj = projects.find(p => p.id === pid);
                 projGroups[pid] = {
                     siteName: proj?.siteName || proj?.name || '不明な現場',
-                    items: [],
                     sumHours: 0,
                     sumOvertime: 0,
-                    timeSlots: [],
+                    slots: {},
                 };
             }
             const taskName = r.ProjectTasks?.name || '不明な作業';
             const displayName = r.note ? `${taskName}(${r.note})` : taskName;
-            projGroups[pid].items.push(displayName);
             projGroups[pid].sumHours += Number(r.hours || 0);
             projGroups[pid].sumOvertime += Number(r.overtime_hours || 0);
-            if (r.start_time && r.end_time) {
-                projGroups[pid].timeSlots.push({
-                    start: formatTimeDisplay(r.start_time),
-                    end: formatTimeDisplay(r.end_time),
-                });
+
+            // 時間帯の作成（未設定は空文字）
+            const timeSlot = r.start_time && r.end_time 
+                ? `${formatTimeDisplay(r.start_time)}～${formatTimeDisplay(r.end_time)}` 
+                : '';
+            const startTimeRaw = r.start_time || '99:99';
+
+            if (!projGroups[pid].slots[timeSlot]) {
+                projGroups[pid].slots[timeSlot] = {
+                    startTimeRaw,
+                    items: [],
+                };
             }
+            projGroups[pid].slots[timeSlot].items.push(displayName);
         });
-        dateProjectMap[d] = Object.values(projGroups);
+
+        // 各現場の slots を時間順にソートして配列化
+        const projList = Object.values(projGroups).map(group => {
+            const sortedSlots = Object.entries(group.slots)
+                .map(([timeSlot, data]) => ({
+                    timeSlot,
+                    startTimeRaw: data.startTimeRaw,
+                    items: [...new Set(data.items)] // 重複排除
+                }))
+                .sort((a, b) => a.startTimeRaw.localeCompare(b.startTimeRaw));
+
+            return {
+                siteName: group.siteName,
+                sumHours: group.sumHours,
+                sumOvertime: group.sumOvertime,
+                sortedSlots,
+            };
+        });
+
+        dateProjectMap[d] = projList;
     });
 
     // ---- グリッドをテンプレートの静的値で初期化 ----
@@ -486,13 +511,12 @@ const createWorkerReportSheet = (workerName, days, recordsData, projects, subcon
 
             grid[baseRow][mc] = truncateSiteName(group.siteName);
 
-            if (group.timeSlots.length > 0) {
-                const slotTexts = group.timeSlots.map(s => `${s.start}～${s.end}`);
-                grid[baseRow + 1][mc] = [...new Set(slotTexts)].join('\n');
-            }
+            // 時間と作業内容の対応関係を保って改行出力
+            const timeSlotLines = group.sortedSlots.map(s => s.timeSlot);
+            const taskLines = group.sortedSlots.map(s => s.items.join('、'));
 
-            const uniqueItems = [...new Set(group.items)];
-            grid[baseRow + 2][mc] = uniqueItems.join('\n');
+            grid[baseRow + 1][mc] = timeSlotLines.join('\n');
+            grid[baseRow + 2][mc] = taskLines.join('\n');
         });
     }
 
@@ -548,6 +572,14 @@ const createWorkerReportSheet = (workerName, days, recordsData, projects, subcon
         if (isTargetRow && isTargetCol) {
             if (!style.alignment) style.alignment = {};
             style.alignment.wrapText = true;
+
+            // 3行以上（改行が2つ以上）ある場合は、フォントサイズを 8 に変更する
+            const cellValue = ws[cellRef].v || '';
+            const lineCount = String(cellValue).split('\n').length;
+            if (lineCount >= 3) {
+                if (!style.font) style.font = {};
+                style.font.sz = 8;
+            }
         }
 
         ws[cellRef].s = style;
