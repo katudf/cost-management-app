@@ -540,7 +540,17 @@ const createWorkerReportSheet = (workerName, days, recordsData, projects, subcon
 
         const cellRef = xlsx.utils.encode_cell({ r: rowNum - 1, c: colNum - 1 });
         if (!ws[cellRef]) ws[cellRef] = { t: 's', v: '' };
-        ws[cellRef].s = buildCellStyle(cellDef);
+        const style = buildCellStyle(cellDef);
+
+        // 時間セル (5, 8, 11) と 作業内容セル (6, 9, 12) の D, F, H, J, L, N, P 列について wrapText を強制適用
+        const isTargetRow = [5, 6, 8, 9, 11, 12].includes(rowNum);
+        const isTargetCol = dayMainCols.includes(colNum);
+        if (isTargetRow && isTargetCol) {
+            if (!style.alignment) style.alignment = {};
+            style.alignment.wrapText = true;
+        }
+
+        ws[cellRef].s = style;
     }
 
     // ---- セル結合: layout_react.json の mergedCells をそのまま使用 ----
