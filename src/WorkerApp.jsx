@@ -398,6 +398,52 @@ const WorkerApp = () => {
         setOfflineDraft(null);
     };
 
+    // ========== 入力済み現場レコードの削除 ==========
+    const handleDeleteProjectRecords = async (project) => {
+        const dateLabel = new Date(selectedDate + 'T00:00:00').toLocaleDateString('ja-JP', { month: 'long', day: 'numeric' });
+        const ok = await confirm({
+            title: '入力記録の削除',
+            message: `「${project.name}」の ${dateLabel} の入力記録をすべて削除しますか？\nこの操作は取り消せません。`,
+            confirmText: '削除する',
+            variant: 'danger',
+        });
+        if (!ok) return;
+
+        try {
+            const { error } = await supabase
+                .from('TaskRecords')
+                .delete()
+                .eq('worker_name', loggedInWorker.name)
+                .eq('date', selectedDate)
+                .eq('project_id', project.id);
+            if (error) throw error;
+
+            // workerDailyAllRecords を再取得
+            const { data: refreshed } = await supabase
+                .from('TaskRecords')
+                .select('*')
+                .eq('worker_name', loggedInWorker.name)
+                .eq('date', selectedDate);
+            setWorkerDailyAllRecords(refreshed || []);
+
+            // 削除した現場が現在選択中なら入力欄をリセット
+            if (String(selectedProjectId) === String(project.id)) {
+                setTasks(prev => prev.map(t => ({
+                    ...t,
+                    time_slots: [{ slot_id: `new-${Date.now()}-${t.id}`, record_id: null, start_time: '', end_time: '', is_overnight: false }],
+                    deleted_record_ids: [],
+                    today_note: '',
+                })));
+                setHasUnsavedChanges(false);
+            }
+
+            showToast(`「${project.name}」の入力記録を削除しました。`, 'success');
+        } catch (e) {
+            console.error(e);
+            showToast('削除に失敗しました。', 'error');
+        }
+    };
+
     // ========== 送信 ==========
     const handleSubmit = async () => {
         if (!selectedProjectId || tasks.length === 0) return;
@@ -697,26 +743,43 @@ const WorkerApp = () => {
                             <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 mb-2">
                                 <div className="text-[10px] font-bold text-emerald-600 mb-1">✅ この日に入力済みの現場:</div>
                                 <div className="flex flex-wrap gap-1.5">
-                                    {enteredProjects.map(p => (
-                                        <span key={p.id}
-                                            onClick={async () => {
-                                                if (hasUnsavedChanges && !(await confirm({
-                                                    title: '現場の切り替え',
-                                                    message: '未送信の入力データがあります。入力内容を破棄して現場を切り替えますか？',
-                                                    confirmText: '破棄して切替',
-                                                }))) return;
-                                                setHasUnsavedChanges(false);
-                                                setSelectedProjectId(String(p.id));
-                                                localStorage.setItem('cost-app-worker-project', String(p.id));
-                                            }}
-                                            className={`text-xs font-bold px-2.5 py-1 rounded-full border cursor-pointer active:scale-95 transition ${String(p.id) === String(selectedProjectId)
-                                                    ? 'bg-blue-100 text-blue-700 border-blue-300'
-                                                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                                                }`}
-                                        >
-                                            {p.name || '無題の現場'}
-                                        </span>
-                                    ))}
+                                    {enteredProjects.map(p => {
+                                        const isActive = String(p.id) === String(selectedProjectId);
+                                        return (
+                                            <span key={p.id}
+                                                className={`inline-flex items-center text-xs font-bold rounded-full border active:scale-95 transition ${isActive
+                                                        ? 'bg-blue-100 text-blue-700 border-blue-300'
+                                                        : 'bg-white text-slate-600 border-slate-200'
+                                                    }`}
+                                            >
+                                                {/* 現場名 → タップで切り替え */}
+                                                <span
+                                                    onClick={async () => {
+                                                        if (hasUnsavedChanges && !(await confirm({
+                                                            title: '現場の切り替え',
+                                                            message: '未送信の入力データがあります。入力内容を破棄して現場を切り替えますか？',
+                                                            confirmText: '破棄して切替',
+                                                        }))) return;
+                                                        setHasUnsavedChanges(false);
+                                                        setSelectedProjectId(String(p.id));
+                                                        localStorage.setItem('cost-app-worker-project', String(p.id));
+                                                    }}
+                                                    className="px-2.5 py-1 cursor-pointer hover:opacity-80"
+                                                >
+                                                    {p.name || '無題の現場'}
+                                                </span>
+                                                {/* 削除ボタン */}
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); handleDeleteProjectRecords(p); }}
+                                                    aria-label={`${p.name || '現場'}の入力を削除`}
+                                                    title={`${p.name || '現場'}の入力を削除`}
+                                                    className={`pr-2 py-1 transition ${isActive ? 'text-blue-400 hover:text-red-500' : 'text-slate-300 hover:text-red-500'}`}
+                                                >
+                                                    <X size={11} />
+                                                </button>
+                                            </span>
+                                        );
+                                    })}
                                 </div>
                             </div>
                         ) : null;
