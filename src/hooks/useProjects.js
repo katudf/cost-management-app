@@ -1,9 +1,11 @@
 import { useState, useCallback, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { PROJECT_STATUS } from '../utils/constants';
+import { useConfirm } from '../components/ConfirmProvider';
 
 export function useProjects({ projects, setProjects, activeProjectId, setActiveProjectId, showToast, workers }) {
-    
+    const { confirm } = useConfirm();
+
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [pendingDeleteId, setPendingDeleteId] = useState(null);
 
@@ -291,7 +293,12 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
     };
 
     const removeMasterItem = async (taskId) => {
-        if (!window.confirm("この作業項目を削除すると、紐づく実績データもすべて削除されます。\n本当によろしいですか？")) return;
+        const ok = await confirm({
+            title: '作業項目の削除',
+            message: 'この作業項目を削除すると、紐づく実績データもすべて削除されます。\n本当によろしいですか？',
+            confirmText: '削除する',
+        });
+        if (!ok) return;
 
         const { error } = await supabase.from('ProjectTasks').delete().eq('id', taskId);
         if (error) {

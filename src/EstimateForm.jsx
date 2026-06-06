@@ -2,8 +2,13 @@
 // 見積書入力画面（ヘッダー + 明細）
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { ArrowLeft, Save, FileText, Plus, Trash2, GripVertical, ChevronDown, ChevronUp, Lock, Unlock } from 'lucide-react';
+import { ArrowLeft, FileText, Lock, Eye, RefreshCw, Download, X } from 'lucide-react';
+import { BlobProvider } from '@react-pdf/renderer';
 import ConfirmModal from './components/ConfirmModal';
+import EstimateHeader from './components/estimate/EstimateHeader';
+import EstimateItemTable from './components/estimate/EstimateItemTable';
+import EstimateSidebar from './components/estimate/EstimateSidebar';
+import EstimateDocument, { downloadEstimatePDF } from './EstimatePDF';
 import {
   fetchEstimateById,
   createEstimate,
@@ -13,11 +18,11 @@ import {
   fetchWorkers,
   getNextEstimateSeq,
   calcTotals,
-  formatCurrency,
   checkDuplicateNumber,
   fetchOfficeStaff,
+  fetchSystemSettings,
 } from './supabaseEstimates';
-import { PROJECT_STATUS, ITEM_TYPE } from './utils/constants';
+import { PROJECT_STATUS, ITEM_TYPE, ESTIMATE_STATUS, ESTIMATE_STATUS_LABEL } from './utils/constants';
 
 // 今日の日付を YYMMDD 形式で返す
 const todayPrefix = () => {
@@ -69,7 +74,19 @@ const fixedRows = [
   { item_type: ITEM_TYPE.FIXED, name: '安全費',     quantity: 1, unit: '式', amount: '', note: '' },
 ];
 
-const UNIT_SUGGESTIONS = ['m²', 'm', 'm³', '本', '式', 'ヶ所', '個', 't', '枚', '組'];
+const newCommentRow = (sortOrder) => ({
+  item_type: ITEM_TYPE.COMMENT,
+  name: '',
+  spec: null,
+  quantity: null,
+  unit: null,
+  unit_price: null,
+  amount: null,
+  note: null,
+  sort_order: sortOrder,
+  _tempId: `comment_${Date.now()}_${Math.random()}`,
+});
+
 const MAX_ROWS = 300;
 
 // ============================================================
@@ -93,7 +110,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
     payment_terms: '従来通り',
     notes: '',
     tax_rate: 0.10,
-    status: 'draft',
+    status: ESTIMATE_STATUS.DRAFT,
     show_fixed_fees: true,
     show_net: true,
     show_subtotals: false,
@@ -112,13 +129,19 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
   const [customers, setCustomers] = useState([]);
   const [workers, setWorkers] = useState([]);
   const [officeStaff, setOfficeStaff] = useState([]);
+  const [settings, setSettings] = useState({});
 
   // UI state
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [numberError, setNumberError] = useState('');
-  const [originalStatus, setOriginalStatus] = useState('draft');
+  const [originalStatus, setOriginalStatus] = useState(ESTIMATE_STATUS.DRAFT);
+
+  // プレビュー state
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewSnapshot, setPreviewSnapshot] = useState(null); // プレビュー用データスナップショット
+  const [previewKey, setPreviewKey] = useState(0);             // 変更時にBlobProviderを強制再生成
 
   // 未保存変更の追跡
   const isDirty = useRef(false);
@@ -139,17 +162,18 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
     const init = async () => {
       try {
         setLoading(true);
-        const [custData, workerData, staffData] = await Promise.all([
+        const [custData, workerData, staffData, settingsData] = await Promise.all([
           fetchCustomers(),
           fetchWorkers(),
           fetchOfficeStaff(),
+          fetchSystemSettings(),
         ]);
         setCustomers(custData);
         setWorkers(workerData);
         setOfficeStaff(staffData);
+        setSettings(settingsData);
 
         if (isNew) {
-          // 新規: 見積番号の自動採番
           const prefix = todayPrefix();
           const seq = await getNextEstimateSeq(prefix);
           setHeader(h => ({
@@ -157,16 +181,15 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
             estimate_number_date: prefix,
             estimate_number_seq: seq,
             customer_honorific: '御中',
+            notes: '※別紙項目に無い塗装工事は別途追加見積り申し上げます。',
           }));
-          setOriginalStatus('draft');
-          // デフォルト明細（工種1つ + 固定費）
+          setOriginalStatus(ESTIMATE_STATUS.DRAFT);
           setItems([
             { ...newCategoryRow(0), category_symbol: 'A', name: '' },
             { ...newItemRow(null, null, 1) },
             ...fixedRows.map((r, i) => ({ ...r, sort_order: 100 + i })),
           ]);
         } else {
-          // 編集: 既存データ読み込み
           const est = await fetchEstimateById(estimateId);
           const parts = est.estimate_number.split('-');
           setHeader({
@@ -183,7 +206,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
             payment_terms:  est.payment_terms || '従来通り',
             notes:          est.notes || '',
             tax_rate:       est.tax_rate || 0.10,
-            status:         est.status || 'draft',
+            status:         est.status || ESTIMATE_STATUS.DRAFT,
             show_fixed_fees: est.show_fixed_fees ?? true,
             show_net:        est.show_net ?? true,
             show_subtotals:  est.show_subtotals ?? false,
@@ -194,27 +217,30 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
             net_perc:        est.net_perc ?? 95,
             net_amount:      est.net_amount ?? '',
           });
-          setItems(est.items || []);
-          setOriginalStatus(est.status || 'draft');
+          // DBで '__comment__' としてエンコードされたコメント行を復元
+          const loadedItems = (est.items || []).map(item =>
+            item.item_type === ITEM_TYPE.ITEM && item.category_symbol === '__comment__'
+              ? { ...item, item_type: ITEM_TYPE.COMMENT, category_symbol: null }
+              : item
+          );
+          setItems(loadedItems);
+          setOriginalStatus(est.status || ESTIMATE_STATUS.DRAFT);
         }
       } catch (e) {
         setError('データの読み込みに失敗しました: ' + e.message);
       } finally {
         setLoading(false);
-        // 初期ロード完了後から変更を追跡開始
         isInitialized.current = true;
       }
     };
     init();
   }, [estimateId, isNew]);
 
-  // 初期化完了後、変更を検知してダーティフラグをセット
   useEffect(() => {
     if (!isInitialized.current) return;
     isDirty.current = true;
   }, [header, items]);
 
-  // ブラウザのタブ閉じ・リロード時に警告
   useEffect(() => {
     const handleBeforeUnload = (e) => {
       if (!isDirty.current) return;
@@ -235,7 +261,6 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
   // ============================================================
   // 明細操作
   // ============================================================
-  // 工種行追加
   const addCategory = () => {
     const categories = items.filter(i => i.item_type === ITEM_TYPE.CATEGORY);
     const symbols = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -250,7 +275,6 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
     ]);
   };
 
-  // 細別行追加（最後のcategory配下に）
   const addItem = (afterIndex) => {
     const newRow = newItemRow(null, null, afterIndex + 1);
     setItems(prev => {
@@ -260,12 +284,20 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
     });
   };
 
-  // 行削除
+  // コメント行をFIXED行の直前に追加
+  const addComment = () => {
+    setItems(prev => {
+      const nonFixed = prev.filter(i => i.item_type !== ITEM_TYPE.FIXED);
+      const fixed = prev.filter(i => i.item_type === ITEM_TYPE.FIXED);
+      const newRow = newCommentRow(nonFixed.length);
+      return [...nonFixed, newRow, ...fixed].map((r, i) => ({ ...r, sort_order: i }));
+    });
+  };
+
   const removeRow = (index) => {
     setItems(prev => {
       const target = prev[index];
       if (target.item_type === ITEM_TYPE.CATEGORY) {
-        // 工種行削除：配下の細別も削除（次のcategoryまで）
         let end = index + 1;
         while (end < prev.length && prev[end].item_type === ITEM_TYPE.ITEM) end++;
         return prev.filter((_, i) => i < index || i >= end);
@@ -274,12 +306,86 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
     });
   };
 
-  // 明細フィールド更新
+  // ドラッグ並び替え・コピー・一括削除など、items配列全体を置き換えるコールバック
+  const setAllItems = useCallback((newItems) => {
+    setItems(newItems);
+  }, []);
+
+  // ============================================================
+  // PDFプレビュー用データ構築
+  // ============================================================
+  const buildPreviewEstimate = useCallback(() => {
+    const customer = customers.find(c => String(c.id) === String(header.customer_id)) || null;
+    const staff    = officeStaff.find(s => String(s.id) === String(header.staff_id))  || null;
+
+    // COMMENT行をエンコード、SUBTOTALを除去
+    let pdfItems = items
+      .filter(i => i.item_type !== ITEM_TYPE.SUBTOTAL)
+      .map(({ _tempId, ...item }) => {
+        if (item.item_type === ITEM_TYPE.COMMENT) {
+          return { ...item, item_type: ITEM_TYPE.ITEM, category_symbol: '__comment__' };
+        }
+        return item;
+      });
+
+    // show_subtotals ON の場合は小計行を動的生成
+    if (header.show_subtotals) {
+      const withSubtotals = [];
+      let currentCatKey = null;
+      let catAmount = 0;
+      pdfItems.forEach((item, idx) => {
+        if (item.item_type === ITEM_TYPE.CATEGORY) {
+          if (currentCatKey !== null) {
+            withSubtotals.push({ item_type: ITEM_TYPE.SUBTOTAL, name: '合　計', amount: catAmount, sort_order: withSubtotals.length });
+          }
+          currentCatKey = item.id || item._tempId || idx;
+          catAmount = 0;
+        } else if (item.item_type === ITEM_TYPE.ITEM) {
+          catAmount += Number(item.amount) || 0;
+        }
+        withSubtotals.push(item);
+      });
+      if (currentCatKey !== null) {
+        withSubtotals.push({ item_type: ITEM_TYPE.SUBTOTAL, name: '合　計', amount: catAmount, sort_order: withSubtotals.length });
+      }
+      pdfItems = withSubtotals;
+    }
+
+    return {
+      ...header,
+      estimate_number: estimateNumber,
+      customer,
+      staff,
+      items: pdfItems,
+      tax_rate:   Number(header.tax_rate),
+      net_perc:   Number(header.net_perc),
+      net_amount: header.net_amount !== '' ? Number(header.net_amount) : null,
+    };
+  }, [header, items, customers, officeStaff, estimateNumber]);
+
+  const handleOpenPreview = useCallback(() => {
+    setPreviewSnapshot(buildPreviewEstimate());
+    setPreviewKey(0);
+    setPreviewOpen(true);
+  }, [buildPreviewEstimate]);
+
+  const handleRefreshPreview = useCallback(() => {
+    setPreviewSnapshot(buildPreviewEstimate());
+    setPreviewKey(k => k + 1);
+  }, [buildPreviewEstimate]);
+
+  // Escape キーでプレビューを閉じる
+  useEffect(() => {
+    if (!previewOpen) return;
+    const onKeyDown = (e) => { if (e.key === 'Escape') setPreviewOpen(false); };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [previewOpen]);
+
   const updateItem = useCallback((index, field, value) => {
     setItems(prev => {
       const next = [...prev];
       next[index] = { ...next[index], [field]: value };
-      // 数量・単価が変わったら金額を自動計算
       if (field === 'quantity' || field === 'unit_price') {
         const q = field === 'quantity' ? value : next[index].quantity;
         const p = field === 'unit_price' ? value : next[index].unit_price;
@@ -307,15 +413,14 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
   // ============================================================
   // 編集ロック判定
   // ============================================================
-  const isLocked = !isNew && originalStatus !== 'draft';
+  const isLocked = !isNew && originalStatus !== ESTIMATE_STATUS.DRAFT;
 
-  // 下書きに戻す
   const handleUnlock = async () => {
     try {
       setSaving(true);
-      await updateEstimate(estimateId, { status: 'draft' });
-      setHeader(h => ({ ...h, status: 'draft' }));
-      setOriginalStatus('draft');
+      await updateEstimate(estimateId, { status: ESTIMATE_STATUS.DRAFT });
+      setHeader(h => ({ ...h, status: ESTIMATE_STATUS.DRAFT }));
+      setOriginalStatus(ESTIMATE_STATUS.DRAFT);
     } catch (e) {
       setError('ステータスの変更に失敗しました: ' + e.message);
     } finally {
@@ -344,10 +449,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
   // 保存処理
   // ============================================================
   const handleSave = async () => {
-    // 編集ロックチェック
     if (isLocked) { setError('提出済み以降の見積書は編集できません。「下書きに戻す」を実行してください。'); return; }
-
-    // バリデーション
     if (!header.customer_id) { setError('顧客を選択してください'); return; }
     if (!header.title.trim()) { setError('工事名を入力してください'); return; }
     if (!estimateNumber.match(/^\d{6}-\d{4}-\d{3}$/)) {
@@ -355,13 +457,11 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
       return;
     }
 
-    // 工種・細別バリデーション（工種がある場合のみチェック）
     const categories = items.filter(i => i.item_type === ITEM_TYPE.CATEGORY);
     let catIdx = 0;
     for (let i = 0; i < items.length; i++) {
       if (items[i].item_type === ITEM_TYPE.CATEGORY) {
         const catName = items[i].name || items[i].category_symbol || `工種${catIdx + 1}`;
-        // この工種配下に名称入力済みの細別があるか
         let hasItem = false;
         for (let j = i + 1; j < items.length; j++) {
           if (items[j].item_type === ITEM_TYPE.CATEGORY) break;
@@ -375,7 +475,6 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
       }
     }
 
-    // 行数上限チェック
     if (items.length > MAX_ROWS) {
       setError(`明細行数が上限（${MAX_ROWS}行）を超えています。現在 ${items.length} 行です。`);
       return;
@@ -386,7 +485,6 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
       setError(null);
       setNumberError('');
 
-      // 見積番号の重複チェック
       const isDuplicate = await checkDuplicateNumber(estimateNumber, estimateId || null);
       if (isDuplicate) {
         setNumberError(`見積番号「${estimateNumber}」は既に使用されています。`);
@@ -394,9 +492,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
         return;
       }
 
-      // 合計行の自動生成（show_subtotals=ON 時）
       let finalItems = [...items];
-      // まず既存のsubtotal行を除去
       finalItems = finalItems.filter(i => i.item_type !== ITEM_TYPE.SUBTOTAL);
       if (header.show_subtotals) {
         const withSubtotals = [];
@@ -404,7 +500,6 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
         let catAmount = 0;
         finalItems.forEach((item, idx) => {
           if (item.item_type === ITEM_TYPE.CATEGORY) {
-            // 前の工種の合計行を挿入
             if (currentCatKey !== null) {
               withSubtotals.push({
                 item_type: ITEM_TYPE.SUBTOTAL,
@@ -420,7 +515,6 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
           }
           withSubtotals.push(item);
         });
-        // 最後の工種の合計行
         if (currentCatKey !== null) {
           withSubtotals.push({
             item_type: ITEM_TYPE.SUBTOTAL,
@@ -432,7 +526,6 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
         finalItems = withSubtotals;
       }
 
-      // 税込合計を計算
       const savingVisibleItems = finalItems.filter(i =>
         i.item_type === ITEM_TYPE.ITEM ||
         (i.item_type === ITEM_TYPE.FIXED && header.show_fixed_fees)
@@ -476,40 +569,41 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
         await updateEstimate(estimateId, payload);
       }
 
-      // 明細保存
       const saveableItems = finalItems
         .filter(i => i.name?.trim())
-        .map(({ _tempId, ...i }) => ({
-          ...i,
-          estimate_id: savedId,
-          quantity:   i.quantity !== '' && i.quantity != null ? Number(i.quantity) : null,
-          unit_price: i.unit_price !== '' && i.unit_price != null ? Number(i.unit_price) : null,
-          amount:     i.amount !== '' && i.amount != null ? Number(i.amount) : null,
-        }));
+        .map(({ _tempId, ...i }) => {
+          // COMMENT行はDB制約上 item_type:'item' + category_symbol:'__comment__' としてエンコード
+          const isComment = i.item_type === ITEM_TYPE.COMMENT;
+          return {
+            ...i,
+            item_type:       isComment ? ITEM_TYPE.ITEM : i.item_type,
+            category_symbol: isComment ? '__comment__'  : i.category_symbol,
+            estimate_id: savedId,
+            quantity:   i.quantity !== '' && i.quantity != null ? Number(i.quantity) : null,
+            unit_price: i.unit_price !== '' && i.unit_price != null ? Number(i.unit_price) : null,
+            amount:     i.amount !== '' && i.amount != null ? Number(i.amount) : null,
+          };
+        });
       await saveEstimateItems(savedId, saveableItems);
 
-      // --- 「承認」時の自動連動（Projectsテーブルへのコピー） ---
-      if (header.status === 'approved' && originalStatus !== 'approved') {
+      // 「承認」時の自動連動（Projectsテーブルへのコピー）
+      if (header.status === ESTIMATE_STATUS.APPROVED && originalStatus !== ESTIMATE_STATUS.APPROVED) {
         try {
           const { supabase } = await import('./lib/supabase');
-          // 既存の同名プロジェクト確認
           const { data: existing } = await supabase
             .from('Projects')
             .select('id')
             .eq('name', header.title)
             .eq('customerId', header.customer_id)
             .limit(1);
-            
+
           if (!existing || existing.length === 0) {
-            // next order 取得
             const { data: maxOrder } = await supabase
               .from('Projects')
               .select('order')
               .order('order', { ascending: false })
               .limit(1);
             const nextOrder = (maxOrder?.[0]?.order || 0) + 1;
-            
-            // プロジェクト作成
             await supabase.from('Projects').insert([{
               name: header.title,
               customerId: header.customer_id,
@@ -523,7 +617,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
       }
 
       setOriginalStatus(header.status);
-      isDirty.current = false; // 保存完了後はダーティフラグをリセット
+      isDirty.current = false;
       onSaved?.();
     } catch (e) {
       setError('保存に失敗しました: ' + e.message);
@@ -536,62 +630,47 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
   // レンダリング
   // ============================================================
   if (loading) {
-    return (
-      <div className="p-6 text-center text-slate-400">読み込み中...</div>
-    );
+    return <div className="p-6 text-center text-slate-400">読み込み中...</div>;
   }
 
   return (
-    <div className="p-4 md:p-6 max-w-6xl mx-auto">
+    <div className="p-4 md:p-6">
 
       {/* ページヘッダー */}
-      <div className="flex items-center justify-between mb-5">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => isDirty.current ? setShowLeaveConfirm(true) : onBack()}
-            aria-label="一覧に戻る"
-            title="一覧に戻る"
-            className="p-2 rounded-lg hover:bg-slate-100 text-slate-500 transition"
-          >
-            <ArrowLeft size={20} />
-          </button>
-          <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-            <FileText size={22} className="text-blue-600" />
-            {isNew ? '見積書 新規作成' : '見積書 編集'}
-          </h2>
-          {isLocked && (
-            <span className="flex items-center gap-1 px-3 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-bold">
-              <Lock size={12} /> 編集ロック中
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {isLocked && (
-            <button
-              onClick={handleUnlock}
-              disabled={saving}
-              className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white px-4 py-2 rounded-lg font-bold transition text-sm"
-            >
-              <Unlock size={16} />
-              下書きに戻す
-            </button>
-          )}
-          <button
-            onClick={handleSave}
-            disabled={saving || isLocked}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white px-5 py-2 rounded-lg font-bold transition"
-          >
-            <Save size={18} />
-            {saving ? '保存中...' : '保存'}
-          </button>
-        </div>
+      <div className="flex items-center gap-3 mb-5 flex-wrap">
+        <button
+          onClick={() => isDirty.current ? setShowLeaveConfirm(true) : onBack()}
+          aria-label="一覧に戻る"
+          title="一覧に戻る"
+          className="p-2 rounded-lg hover:bg-slate-100 text-slate-500 transition"
+        >
+          <ArrowLeft size={20} />
+        </button>
+        <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+          <FileText size={22} className="text-blue-600" />
+          {isNew ? '見積書 新規作成' : '見積書 編集'}
+        </h2>
+        {isLocked && (
+          <span className="flex items-center gap-1 px-3 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-bold">
+            <Lock size={12} /> 編集ロック中
+          </span>
+        )}
+        <button
+          onClick={handleOpenPreview}
+          title="PDFプレビューを表示"
+          aria-label="PDFプレビュー"
+          className="ml-auto flex items-center gap-1.5 text-sm text-slate-600 hover:text-slate-800 border border-slate-200 hover:border-slate-400 bg-white px-3 py-1.5 rounded-lg transition font-medium"
+        >
+          <Eye size={15} />
+          プレビュー
+        </button>
       </div>
 
       {/* 編集ロックバナー */}
       {isLocked && (
         <div className="bg-amber-50 border border-amber-200 text-amber-700 rounded-lg px-4 py-3 mb-4 text-sm flex items-center gap-2">
           <Lock size={16} />
-          この見積書は「{originalStatus === 'pending' ? '申請中' : originalStatus === 'approved' ? '承認' : originalStatus === 'returned' ? '差し戻し' : originalStatus}」のため編集できません。編集するには「下書きに戻す」を実行してください。
+          この見積書は「{ESTIMATE_STATUS_LABEL[originalStatus] || originalStatus}」のため編集できません。編集するには「下書きに戻す」を実行してください。
         </div>
       )}
 
@@ -602,336 +681,138 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-5">
 
         {/* ===== 左・メインカラム ===== */}
-        <div className="lg:col-span-2 space-y-5">
-
-          {/* 見積番号 */}
-          <Section title="見積番号">
-            <div className="flex items-center gap-2 flex-wrap">
-              <input
-                type="text"
-                maxLength={6}
-                placeholder="YYMMDD"
-                value={header.estimate_number_date}
-                onChange={e => handleHeaderChange('estimate_number_date', e.target.value)}
-                className="w-24 border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400"
-              />
-              <span className="text-slate-400 font-bold">-</span>
-              <input
-                type="text"
-                maxLength={4}
-                placeholder="0001"
-                value={header.estimate_number_seq}
-                onChange={e => handleHeaderChange('estimate_number_seq', e.target.value)}
-                className="w-20 border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400"
-              />
-              <span className="text-slate-400 font-bold">-</span>
-              <input
-                type="text"
-                maxLength={3}
-                placeholder="001"
-                value={header.estimate_number_branch}
-                onChange={e => handleHeaderChange('estimate_number_branch', e.target.value)}
-                className="w-16 border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400"
-              />
-              <span className="text-slate-500 text-sm font-mono ml-1">
-                → {estimateNumber}
-              </span>
-            </div>
-            {numberError && (
-              <p className="text-red-500 text-xs mt-1">{numberError}</p>
-            )}
-          </Section>
-
-          {/* 工事情報 */}
-          <Section title="工事情報">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-
-              <div className="md:col-span-2">
-                <Label required>工事名</Label>
-                <input
-                  type="text"
-                  value={header.title}
-                  onChange={e => handleHeaderChange('title', e.target.value)}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  placeholder="例: 水沢中学校校舎等改築建築工事"
-                />
-              </div>
-
-              <div>
-                <Label required>顧客</Label>
-                <div className="flex gap-2">
-                  <select
-                    value={header.customer_id}
-                    onChange={e => handleHeaderChange('customer_id', e.target.value)}
-                    className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-                  >
-                    <option value="">-- 選択してください --</option>
-                    {customers.map(c => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                  <select
-                    value={header.customer_honorific}
-                    onChange={e => handleHeaderChange('customer_honorific', e.target.value)}
-                    className="w-24 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-                  >
-                    <option value="御中">御中</option>
-                    <option value="様">様</option>
-                    <option value="殿">殿</option>
-                    <option value="なし">なし</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <Label>工事場所</Label>
-                <input
-                  type="text"
-                  value={header.site_location}
-                  onChange={e => handleHeaderChange('site_location', e.target.value)}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  placeholder="例: 取り決めの通り"
-                />
-              </div>
-
-              <div>
-                <Label>工期</Label>
-                <input
-                  type="text"
-                  value={header.work_period}
-                  onChange={e => handleHeaderChange('work_period', e.target.value)}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  placeholder="例: 取り決めの通り / 令和7年3月末"
-                />
-              </div>
-
-              <div>
-                <Label>見積日</Label>
-                <input
-                  type="date"
-                  value={header.issue_date}
-                  onChange={e => handleHeaderChange('issue_date', e.target.value)}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                />
-              </div>
-
-              <div>
-                <Label>有効期限</Label>
-                <input
-                  type="date"
-                  value={header.valid_until}
-                  onChange={e => handleHeaderChange('valid_until', e.target.value)}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                />
-              </div>
-
-              <div>
-                <Label>支払条件</Label>
-                <input
-                  type="text"
-                  value={header.payment_terms}
-                  onChange={e => handleHeaderChange('payment_terms', e.target.value)}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                />
-              </div>
-
-              <div>
-                <Label>担当者</Label>
-                <select
-                  value={header.staff_id}
-                  onChange={e => handleHeaderChange('staff_id', e.target.value)}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-                >
-                  <option value="">-- 選択 --</option>
-                  {officeStaff.map(w => (
-                    <option key={w.id} value={w.id}>{w.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="md:col-span-2">
-                <Label>備考</Label>
-                <textarea
-                  value={header.notes}
-                  onChange={e => handleHeaderChange('notes', e.target.value)}
-                  rows={3}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none"
-                  placeholder="備考・特記事項"
-                />
-              </div>
-            </div>
-          </Section>
-
-          {/* 明細 */}
-          <Section title={`見積内訳明細（${items.length}行）`}>
-            <ItemTable
-              items={items}
-              showFixedFees={header.show_fixed_fees}
-              showSubtotals={header.show_subtotals}
-              categorySubtotals={categorySubtotals}
-              onUpdateItem={updateItem}
-              onAddCategory={addCategory}
-              onAddItem={addItem}
-              onRemoveRow={removeRow}
-              disabled={isLocked}
-            />
-            {items.length > MAX_ROWS && (
-              <p className="text-red-500 text-xs mt-2 font-bold">⚠ 行数が上限（{MAX_ROWS}行）を超えています</p>
-            )}
-          </Section>
-
+        <div className="space-y-4 min-w-0">
+          <EstimateHeader
+            isNew={isNew}
+            header={header}
+            onChange={handleHeaderChange}
+            customers={customers}
+            officeStaff={officeStaff}
+            estimateNumber={estimateNumber}
+            numberError={numberError}
+            disabled={isLocked}
+          />
+          <EstimateItemTable
+            items={items}
+            showFixedFees={header.show_fixed_fees}
+            showSubtotals={header.show_subtotals}
+            categorySubtotals={categorySubtotals}
+            onUpdateItem={updateItem}
+            onAddCategory={addCategory}
+            onAddItem={addItem}
+            onAddComment={addComment}
+            onRemoveRow={removeRow}
+            onSetItems={setAllItems}
+            disabled={isLocked}
+          />
+          {items.length > MAX_ROWS && (
+            <p className="text-red-500 text-xs font-bold">⚠ 行数が上限（{MAX_ROWS}行）を超えています</p>
+          )}
         </div>
 
         {/* ===== 右サイドバー ===== */}
-        <div className="space-y-4">
+        <div className="w-full">
+          <EstimateSidebar
+            totals={totals}
+            header={header}
+            onChange={handleHeaderChange}
+            saving={saving}
+            isLocked={isLocked}
+            onSave={handleSave}
+            onUnlock={handleUnlock}
+          />
+        </div>
+      </div>
 
-          {/* 合計パネル */}
-          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 sticky top-4">
-            <h3 className="font-bold text-slate-700 mb-3 text-sm">金額集計</h3>
-            <div className="space-y-1.5 text-sm">
-              <TotalRow label="工事費" value={totals.subtotal} bold />
-              <TotalRow label={`消費税（${Math.round(Number(header.tax_rate) * 100)}%）`} value={totals.tax} />
-              <div className="border-t border-slate-300 my-2" />
-              <TotalRow label="税込合計" value={totals.total} bold large />
-              {header.show_net && (
-                <>
-                  <div className="border-t border-slate-300 my-2" />
-                  <TotalRow label="NET金額" value={totals.net} bold />
-                </>
-              )}
-            </div>
+      {/* ===== PDFプレビューオーバーレイ ===== */}
+      {previewOpen && (
+        <div className="fixed inset-0 z-[9999] flex flex-col" style={{ background: 'rgba(15,23,42,0.82)' }}>
 
-            {/* NET計算詳細設定 */}
-            {header.show_net && (
-              <div className="mt-4 pt-4 border-t border-slate-200">
-                <p className="text-[11px] font-bold text-slate-400 mb-2 uppercase tracking-wider">NET計算設定</p>
-                <div className="space-y-3">
-                  <div className="flex items-center gap-4">
-                    <label className="flex items-center gap-1.5 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="net_type"
-                        checked={header.net_calc_type === 'perc' || header.net_calc_type === 'auto'}
-                        onChange={() => handleHeaderChange('net_calc_type', 'perc')}
-                        className="text-blue-600 focus:ring-blue-500 w-3.5 h-3.5"
-                      />
-                      <span className="text-xs text-slate-600">％指定</span>
-                    </label>
-                    <label className="flex items-center gap-1.5 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="net_type"
-                        checked={header.net_calc_type === 'manual'}
-                        onChange={() => handleHeaderChange('net_calc_type', 'manual')}
-                        className="text-blue-600 focus:ring-blue-500 w-3.5 h-3.5"
-                      />
-                      <span className="text-xs text-slate-600">手入力</span>
-                    </label>
-                  </div>
+          {/* ツールバー */}
+          <div className="bg-white border-b border-slate-200 px-4 py-2.5 flex items-center gap-3 shrink-0 flex-wrap">
+            <FileText size={17} className="text-blue-600 shrink-0" />
+            <span className="font-bold text-slate-700 text-sm flex-1">PDFプレビュー</span>
+            <p className="text-xs text-slate-400 hidden sm:block">
+              ※ 最新の入力内容は「最新化」ボタンで反映
+            </p>
+            <button
+              onClick={handleRefreshPreview}
+              title="現在の入力内容でプレビューを更新"
+              aria-label="プレビューを最新化"
+              className="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-800 border border-blue-200 hover:border-blue-400 px-3 py-1.5 rounded-lg transition font-bold"
+            >
+              <RefreshCw size={14} />
+              最新化
+            </button>
+            <button
+              onClick={() => previewSnapshot && downloadEstimatePDF(previewSnapshot, settings)}
+              title="PDFをダウンロード（新規タブで開く）"
+              aria-label="PDFをダウンロード"
+              className="flex items-center gap-1.5 text-sm text-slate-600 hover:text-slate-800 border border-slate-200 hover:border-slate-400 px-3 py-1.5 rounded-lg transition"
+            >
+              <Download size={14} />
+              DL
+            </button>
+            <button
+              onClick={() => setPreviewOpen(false)}
+              title="プレビューを閉じる（Esc）"
+              aria-label="プレビューを閉じる"
+              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 transition"
+            >
+              <X size={18} />
+            </button>
+          </div>
 
-                  {header.net_calc_type !== 'manual' && (
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min="0"
-                        max="100"
-                        value={header.net_perc}
-                        onChange={e => handleHeaderChange('net_perc', e.target.value)}
-                        className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-blue-400"
-                        placeholder="パーセント"
-                      />
-                      <span className="text-xs text-slate-500">%</span>
-                    </div>
-                  )}
-
-                  {header.net_calc_type === 'manual' && (
-                    <div className="relative">
-                      <span className="absolute left-3 top-1.5 text-slate-400 text-xs">¥</span>
-                      <input
-                        type="number"
-                        min="0"
-                        value={header.net_amount}
-                        onChange={e => handleHeaderChange('net_amount', e.target.value)}
-                        className="w-full border border-slate-300 rounded-lg pl-6 pr-3 py-1.5 text-xs focus:ring-2 focus:ring-blue-400"
-                        placeholder="金額を入力"
-                      />
-                    </div>
-                  )}
-                </div>
+          {/* PDF表示エリア */}
+          <div className="flex-1 overflow-hidden">
+            {previewSnapshot ? (
+              <BlobProvider
+                key={previewKey}
+                document={<EstimateDocument estimate={previewSnapshot} settings={settings} />}
+              >
+                {({ url, loading, error: pdfError }) => {
+                  if (loading) {
+                    return (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <div className="text-center text-white">
+                          <div className="w-10 h-10 border-3 border-white/30 border-t-white rounded-full animate-spin mx-auto mb-4" style={{ borderWidth: 3 }} />
+                          <p className="text-sm font-medium">PDF を生成中...</p>
+                          <p className="text-xs text-white/60 mt-1">しばらくお待ちください</p>
+                        </div>
+                      </div>
+                    );
+                  }
+                  if (pdfError) {
+                    return (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <div className="bg-white rounded-xl p-8 max-w-sm text-center shadow-xl">
+                          <p className="text-red-500 font-bold mb-2">PDF 生成エラー</p>
+                          <p className="text-slate-500 text-sm">{pdfError.message}</p>
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <iframe
+                      src={url}
+                      title="見積書プレビュー"
+                      className="w-full h-full"
+                      style={{ border: 'none', display: 'block' }}
+                    />
+                  );
+                }}
+              </BlobProvider>
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-white/60">
+                データがありません
               </div>
             )}
           </div>
-
-          {/* ステータス */}
-          <Section title="ステータス">
-            <select
-              value={header.status}
-              onChange={e => handleHeaderChange('status', e.target.value)}
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-              disabled={isLocked}
-            >
-              <option value="draft">下書き</option>
-              <option value="pending">申請中</option>
-              <option value="approved">承認</option>
-              <option value="returned">差し戻し</option>
-            </select>
-          </Section>
-
-          {/* 表示設定 */}
-          <Section title="PDF表示設定">
-            <div className="space-y-2 text-sm">
-              {[
-                { key: 'show_fixed_fees', label: '法定福利費・安全費を表示' },
-                { key: 'show_net',        label: 'NET金額を表示' },
-                { key: 'show_subtotals',  label: '工種ごとに合計行を表示' },
-                { key: 'show_approver',   label: '上長印欄を表示' },
-              ].map(({ key, label }) => (
-                <label key={key} className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={header[key]}
-                    onChange={e => handleHeaderChange(key, e.target.checked)}
-                    className="rounded"
-                  />
-                  <span className="text-slate-600">{label}</span>
-                </label>
-              ))}
-              <div className="mt-2">
-                <Label>社印</Label>
-                <select
-                  value={header.stamp_header}
-                  onChange={e => handleHeaderChange('stamp_header', e.target.value)}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white"
-                >
-                  <option value="company">社印</option>
-                  <option value="representative">代表印</option>
-                  <option value="none">表示しない</option>
-                </select>
-              </div>
-            </div>
-          </Section>
-
-          {/* 消費税率 */}
-          <Section title="消費税率">
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                min="0"
-                max="100"
-                step="1"
-                value={Math.round(Number(header.tax_rate) * 100)}
-                onChange={e => handleHeaderChange('tax_rate', Number(e.target.value) / 100)}
-                className="w-20 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-              />
-              <span className="text-slate-500 text-sm">%</span>
-            </div>
-          </Section>
-
         </div>
-      </div>
+      )}
 
       {/* 未保存変更の離脱確認モーダル */}
       <ConfirmModal
@@ -946,310 +827,5 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
     </div>
   );
 };
-
-// ============================================================
-// 明細テーブルコンポーネント
-// ============================================================
-const ItemTable = ({ items, showFixedFees, showSubtotals, categorySubtotals, onUpdateItem, onAddCategory, onAddItem, onRemoveRow, disabled }) => {
-  // 工種ごとの小計表示用: 次の工種行または末尾の直前のitemを特定
-  const isLastItemBeforeNext = (index) => {
-    if (!showSubtotals) return false;
-    const item = items[index];
-    if (item.item_type !== ITEM_TYPE.ITEM) return false;
-    // 次の行がcategory, fixed, またはリスト末尾であれば最後のitem
-    for (let j = index + 1; j < items.length; j++) {
-      if (items[j].item_type === ITEM_TYPE.CATEGORY || items[j].item_type === ITEM_TYPE.FIXED) return true;
-      if (items[j].item_type === ITEM_TYPE.ITEM) return false;
-    }
-    return true; // リスト末尾
-  };
-
-  // 直近の工種キーを取得
-  const getCategoryKeyForIndex = (index) => {
-    for (let i = index; i >= 0; i--) {
-      if (items[i].item_type === ITEM_TYPE.CATEGORY) {
-        return items[i].id || items[i]._tempId || items[i].category_symbol;
-      }
-    }
-    return null;
-  };
-
-  return (
-    <div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs border-collapse">
-          <thead>
-            <tr className="bg-slate-100 text-slate-500">
-              <th className="px-2 py-2 text-left w-6"></th>
-              <th className="px-2 py-2 text-left min-w-32">名称</th>
-              <th className="px-2 py-2 text-left min-w-40">仕様</th>
-              <th className="px-2 py-2 text-right w-16">数量</th>
-              <th className="px-2 py-2 text-left w-14">単位</th>
-              <th className="px-2 py-2 text-right w-20">単価</th>
-              <th className="px-2 py-2 text-right w-24">金額</th>
-              <th className="px-2 py-2 text-left min-w-20">摘要</th>
-              <th className="px-2 py-2 w-6"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item, index) => {
-              if (item.item_type === ITEM_TYPE.FIXED && !showFixedFees) return null;
-              if (item.item_type === ITEM_TYPE.SUBTOTAL) return null; // subtotalはUI上では表示しない（保存時に自動生成）
-              return (
-                <React.Fragment key={item.id || item._tempId || index}>
-                  <ItemRow
-                    item={item}
-                    index={index}
-                    allItems={items}
-                    onChange={(field, value) => onUpdateItem(index, field, value)}
-                    onAddItem={() => onAddItem(index)}
-                    onRemove={() => onRemoveRow(index)}
-                    disabled={disabled}
-                  />
-                  {/* 工種小計のリアルタイム表示 */}
-                  {isLastItemBeforeNext(index) && (() => {
-                    const catKey = getCategoryKeyForIndex(index);
-                    const subtotal = catKey ? (categorySubtotals[catKey] || 0) : 0;
-                    return (
-                      <tr className="bg-slate-50 border-b border-slate-300">
-                        <td className="px-2 py-1.5"></td>
-                        <td colSpan={5} className="px-2 py-1.5 text-right font-bold text-slate-600 text-xs pr-4">
-                          合　計
-                        </td>
-                        <td className="px-2 py-1.5 text-right font-bold text-slate-700 text-xs">
-                          {formatCurrency(subtotal)}
-                        </td>
-                        <td colSpan={2}></td>
-                      </tr>
-                    );
-                  })()}
-                </React.Fragment>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      {/* 工種追加ボタン */}
-      {!disabled && (
-        <div className="mt-3 flex gap-2">
-          <button
-            onClick={onAddCategory}
-            className="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-800 font-bold border border-blue-200 hover:border-blue-400 px-3 py-1.5 rounded-lg transition"
-          >
-            <Plus size={15} />
-            工種を追加
-          </button>
-        </div>
-      )}
-    </div>
-  );
-};
-
-// ============================================================
-// 明細行コンポーネント
-// ============================================================
-const ItemRow = ({ item, index, allItems, onChange, onAddItem, onRemove, disabled }) => {
-  const [showUnitSug, setShowUnitSug] = useState(false);
-
-  if (item.item_type === ITEM_TYPE.CATEGORY) {
-    return (
-      <tr className="bg-blue-50 border-t border-blue-100">
-        <td className="px-2 py-1.5 text-slate-400"><GripVertical size={14} /></td>
-        <td colSpan={7} className="px-2 py-1.5">
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={item.category_symbol || ''}
-              onChange={e => onChange('category_symbol', e.target.value)}
-              className="w-8 border border-slate-300 rounded px-1 py-1 text-xs font-bold bg-white text-center"
-              placeholder="A"
-              disabled={disabled}
-            />
-            <input
-              type="text"
-              value={item.name || ''}
-              onChange={e => onChange('name', e.target.value)}
-              className="flex-1 border border-slate-300 rounded px-2 py-1 text-xs font-bold bg-white"
-              placeholder="工種名（例: 校舎・体育館）"
-              disabled={disabled}
-            />
-            {!disabled && (
-              <button
-                onClick={onAddItem}
-                title="この工種に細別追加"
-                className="text-blue-500 hover:text-blue-700 ml-1"
-              >
-                <Plus size={14} />
-              </button>
-            )}
-          </div>
-        </td>
-        <td className="px-2 py-1.5">
-          {!disabled && (
-            <button onClick={onRemove} aria-label="行を削除" title="行を削除" className="text-red-400 hover:text-red-600">
-              <Trash2 size={14} />
-            </button>
-          )}
-        </td>
-      </tr>
-    );
-  }
-
-  if (item.item_type === ITEM_TYPE.FIXED) {
-    return (
-      <tr className="bg-amber-50 border-t border-amber-100">
-        <td className="px-2 py-1.5"></td>
-        <td className="px-2 py-1.5 font-bold text-slate-600">{item.name}</td>
-        <td className="px-2 py-1.5"></td>
-        <td className="px-2 py-1.5 text-right text-slate-500">1.0</td>
-        <td className="px-2 py-1.5 text-slate-500">式</td>
-        <td className="px-2 py-1.5"></td>
-        <td className="px-2 py-1.5">
-          <input
-            type="number"
-            min="0"
-            value={item.amount || ''}
-            onChange={e => onChange('amount', e.target.value)}
-            className="w-full border border-slate-300 rounded px-1 py-1 text-xs text-right bg-white"
-            placeholder="0"
-            disabled={disabled}
-          />
-        </td>
-        <td colSpan={2} className="px-2 py-1.5"></td>
-      </tr>
-    );
-  }
-
-  // item行
-  return (
-    <tr className="border-t border-slate-100 hover:bg-slate-50">
-      <td className="px-2 py-1.5 text-slate-300"><GripVertical size={14} /></td>
-      <td className="px-2 py-1.5">
-        <input
-          type="text"
-          value={item.name || ''}
-          onChange={e => onChange('name', e.target.value)}
-          className="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
-          placeholder="名称"
-          disabled={disabled}
-        />
-      </td>
-      <td className="px-2 py-1.5">
-        <input
-          type="text"
-          value={item.spec || ''}
-          onChange={e => onChange('spec', e.target.value)}
-          className="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
-          placeholder="仕様"
-          disabled={disabled}
-        />
-      </td>
-      <td className="px-2 py-1.5">
-        <input
-          type="number"
-          min="0"
-          value={item.quantity || ''}
-          onChange={e => onChange('quantity', e.target.value)}
-          className="w-full border border-slate-200 rounded px-1 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-400"
-          placeholder="0"
-          disabled={disabled}
-        />
-      </td>
-      <td className="px-2 py-1.5 relative">
-        <input
-          type="text"
-          value={item.unit || ''}
-          onChange={e => onChange('unit', e.target.value)}
-          onFocus={() => !disabled && setShowUnitSug(true)}
-          onBlur={() => setTimeout(() => setShowUnitSug(false), 150)}
-          className="w-full border border-slate-200 rounded px-1 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
-          placeholder="単位"
-          disabled={disabled}
-        />
-        {showUnitSug && !disabled && (
-          <div className="absolute top-full left-0 z-10 bg-white border border-slate-200 rounded shadow-lg py-1 min-w-max">
-            {UNIT_SUGGESTIONS.map(u => (
-              <button
-                key={u}
-                onMouseDown={() => onChange('unit', u)}
-                className="block w-full text-left px-3 py-1 text-xs hover:bg-blue-50"
-              >
-                {u}
-              </button>
-            ))}
-          </div>
-        )}
-      </td>
-      <td className="px-2 py-1.5">
-        <input
-          type="number"
-          min="0"
-          value={item.unit_price || ''}
-          onChange={e => onChange('unit_price', e.target.value)}
-          className="w-full border border-slate-200 rounded px-1 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-400"
-          placeholder="0"
-          disabled={disabled}
-        />
-      </td>
-      <td className="px-2 py-1.5">
-        <input
-          type="number"
-          min="0"
-          value={item.amount || ''}
-          onChange={e => onChange('amount', e.target.value)}
-          className="w-full border border-slate-200 rounded px-1 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-400 bg-slate-50"
-          placeholder="自動計算"
-          disabled={disabled}
-        />
-      </td>
-      <td className="px-2 py-1.5">
-        <input
-          type="text"
-          value={item.note || ''}
-          onChange={e => onChange('note', e.target.value)}
-          className="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
-          placeholder="摘要"
-          disabled={disabled}
-        />
-      </td>
-      <td className="px-2 py-1.5">
-        {!disabled && (
-          <button onClick={onRemove} aria-label="行を削除" title="行を削除" className="text-red-400 hover:text-red-600">
-            <Trash2 size={14} />
-          </button>
-        )}
-      </td>
-    </tr>
-  );
-};
-
-// ============================================================
-// 小さなUIパーツ
-// ============================================================
-const Section = ({ title, children }) => (
-  <div className="bg-white border border-slate-200 rounded-xl p-4">
-    <h3 className="font-bold text-slate-700 text-sm mb-3 pb-2 border-b border-slate-100">
-      {title}
-    </h3>
-    {children}
-  </div>
-);
-
-const Label = ({ children, required }) => (
-  <label className="block text-xs font-semibold text-slate-500 mb-1">
-    {children}
-    {required && <span className="text-red-400 ml-0.5">*</span>}
-  </label>
-);
-
-const TotalRow = ({ label, value, bold, large }) => (
-  <div className={`flex justify-between items-center ${bold ? 'font-bold text-slate-800' : 'text-slate-600'}`}>
-    <span className={large ? 'text-base' : 'text-sm'}>{label}</span>
-    <span className={`font-mono ${large ? 'text-lg text-blue-600' : ''}`}>
-      ¥{formatCurrency(value)}-
-    </span>
-  </div>
-);
 
 export default EstimateForm;

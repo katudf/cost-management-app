@@ -7,6 +7,7 @@ import ConfirmModal from '../ConfirmModal';
 const CustomerSettings = () => {
     const { showToast } = useToast();
     const [customers, setCustomers] = useState([]);
+    const [staffList, setStaffList] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -16,13 +17,15 @@ const CustomerSettings = () => {
     const fetchCustomers = useCallback(async () => {
         setIsLoading(true);
         try {
-            const { data, error } = await supabase
-                .from('Customers')
-                .select('*')
-                .order('name', { ascending: true });
-            
-            if (error) throw error;
-            setCustomers(data || []);
+            const [{ data: cData, error: cErr }, { data: sData, error: sErr }] = await Promise.all([
+                supabase.from('Customers').select('*').order('name', { ascending: true }),
+                supabase.from('office_staff').select('id, name').order('name', { ascending: true }),
+            ]);
+
+            if (cErr) throw cErr;
+            if (sErr) throw sErr;
+            setCustomers(cData || []);
+            setStaffList(sData || []);
         } catch (error) {
             console.error('顧客情報取得エラー:', error);
             showToast('顧客情報の取得に失敗しました', 'error');
@@ -137,14 +140,17 @@ const CustomerSettings = () => {
                         <div className="lg:col-span-1">
                             <label className="block text-xs font-bold text-slate-500 mb-1">担当者名</label>
                             <div className="relative">
-                                <UserCheck className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
-                                <input
-                                    type="text"
+                                <UserCheck className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 pointer-events-none" />
+                                <select
                                     value={form.contactPerson}
                                     onChange={(e) => setForm({ ...form, contactPerson: e.target.value })}
-                                    className="w-full pl-9 pr-4 py-2.5 rounded-lg border-2 border-slate-200 font-bold text-slate-700 outline-none focus:border-blue-500 transition"
-                                    placeholder="山田 太郎"
-                                />
+                                    className="w-full pl-9 pr-4 py-2.5 rounded-lg border-2 border-slate-200 font-bold text-slate-700 outline-none focus:border-blue-500 transition bg-white appearance-none"
+                                >
+                                    <option value="">(未設定)</option>
+                                    {staffList.map(s => (
+                                        <option key={s.id} value={s.name}>{s.name}</option>
+                                    ))}
+                                </select>
                             </div>
                         </div>
                         <div className="lg:col-span-1">

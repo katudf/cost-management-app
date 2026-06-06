@@ -25,12 +25,33 @@ export const PROJECT_STATUS_COLOR = {
     [PROJECT_STATUS.COMPLETED]:  'bg-slate-400',
 };
 
+// === 見積ステータス ===
+export const ESTIMATE_STATUS = {
+    DRAFT: 'draft',
+    PENDING: 'pending',
+    APPROVED: 'approved',
+    RETURNED: 'returned',
+};
+export const ESTIMATE_STATUS_LABEL = {
+    [ESTIMATE_STATUS.DRAFT]:    '下書き',
+    [ESTIMATE_STATUS.PENDING]:  '申請中',
+    [ESTIMATE_STATUS.APPROVED]: '承認',
+    [ESTIMATE_STATUS.RETURNED]: '差し戻し',
+};
+export const ESTIMATE_STATUS_LIST = [
+    ESTIMATE_STATUS.DRAFT,
+    ESTIMATE_STATUS.PENDING,
+    ESTIMATE_STATUS.APPROVED,
+    ESTIMATE_STATUS.RETURNED,
+];
+
 // === 見積アイテム種別 ===
 export const ITEM_TYPE = {
     CATEGORY: 'category',
     ITEM: 'item',
     SUBTOTAL: 'subtotal',
     FIXED: 'fixed',
+    COMMENT: 'comment',
 };
 
 // === 配置表 カラーパレット ===

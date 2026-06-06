@@ -2,11 +2,13 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from './lib/supabase';
 import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2, PlusCircle, Clock, X } from 'lucide-react';
 import { useToast } from './components/Toast';
+import { useConfirm } from './components/ConfirmProvider';
 import { calculateWorkHours, calculateNinku, getSeasonConfig, formatTimeDisplay } from './utils/workTimeUtils';
 import { PROJECT_STATUS } from './utils/constants';
 
 const WorkerApp = () => {
     const { showToast } = useToast();
+    const { confirm, prompt } = useConfirm();
     const [workers, setWorkers] = useState([]);
     const [loggedInWorker, setLoggedInWorker] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -157,9 +159,15 @@ const WorkerApp = () => {
     }, [selectedProjectId, loggedInWorker, selectedDate]);
 
     const handleLogin = (worker) => { setLoggedInWorker(worker); localStorage.setItem('cost-app-worker', JSON.stringify(worker)); };
-    const handleLogout = () => {
-        const msg = hasUnsavedChanges ? "未送信の入力データがあります。破棄してログアウトしますか？" : "ログアウトしますか？";
-        if (window.confirm(msg)) {
+    const handleLogout = async () => {
+        const message = hasUnsavedChanges ? "未送信の入力データがあります。破棄してログアウトしますか？" : "ログアウトしますか？";
+        const ok = await confirm({
+            title: 'ログアウト',
+            message,
+            confirmText: 'ログアウト',
+            variant: hasUnsavedChanges ? 'danger' : 'primary',
+        });
+        if (ok) {
             setHasUnsavedChanges(false);
             setLoggedInWorker(null); setSelectedProjectId(''); setTasks([]); setSubcontractors([]); setDeletedSubcontractorIds([]);
             localStorage.removeItem('cost-app-worker'); localStorage.removeItem('cost-app-worker-project');
@@ -216,11 +224,16 @@ const WorkerApp = () => {
         const project = projects.find(p => p.id === Number(selectedProjectId));
         const isForeman = project && project.foreman_worker_id === loggedInWorker.id;
         if (!isForeman) {
-            window.alert("新しい作業項目の追加は職長のみ可能です。追加が必要な場合は職長に依頼してください。");
+            showToast("新しい作業項目の追加は職長のみ可能です。追加が必要な場合は職長に依頼してください。", 'error');
             return;
         }
 
-        const taskName = window.prompt("追加する作業項目の名称を入力してください。");
+        const taskName = await prompt({
+            title: '作業項目の追加',
+            message: '追加する作業項目の名称を入力してください。',
+            placeholder: '例：屋根：高圧洗浄',
+            confirmText: '追加する',
+        });
         if (!taskName || taskName.trim() === '') return;
         setIsLoading(true);
         try {
@@ -354,8 +367,14 @@ const WorkerApp = () => {
     }, [workerDailyAllRecords, tasks, selectedProjectId, projects]);
 
     // ========== ドラフト（オフライン下書き）操作 ==========
-    const handleRestoreDraft = () => {
-        if (!window.confirm('下書きを復元しますか？（現在の入力内容は上書きされます）')) return;
+    const handleRestoreDraft = async () => {
+        const ok = await confirm({
+            title: '下書きの復元',
+            message: '下書きを復元しますか？（現在の入力内容は上書きされます）',
+            confirmText: '復元する',
+            variant: 'primary',
+        });
+        if (!ok) return;
         if (!offlineDraft) return;
         setSelectedProjectId(offlineDraft.selectedProjectId);
         setSelectedDate(offlineDraft.selectedDate);
@@ -368,8 +387,13 @@ const WorkerApp = () => {
         showToast('下書きを復元しました。内容を確認し「今日の実績を送信」ボタンを押してください。', 'success');
     };
 
-    const handleDiscardDraft = () => {
-        if (!window.confirm('未送信の下書きを本当に破棄しますか？')) return;
+    const handleDiscardDraft = async () => {
+        const ok = await confirm({
+            title: '下書きの破棄',
+            message: '未送信の下書きを本当に破棄しますか？',
+            confirmText: '破棄する',
+        });
+        if (!ok) return;
         localStorage.removeItem('cost-app-unsent-draft');
         setOfflineDraft(null);
     };
@@ -416,16 +440,19 @@ const WorkerApp = () => {
             const project = projects.find(p => p.id === Number(selectedProjectId));
             const isForeman = project && project.foreman_worker_id === loggedInWorker.id;
 
+            // --- 1件ずつの逐次 await（N+1）を避け、操作種別ごとにまとめて実行する ---
+            const deleteIds = [];          // 削除する TaskRecords の id
+            const updateOps = [];          // { id, data } 更新対象
+            const insertPayloads = [];     // 新規 insert する行
+            const insertSlotRefs = [];     // insertPayloads と並列：返り id を書き戻すスロット参照
+
             for (let i = 0; i < tasks.length; i++) {
                 const t = tasks[i];
                 const tc = tasksWithCalculation[i];
 
-                // 削除対象を処理
-                for (const delId of t.deleted_record_ids) {
-                    await supabase.from('TaskRecords').delete().eq('id', delId);
-                }
+                // 削除対象（明示的に削除されたレコード）
+                for (const delId of t.deleted_record_ids) deleteIds.push(delId);
 
-                // 各スロットを保存
                 for (let j = 0; j < t.time_slots.length; j++) {
                     const slot = t.time_slots[j];
                     const sc = tc.slotCalcs[j];
@@ -433,7 +460,8 @@ const WorkerApp = () => {
                     if (!slot.start_time || !slot.end_time) {
                         // 空スロットで既存レコードがある場合は削除
                         if (slot.record_id) {
-                            await supabase.from('TaskRecords').delete().eq('id', slot.record_id);
+                            deleteIds.push(slot.record_id);
+                            slot.record_id = null;
                         }
                         continue;
                     }
@@ -447,34 +475,73 @@ const WorkerApp = () => {
                     };
 
                     if (slot.record_id) {
-                        await supabase.from('TaskRecords').update(recordData).eq('id', slot.record_id);
+                        updateOps.push({ id: slot.record_id, data: recordData });
                     } else {
-                        const { data } = await supabase.from('TaskRecords').insert([{
+                        insertPayloads.push({
                             ...recordData,
                             project_id: selectedProjectId,
                             project_task_id: t.id,
                             date: targetDate,
                             worker_name: loggedInWorker.name,
-                        }]).select();
-                        if (data && data[0]) slot.record_id = data[0].id;
+                        });
+                        insertSlotRefs.push(slot);
                     }
                 }
+            }
 
-                if (isForeman) {
-                    await supabase.from('ProjectTasks').update({ progress_percentage: t.progress_percentage }).eq('id', t.id);
-                }
+            // 削除はまとめて1回
+            if (deleteIds.length > 0) {
+                const { error } = await supabase.from('TaskRecords').delete().in('id', deleteIds);
+                if (error) throw error;
+            }
+
+            // 更新・進捗更新は並列実行
+            const parallelOps = updateOps.map(u =>
+                supabase.from('TaskRecords').update(u.data).eq('id', u.id)
+            );
+            if (isForeman) {
+                tasks.forEach(t => {
+                    parallelOps.push(supabase.from('ProjectTasks').update({ progress_percentage: t.progress_percentage }).eq('id', t.id));
+                });
+            }
+            if (parallelOps.length > 0) {
+                const results = await Promise.all(parallelOps);
+                const failed = results.find(r => r.error);
+                if (failed) throw failed.error;
+            }
+
+            // 新規 insert はまとめて1回（返り順は入力順と一致するため id を書き戻す）
+            if (insertPayloads.length > 0) {
+                const { data, error } = await supabase.from('TaskRecords').insert(insertPayloads).select();
+                if (error) throw error;
+                (data || []).forEach((row, k) => {
+                    if (insertSlotRefs[k]) insertSlotRefs[k].record_id = row.id;
+                });
             }
 
             // 協力業者
             if (isForeman) {
-                for (const delId of deletedSubcontractorIds) { await supabase.from('SubcontractorRecords').delete().eq('id', delId); }
+                if (deletedSubcontractorIds.length > 0) {
+                    const { error } = await supabase.from('SubcontractorRecords').delete().in('id', deletedSubcontractorIds);
+                    if (error) throw error;
+                }
+                const subOps = [];
+                const subInsertPayloads = [];
                 for (const s of subcontractors) {
                     if (!s.company_name) continue;
                     if (String(s.id).startsWith('temp-')) {
-                        await supabase.from('SubcontractorRecords').insert([{ project_id: selectedProjectId, date: targetDate, company_name: s.company_name, worker_count: s.worker_count, unit_price: 0, worker_name: loggedInWorker.name }]);
+                        subInsertPayloads.push({ project_id: selectedProjectId, date: targetDate, company_name: s.company_name, worker_count: s.worker_count, unit_price: 0, worker_name: loggedInWorker.name });
                     } else {
-                        await supabase.from('SubcontractorRecords').update({ company_name: s.company_name, worker_count: s.worker_count }).eq('id', s.id);
+                        subOps.push(supabase.from('SubcontractorRecords').update({ company_name: s.company_name, worker_count: s.worker_count }).eq('id', s.id));
                     }
+                }
+                if (subInsertPayloads.length > 0) {
+                    subOps.push(supabase.from('SubcontractorRecords').insert(subInsertPayloads));
+                }
+                if (subOps.length > 0) {
+                    const subResults = await Promise.all(subOps);
+                    const subFailed = subResults.find(r => r.error);
+                    if (subFailed) throw subFailed.error;
                 }
             }
 
@@ -604,10 +671,15 @@ const WorkerApp = () => {
 
                 <div className="mb-6">
                     <label className="block text-sm font-bold text-slate-600 mb-2">作業日</label>
-                    <input type="date" value={selectedDate} onChange={(e) => {
-                        if (hasUnsavedChanges && !window.confirm("未送信の入力データがあります。破棄して別の日に移動しますか？")) return;
+                    <input type="date" value={selectedDate} onChange={async (e) => {
+                        const value = e.target.value;
+                        if (hasUnsavedChanges && !(await confirm({
+                            title: '別の日に移動',
+                            message: '未送信の入力データがあります。破棄して別の日に移動しますか？',
+                            confirmText: '破棄して移動',
+                        }))) return;
                         setHasUnsavedChanges(false);
-                        setSelectedDate(e.target.value);
+                        setSelectedDate(value);
                     }}
                         className="w-full bg-white border-2 border-blue-200 text-slate-800 p-4 rounded-xl font-bold text-lg outline-none focus:border-blue-500 shadow-sm appearance-none mb-2" />
                     <div className="flex items-center gap-2 mb-2">
@@ -627,11 +699,15 @@ const WorkerApp = () => {
                                 <div className="flex flex-wrap gap-1.5">
                                     {enteredProjects.map(p => (
                                         <span key={p.id}
-                                            onClick={() => {
-                                                if (hasUnsavedChanges && !window.confirm("未送信の入力データがあります。入力内容を破棄して現場を切り替えますか？")) return;
+                                            onClick={async () => {
+                                                if (hasUnsavedChanges && !(await confirm({
+                                                    title: '現場の切り替え',
+                                                    message: '未送信の入力データがあります。入力内容を破棄して現場を切り替えますか？',
+                                                    confirmText: '破棄して切替',
+                                                }))) return;
                                                 setHasUnsavedChanges(false);
-                                                setSelectedProjectId(String(p.id)); 
-                                                localStorage.setItem('cost-app-worker-project', String(p.id)); 
+                                                setSelectedProjectId(String(p.id));
+                                                localStorage.setItem('cost-app-worker-project', String(p.id));
                                             }}
                                             className={`text-xs font-bold px-2.5 py-1 rounded-full border cursor-pointer active:scale-95 transition ${String(p.id) === String(selectedProjectId)
                                                     ? 'bg-blue-100 text-blue-700 border-blue-300'
@@ -663,11 +739,16 @@ const WorkerApp = () => {
                     )}
 
                     <label className="block text-sm font-bold text-slate-600 mb-2">現場を選択</label>
-                    <select value={selectedProjectId} onChange={(e) => {
-                        if (hasUnsavedChanges && !window.confirm("未送信の入力データがあります。入力内容を破棄して現場を切り替えますか？")) return;
+                    <select value={selectedProjectId} onChange={async (e) => {
+                        const value = e.target.value;
+                        if (hasUnsavedChanges && !(await confirm({
+                            title: '現場の切り替え',
+                            message: '未送信の入力データがあります。入力内容を破棄して現場を切り替えますか？',
+                            confirmText: '破棄して切替',
+                        }))) return;
                         setHasUnsavedChanges(false);
-                        setSelectedProjectId(e.target.value); 
-                        localStorage.setItem('cost-app-worker-project', e.target.value); 
+                        setSelectedProjectId(value);
+                        localStorage.setItem('cost-app-worker-project', value);
                     }}
                         className="w-full bg-white border-2 border-blue-200 text-slate-800 p-4 rounded-xl font-bold text-lg outline-none focus:border-blue-500 shadow-sm appearance-none">
                         <option value="">現場を選ぶ...</option>
@@ -763,6 +844,7 @@ const WorkerApp = () => {
                                                     {/* 削除ボタン（スロットが2つ以上の場合のみ） */}
                                                     {t.time_slots.length > 1 && (
                                                         <button onClick={() => removeTimeSlot(t.id, slot.slot_id, slot.record_id)}
+                                                            aria-label="この時間帯を削除" title="この時間帯を削除"
                                                             className={`w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition shrink-0 ${slotIdx === 0 ? 'mt-5' : ''}`}>
                                                             <X size={16} />
                                                         </button>

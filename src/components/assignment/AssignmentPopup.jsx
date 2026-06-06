@@ -48,6 +48,8 @@ const AssignmentPopup = React.forwardRef(({
                     </div>
                     <button
                         onClick={onClose}
+                        aria-label="閉じる"
+                        title="閉じる"
                         className="p-0.5 hover:bg-slate-600 rounded transition"
                     >
                         <X size={14} />

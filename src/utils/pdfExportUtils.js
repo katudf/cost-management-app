@@ -428,7 +428,8 @@ const openPrintWindow = (html) => {
             setTimeout(() => printWindow.print(), 300);
         };
     } else {
-        alert('ポップアップがブロックされました。ブラウザの設定でポップアップを許可してください。');
+        // 呼び出し側（try/catch）で showToast 表示できるよう例外を送出する
+        throw new Error('ポップアップがブロックされました。ブラウザの設定でポップアップを許可してください。');
     }
 };
 

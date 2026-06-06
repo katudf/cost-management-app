@@ -17,17 +17,19 @@ import {
 import { downloadEstimatePDF } from './EstimatePDF';
 import { supabase } from './lib/supabase';
 import { parseExcelForEstimate } from './utils/excelImportUtils';
+import { useToast } from './components/Toast';
+import { ESTIMATE_STATUS, ESTIMATE_STATUS_LABEL } from './utils/constants';
 
-// ステータス表示設定
+// ステータス表示設定（ラベルは constants の定数を参照）
 const STATUS_CONFIG = {
-  draft:     { label: '下書き',   className: 'bg-slate-100 text-slate-600' },
-  pending:   { label: '申請中',   className: 'bg-yellow-100 text-yellow-700' },
-  approved:  { label: '承認',     className: 'bg-green-100 text-green-700' },
-  returned:  { label: '差し戻し', className: 'bg-red-100 text-red-600' },
+  [ESTIMATE_STATUS.DRAFT]:    { label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.DRAFT],    className: 'bg-slate-100 text-slate-600' },
+  [ESTIMATE_STATUS.PENDING]:  { label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.PENDING],  className: 'bg-yellow-100 text-yellow-700' },
+  [ESTIMATE_STATUS.APPROVED]: { label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.APPROVED], className: 'bg-green-100 text-green-700' },
+  [ESTIMATE_STATUS.RETURNED]: { label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.RETURNED], className: 'bg-red-100 text-red-600' },
 };
 
 const StatusBadge = ({ status }) => {
-  const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.draft;
+  const cfg = STATUS_CONFIG[status] || STATUS_CONFIG[ESTIMATE_STATUS.DRAFT];
   return (
     <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${cfg.className}`}>
       {cfg.label}
@@ -39,6 +41,7 @@ const StatusBadge = ({ status }) => {
 // メインコンポーネント
 // ============================================================
 const EstimateList = ({ onEdit }) => {
+  const { showToast } = useToast();
   const [estimates, setEstimates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -82,7 +85,7 @@ const EstimateList = ({ onEdit }) => {
       setEstimates(prev => prev.filter(e => e.id !== id));
       setConfirmDelete(null);
     } catch (e) {
-      alert('削除に失敗しました: ' + e.message);
+      showToast('削除に失敗しました: ' + e.message, 'error');
     }
   };
 
@@ -93,7 +96,7 @@ const EstimateList = ({ onEdit }) => {
       await loadEstimates();
       onEdit(newEst.id); // 複製後すぐ編集画面へ
     } catch (e) {
-      alert('複製に失敗しました: ' + e.message);
+      showToast('複製に失敗しました: ' + e.message, 'error');
     }
   };
 
@@ -117,7 +120,7 @@ const EstimateList = ({ onEdit }) => {
       console.log('[PDF] PDF生成完了');
     } catch (e) {
       console.error('[PDF] エラー:', e);
-      alert('PDF生成に失敗しました: ' + e.message);
+      showToast('PDF生成に失敗しました: ' + e.message, 'error');
     }
   };
 
@@ -186,7 +189,7 @@ const EstimateList = ({ onEdit }) => {
         payment_terms: '従来通り',
         notes: result.notes || null,
         tax_rate: 0.10,
-        status: 'draft',
+        status: ESTIMATE_STATUS.DRAFT,
         show_fixed_fees: false,
         show_net: true,
         show_subtotals: false,
@@ -273,11 +276,11 @@ const EstimateList = ({ onEdit }) => {
         />
         <div className="flex gap-1 flex-wrap">
           {[
-            { key: 'all',       label: 'すべて' },
-            { key: 'draft',     label: '下書き' },
-            { key: 'pending',   label: '申請中' },
-            { key: 'approved',  label: '承認' },
-            { key: 'returned',  label: '差し戻し' },
+            { key: 'all',                     label: 'すべて' },
+            { key: ESTIMATE_STATUS.DRAFT,     label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.DRAFT] },
+            { key: ESTIMATE_STATUS.PENDING,   label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.PENDING] },
+            { key: ESTIMATE_STATUS.APPROVED,  label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.APPROVED] },
+            { key: ESTIMATE_STATUS.RETURNED,  label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.RETURNED] },
           ].map(({ key, label }) => (
             <button
               key={key}
@@ -428,6 +431,7 @@ const EstimateRow = ({ estimate, onEdit, onDuplicate, onDelete, onDownload }) =>
           {/* PDF出力 */}
           <button
             onClick={onDownload}
+            aria-label="PDFプレビュー・印刷"
             title="PDFプレビュー・印刷"
             className="p-1.5 rounded-md hover:bg-green-50 text-green-600 transition"
           >
@@ -436,6 +440,7 @@ const EstimateRow = ({ estimate, onEdit, onDuplicate, onDelete, onDownload }) =>
           {/* 編集 */}
           <button
             onClick={onEdit}
+            aria-label="編集"
             title="編集"
             className="p-1.5 rounded-md hover:bg-blue-50 text-blue-600 transition"
           >
@@ -444,6 +449,7 @@ const EstimateRow = ({ estimate, onEdit, onDuplicate, onDelete, onDownload }) =>
           {/* 複製 */}
           <button
             onClick={onDuplicate}
+            aria-label="複製"
             title="複製"
             className="p-1.5 rounded-md hover:bg-slate-100 text-slate-500 transition"
           >
@@ -452,6 +458,7 @@ const EstimateRow = ({ estimate, onEdit, onDuplicate, onDelete, onDownload }) =>
           {/* 削除 */}
           <button
             onClick={onDelete}
+            aria-label="削除"
             title="削除"
             className="p-1.5 rounded-md hover:bg-red-50 text-red-500 transition"
           >

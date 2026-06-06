@@ -17,6 +17,7 @@ const EditColorPopup = ({ editColorPopup, onClose, onSelectColor }) => {
                 <div className="text-[10px] font-bold text-slate-400 uppercase">配置表カラーを選択</div>
                 <button
                     onClick={onClose}
+                    aria-label="閉じる"
                     className="p-1 hover:bg-slate-100 rounded-full text-slate-400 transition"
                     title="閉じる"
                 >

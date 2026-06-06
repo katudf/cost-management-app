@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { useConfirm } from '../components/ConfirmProvider';
 
 export function useWorkers({ workers, setWorkers, showToast }) {
+    const { confirm } = useConfirm();
     const [isWorkerModalOpen, setIsWorkerModalOpen] = useState(false);
     const [editingWorker, setEditingWorker] = useState(null);
     const [focusedWorkerRow, setFocusedWorkerRow] = useState(null);
@@ -60,7 +62,12 @@ export function useWorkers({ workers, setWorkers, showToast }) {
     };
 
     const removeWorker = async (workerId, workerName) => {
-        if (!window.confirm(`「${workerName}」を削除しますか？\n（※過去の実績データから名前は消えませんが、ログイン画面等の選択肢からは消去されます）`)) return;
+        const ok = await confirm({
+            title: '作業員の削除',
+            message: `「${workerName}」を削除しますか？\n（※過去の実績データから名前は消えませんが、ログイン画面等の選択肢からは消去されます）`,
+            confirmText: '削除する',
+        });
+        if (!ok) return;
 
         const { error } = await supabase.from('Workers').delete().eq('id', workerId);
         if (error) {

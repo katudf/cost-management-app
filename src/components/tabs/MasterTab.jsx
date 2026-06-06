@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Settings, Loader2, Upload, Trash, PlusCircle, Trash2, Clipboard, Table as TableIcon, ExternalLink, PauseCircle, X, GripVertical } from 'lucide-react';
+import { Settings, Loader2, Upload, Trash, PlusCircle, Trash2, Clipboard, Table as TableIcon, PauseCircle, X, GripVertical } from 'lucide-react';
 import { DEFAULT_COLORS, PROJECT_STATUS, PROJECT_STATUS_LIST } from '../../utils/constants';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../Toast';
@@ -168,15 +168,6 @@ const MasterTab = ({
                         {label}
                     </button>
                 ))}
-                <a
-                    href="/?mode=worker"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all text-slate-500 hover:bg-slate-50 hover:text-slate-700"
-                >
-                    <ExternalLink size={18} />
-                    作業日報
-                </a>
             </div>
 
             <div className={`flex-1 overflow-auto ${isLoading ? 'opacity-50 pointer-events-none' : ''}`}>
@@ -295,6 +286,7 @@ const MasterTab = ({
                                                 <button
                                                     onClick={() => removeSuspension(s.id)}
                                                     className="p-1 text-orange-300 hover:text-red-500 hover:bg-red-50 rounded transition"
+                                                    aria-label="この休工期間を削除"
                                                     title="この休工期間を削除"
                                                 >
                                                     <X size={16} />
@@ -361,6 +353,8 @@ const MasterTab = ({
                                             draggable
                                             onDragStart={(e) => handleDragStart(e, index)}
                                             onDragEnd={handleDragEnd}
+                                            role="button"
+                                            aria-label="ドラッグして順序を入れ替え"
                                             className="cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600 p-1 flex items-center justify-center rounded transition animate-pulse-on-hover"
                                             title="ドラッグして順序を入れ替え"
                                         >
@@ -407,6 +401,7 @@ const MasterTab = ({
                                         <button
                                             onClick={() => removeMasterItem(m.id)}
                                             className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
+                                            aria-label="この項目を削除"
                                             title="この項目を削除"
                                         >
                                             <Trash2 size={18} />

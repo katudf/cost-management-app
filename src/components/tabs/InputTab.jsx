@@ -1,6 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Edit3, Plus, Trash2, Filter, Grid, List as ListIcon, ChevronLeft, ChevronRight } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { useToast } from '../../components/Toast';
+import { useConfirm } from '../../components/ConfirmProvider';
 
 const InputTab = ({
     activeProject,
@@ -15,6 +17,8 @@ const InputTab = ({
     updateSubcontractorRecordField,
     removeSubcontractorRecord
 }) => {
+    const { showToast } = useToast();
+    const { confirm } = useConfirm();
     const [companyHolidays, setCompanyHolidays] = useState([]);
     const [viewMode, setViewMode] = useState('matrix');
     const [currentMonth, setCurrentMonth] = useState(() => {
@@ -76,7 +80,7 @@ const InputTab = ({
     }, [activeProject.records, workers, currentMonth, companyHolidays]);
 
     // 前日のデータをコピーする
-    const copyFromPreviousDay = (targetDateStr) => {
+    const copyFromPreviousDay = async (targetDateStr) => {
         const targetDate = new Date(targetDateStr);
         const prevDate = new Date(targetDate);
         prevDate.setDate(targetDate.getDate() - 1);
@@ -84,21 +88,27 @@ const InputTab = ({
 
         const prevRecords = activeProject.records.filter(r => r.date === prevDateStr);
         if (prevRecords.length === 0) {
-            alert('前日に実績データが見つかりません。');
+            showToast('前日に実績データが見つかりません。', 'error');
             return;
         }
 
-        if (confirm(`${prevDateStr} の実績データ ${prevRecords.length}件 を ${targetDateStr} にコピーしますか？`)) {
+        const ok = await confirm({
+            title: '前日データのコピー',
+            message: `${prevDateStr} の実績データ ${prevRecords.length}件 を ${targetDateStr} にコピーしますか？`,
+            confirmText: 'コピーする',
+            variant: 'primary',
+        });
+        if (ok) {
             // 一括追加
             prevRecords.forEach(r => {
-                addRecord({ 
-                    initialValues: { 
-                        date: targetDateStr, 
-                        worker: r.worker, 
-                        hours: r.hours, 
+                addRecord({
+                    initialValues: {
+                        date: targetDateStr,
+                        worker: r.worker,
+                        hours: r.hours,
                         taskId: r.taskId,
                         note: `(コピー) ${r.note || ''}`
-                    } 
+                    }
                 });
             });
         }

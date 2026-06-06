@@ -1,55 +1,52 @@
-import React, { useEffect, useRef } from 'react';
-import { AlertTriangle, HelpCircle, X } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Pencil, X } from 'lucide-react';
 
-const VARIANTS = {
-    danger: {
-        Icon: AlertTriangle,
-        iconWrap: 'bg-red-100 text-red-600',
-        confirmBtn: 'bg-red-600 hover:bg-red-700 shadow-red-200',
-    },
-    primary: {
-        Icon: HelpCircle,
-        iconWrap: 'bg-blue-100 text-blue-600',
-        confirmBtn: 'bg-blue-600 hover:bg-blue-700 shadow-blue-200',
-    },
-};
-
-const ConfirmModal = ({
+const PromptModal = ({
     isOpen,
-    onClose,
+    onCancel,
     onConfirm,
     title,
     message,
-    confirmText = '削除する',
+    defaultValue = '',
+    placeholder = '',
+    confirmText = '追加する',
     cancelText = 'キャンセル',
-    variant = 'danger',
 }) => {
-    const confirmBtnRef = useRef(null);
+    const [value, setValue] = useState(defaultValue);
+    const inputRef = useRef(null);
     const dialogRef = useRef(null);
 
-    // Escapeキーで閉じる
+    useEffect(() => {
+        if (isOpen) {
+            setValue(defaultValue);
+            // マウント直後にフォーカス＆全選択
+            requestAnimationFrame(() => {
+                inputRef.current?.focus();
+                inputRef.current?.select();
+            });
+        }
+    }, [isOpen, defaultValue]);
+
     useEffect(() => {
         if (!isOpen) return;
         const handleKeyDown = (e) => {
             if (e.key === 'Escape') {
                 e.preventDefault();
-                onClose?.();
+                onCancel?.();
             }
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [isOpen, onClose]);
-
-    // 開いたら確定ボタンへフォーカス
-    useEffect(() => {
-        if (isOpen) confirmBtnRef.current?.focus();
-    }, [isOpen]);
+    }, [isOpen, onCancel]);
 
     if (!isOpen) return null;
 
-    const { Icon, iconWrap, confirmBtn } = VARIANTS[variant] || VARIANTS.danger;
+    const submit = () => {
+        const trimmed = value.trim();
+        if (!trimmed) return; // 空入力は確定不可
+        onConfirm?.(trimmed);
+    };
 
-    // Tabキーをモーダル内に閉じ込める（簡易フォーカストラップ）
     const handleTrapKeyDown = (e) => {
         if (e.key !== 'Tab') return;
         const focusable = dialogRef.current?.querySelectorAll(
@@ -70,25 +67,24 @@ const ConfirmModal = ({
     return (
         <div
             className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200"
-            onClick={onClose}
+            onClick={onCancel}
         >
             <div
                 ref={dialogRef}
                 role="dialog"
                 aria-modal="true"
-                aria-labelledby="confirm-modal-title"
-                aria-describedby="confirm-modal-message"
+                aria-labelledby="prompt-modal-title"
                 onClick={(e) => e.stopPropagation()}
                 onKeyDown={handleTrapKeyDown}
                 className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200"
             >
                 <div className="p-6">
                     <div className="flex items-center justify-between mb-4">
-                        <div className={`w-12 h-12 rounded-full flex items-center justify-center ${iconWrap}`}>
-                            <Icon size={24} />
+                        <div className="w-12 h-12 rounded-full flex items-center justify-center bg-blue-100 text-blue-600">
+                            <Pencil size={22} />
                         </div>
                         <button
-                            onClick={onClose}
+                            onClick={onCancel}
                             aria-label="閉じる"
                             title="閉じる"
                             className="p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-400"
@@ -97,21 +93,36 @@ const ConfirmModal = ({
                         </button>
                     </div>
 
-                    <h3 id="confirm-modal-title" className="text-xl font-bold text-slate-900 mb-2">{title}</h3>
-                    <p id="confirm-modal-message" className="text-slate-600 leading-relaxed whitespace-pre-line">{message}</p>
+                    <h3 id="prompt-modal-title" className="text-xl font-bold text-slate-900 mb-2">{title}</h3>
+                    {message && <p className="text-slate-600 leading-relaxed mb-3 whitespace-pre-line">{message}</p>}
+
+                    <input
+                        ref={inputRef}
+                        type="text"
+                        value={value}
+                        placeholder={placeholder}
+                        onChange={(e) => setValue(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                                e.preventDefault();
+                                submit();
+                            }
+                        }}
+                        className="w-full h-12 px-4 rounded-xl border border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none text-base"
+                    />
                 </div>
 
                 <div className="bg-slate-50 p-6 flex gap-3 justify-end border-t border-slate-100">
                     <button
-                        onClick={onClose}
+                        onClick={onCancel}
                         className="px-6 py-2.5 rounded-xl font-bold text-slate-600 hover:bg-slate-200 transition-all border border-slate-200 active:scale-95"
                     >
                         {cancelText}
                     </button>
                     <button
-                        ref={confirmBtnRef}
-                        onClick={onConfirm}
-                        className={`px-6 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all active:scale-95 ${confirmBtn}`}
+                        onClick={submit}
+                        disabled={!value.trim()}
+                        className="px-6 py-2.5 rounded-xl font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                         {confirmText}
                     </button>
@@ -121,4 +132,4 @@ const ConfirmModal = ({
     );
 };
 
-export default ConfirmModal;
+export default PromptModal;

@@ -5,7 +5,7 @@ import { useWorkers } from './hooks/useWorkers';
 import { useDashboardStats } from './hooks/useDashboardStats';
 
 import { useToast } from './components/Toast';
-import { Table, Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, Upload } from 'lucide-react';
+import { Table, Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, Upload, GripVertical } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { DEFAULT_MASTER_DATA, PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR, ITEM_TYPE } from './utils/constants';
 import { calculateAge } from './utils/dateUtils';
@@ -21,6 +21,7 @@ import DashboardTab from './components/tabs/DashboardTab';
 import InputTab from './components/tabs/InputTab';
 import MasterTab from './components/tabs/MasterTab';
 import WorkersTab from './components/tabs/WorkersTab';
+import DailyReportTab from './components/tabs/DailyReportTab';
 import SystemSettingsTab from './components/tabs/SystemSettingsTab';
 import PurchaseLedgerTab from './components/tabs/PurchaseLedgerTab';
 import AssignmentChartTab from './components/tabs/AssignmentChartTab';
@@ -39,7 +40,9 @@ const App = () => {
 
 
     const [activeProjectId, setActiveProjectId] = useState(null);
-    const [dashboardPages, setDashboardPages] = useState({ 見積: 1, 予定: 1, 施工中: 1, 完了: 1 });
+    const [dashboardPages, setDashboardPages] = useState(
+        () => Object.fromEntries(PROJECT_STATUS_LIST.map(s => [s, 1]))
+    );
 
     const [dashboardSubTab, setDashboardSubTab] = useState('all'); // 'all', 'estimate', 'completed'
     const [draggedProjectId, setDraggedProjectId] = useState(null);
@@ -177,6 +180,19 @@ const App = () => {
             showToast('移動に失敗しました。', 'error');
         } finally {
             setDraggedProjectId(null);
+        }
+    };
+
+    // タッチ端末向け：ドラッグせずにステータス（カラム）を変更する代替手段
+    const handleStatusSelect = async (projectId, newStatus) => {
+        const proj = projects.find(p => p.id === projectId);
+        if (!proj || proj.status === newStatus) return;
+        try {
+            await projectOps.reorderAndMoveProjects(projectId, newStatus, null, 'after');
+            showToast(`「${proj.siteName || '無題の現場'}」を${newStatus}に移動しました。`, 'success');
+        } catch (error) {
+            console.error('Status select error:', error);
+            showToast('ステータスの変更に失敗しました。', 'error');
         }
     };
 
@@ -496,7 +512,7 @@ const App = () => {
             }
         } catch (e) {
             console.error(e);
-            showToast('PDF出力中にエラーが発生しました。', 'error');
+            showToast(e?.message || 'PDF出力中にエラーが発生しました。', 'error');
         } finally {
             setIsLoading(false);
         }
@@ -519,12 +535,12 @@ const App = () => {
                             <nav className="bg-white p-2 rounded-lg shadow-sm border flex gap-1 overflow-x-auto">
                                 {[
                                     { key: 'dashboard', label: 'ホーム', Icon: Home },
-                                    { key: 'master', label: '工事設定', Icon: Settings },
-                                    { key: 'workers', label: '作業員', Icon: Users },
                                     { key: 'assignment', label: '配置表', Icon: Calendar },
-                                    { key: 'settings', label: '設定', Icon: Settings },
-                                    { key: 'purchase_ledger', label: '材料', Icon: FileText },
+                                    { key: 'daily_report', label: '日報', Icon: FileText },
                                     { key: 'estimate', label: '見積', Icon: Clipboard },
+                                    { key: 'workers', label: '作業員', Icon: Users },
+                                    { key: 'purchase_ledger', label: '材料', Icon: Table },
+                                    { key: 'settings', label: '設定', Icon: Settings },
                                 ].map(({ key, label, Icon }) => (
                                     <button key={key} onClick={() => setActiveTab(key)} className={`px-4 py-2 rounded-md transition font-bold whitespace-nowrap flex items-center gap-1.5 ${activeTab === key ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 text-slate-600'}`}>
                                         <Icon size={16} />
@@ -686,42 +702,72 @@ const App = () => {
                                                     {visibleProjects.map(proj => (
                                                         <div
                                                             key={proj.id}
-                                                            onClick={() => {
-                                                                setActiveProjectId(proj.id);
-                                                                setActiveTab('master');
-                                                            }}
-                                                            draggable="true"
-                                                            onDragStart={(e) => handleDragStart(e, proj.id)}
                                                             onDragOver={(e) => handleDragOverCard(e, proj.id)}
                                                             onDragEnd={handleDragEnd}
                                                             onDrop={(e) => handleCardDrop(e, status, proj.id)}
-                                                            className={`bg-white rounded-lg border-2 shadow-sm hover:shadow-md hover:-translate-y-0.5 hover:border-blue-400 transition-all cursor-grab active:cursor-grabbing overflow-hidden flex flex-col group p-4
+                                                            className={`bg-white rounded-lg border-2 shadow-sm hover:shadow-md hover:-translate-y-0.5 hover:border-blue-400 transition-all overflow-hidden flex flex-col group p-4
                                                                 ${draggedProjectId === proj.id ? 'opacity-40 border-dashed border-blue-300' : 'border-slate-200'}
                                                                 ${dragOverProjectId === proj.id && dragOverPosition === 'before' ? 'shadow-[inset_0_4px_0_0_#3b82f6]' : ''}
                                                                 ${dragOverProjectId === proj.id && dragOverPosition === 'after' ? 'shadow-[inset_0_-4px_0_0_#3b82f6]' : ''}
                                                             `}
                                                         >
-                                                            <div className="mb-3">
-                                                                <h4 className="font-bold text-slate-800 line-clamp-2 leading-tight group-hover:text-blue-700 transition-colors text-sm">
-                                                                    {proj.siteName}
-                                                                </h4>
-                                                                <div className="mt-1 flex items-center gap-1 text-[10px] text-slate-500 font-medium">
-                                                                    <User size={12} className="text-slate-400" />
-                                                                    {proj.foreman_worker_id ? (workers.find(w => w.id === proj.foreman_worker_id)?.name || '未設定') : '職長未設定'}
-                                                                </div>
+                                                            {/* 操作バー：ドラッグハンドル（PC）＋ステータス変更（タッチ対応） */}
+                                                            <div className="flex items-center justify-between mb-2 -mt-1">
+                                                                <span
+                                                                    draggable="true"
+                                                                    onDragStart={(e) => handleDragStart(e, proj.id)}
+                                                                    onDragEnd={handleDragEnd}
+                                                                    onClick={(e) => e.stopPropagation()}
+                                                                    role="button"
+                                                                    aria-label="ドラッグして並び替え・ステータス変更"
+                                                                    title="ドラッグして並び替え・ステータス変更"
+                                                                    className="hidden sm:inline-flex items-center text-slate-300 hover:text-slate-500 cursor-grab active:cursor-grabbing p-1 -ml-1 rounded"
+                                                                >
+                                                                    <GripVertical size={16} />
+                                                                </span>
+                                                                <select
+                                                                    value={status}
+                                                                    onClick={(e) => e.stopPropagation()}
+                                                                    onChange={(e) => { e.stopPropagation(); handleStatusSelect(proj.id, e.target.value); }}
+                                                                    aria-label="ステータスを変更"
+                                                                    title="ステータスを変更"
+                                                                    className="ml-auto text-[11px] font-bold text-slate-500 bg-slate-50 border border-slate-200 rounded-md px-1.5 py-0.5 outline-none focus:border-blue-400 cursor-pointer"
+                                                                >
+                                                                    {PROJECT_STATUS_LIST.map(s => <option key={s} value={s}>{s}</option>)}
+                                                                </select>
                                                             </div>
-                                                            
-                                                            <div className="mt-auto pt-2 border-t border-slate-50">
-                                                                <div className="flex justify-between items-end mb-1">
-                                                                    <span className="text-[10px] font-bold text-slate-400">進捗 {proj.overallProgress}%</span>
-                                                                    <span className={`text-[10px] font-bold ${proj.predictedProfitLoss >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                                                                        {proj.predictedProfitLoss >= 0 ? '+' : ''}¥{Math.abs(Math.round(proj.predictedProfitLoss)).toLocaleString()}
-                                                                    </span>
+
+                                                            {/* 本文：クリックで詳細へ */}
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    setActiveProjectId(proj.id);
+                                                                    setActiveTab('master');
+                                                                }}
+                                                                className="text-left cursor-pointer flex flex-col flex-1 w-full"
+                                                            >
+                                                                <div className="mb-3">
+                                                                    <h4 className="font-bold text-slate-800 line-clamp-2 leading-tight group-hover:text-blue-700 transition-colors text-sm">
+                                                                        {proj.siteName}
+                                                                    </h4>
+                                                                    <div className="mt-1 flex items-center gap-1 text-[11px] text-slate-500 font-medium">
+                                                                        <User size={12} className="text-slate-400" />
+                                                                        {proj.foreman_worker_id ? (workers.find(w => w.id === proj.foreman_worker_id)?.name || '未設定') : '職長未設定'}
+                                                                    </div>
                                                                 </div>
-                                                                <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
-                                                                    <div className={`h-full rounded-full ${PROJECT_STATUS_COLOR[status] || 'bg-slate-400'}`} style={{ width: `${Math.min(100, Math.max(0, proj.overallProgress))}%` }}></div>
+
+                                                                <div className="mt-auto pt-2 border-t border-slate-100 w-full">
+                                                                    <div className="flex justify-between items-end mb-1">
+                                                                        <span className="text-xs font-bold text-slate-500">進捗 {proj.overallProgress}%</span>
+                                                                        <span className={`text-xs font-bold ${proj.predictedProfitLoss >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                                            {proj.predictedProfitLoss >= 0 ? '+' : ''}¥{Math.abs(Math.round(proj.predictedProfitLoss)).toLocaleString()}
+                                                                        </span>
+                                                                    </div>
+                                                                    <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                                                                        <div className={`h-full rounded-full ${PROJECT_STATUS_COLOR[status] || 'bg-slate-400'}`} style={{ width: `${Math.min(100, Math.max(0, proj.overallProgress))}%` }}></div>
+                                                                    </div>
                                                                 </div>
-                                                            </div>
+                                                            </button>
                                                         </div>
                                                     ))}
                                                     {visibleProjects.length === 0 && (
@@ -798,6 +844,15 @@ const App = () => {
                         />
                     )}
 
+                    {activeTab === 'daily_report' && (
+                        <DailyReportTab
+                            isLoading={isLoading}
+                            workers={workers}
+                            workerSummaryData={dashboardStats.workerSummaryData}
+                            setExportModalWorker={workerOps.setExportModalWorker}
+                        />
+                    )}
+
                     {activeTab === 'workers' && (
                         <WorkersTab
                             isLoading={isLoading}
@@ -806,8 +861,6 @@ const App = () => {
                             handleWorkerReorder={workerOps.handleWorkerReorder}
                             openEditWorkerModal={workerOps.openEditWorkerModal}
                             removeWorker={workerOps.removeWorker}
-                            workerSummaryData={dashboardStats.workerSummaryData}
-                            setExportModalWorker={workerOps.setExportModalWorker}
                         />
                     )}
 

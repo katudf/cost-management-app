@@ -605,15 +605,15 @@ const DetailPage = ({ estimate, totals, settings }) => {
   // No連番カウンター
   let itemNo = 0;
 
-  // 工種ごとの小計計算
-  const categoryTotals = {};
-  let currentCatId = null;
+  // 工種ごとの小計（オブジェクト参照キーのMapで管理）
+  const catSubtotalMap = new Map();
+  let currentCat = null;
   items.forEach(item => {
     if (item.item_type === ITEM_TYPE.CATEGORY) {
-      currentCatId = item.id || item._tempId;
-      categoryTotals[currentCatId] = 0;
-    } else if (item.item_type === ITEM_TYPE.ITEM && currentCatId) {
-      categoryTotals[currentCatId] += Number(item.amount) || 0;
+      currentCat = item;
+      catSubtotalMap.set(item, 0);
+    } else if (item.item_type === ITEM_TYPE.ITEM && currentCat) {
+      catSubtotalMap.set(currentCat, (catSubtotalMap.get(currentCat) || 0) + (Number(item.amount) || 0));
     }
   });
 
@@ -649,16 +649,17 @@ const DetailPage = ({ estimate, totals, settings }) => {
         const pageBottomBorderStyle = isLastRowOfPage ? { borderBottom: '1pt solid #1a1a1a' } : {};
 
         if (item.item_type === ITEM_TYPE.CATEGORY) {
-          const catId = item.id || item._tempId;
-          const catTotal = categoryTotals[catId] || 0;
-
+          const catTotal = catSubtotalMap.get(item) || 0;
           return (
             <React.Fragment key={idx}>
-              {/* 工種見出し行 */}
+              {/* 工種見出し行：列罫線なし、金額列に工種小計を表示 */}
               <View style={[S.categoryRow, pageBottomBorderStyle]} wrap={false} break={shouldBreak}>
-                <Text style={S.cellNo}></Text>
-                <Text style={[S.cellName, { fontWeight: 'bold', flex: 7 }]}>
+                <Text style={[S.cellNo, { borderRight: 'none' }]}></Text>
+                <Text style={[S.cellName, { fontWeight: 'bold', flex: 7, borderRight: 'none' }]}>
                   {item.category_symbol ? `${item.category_symbol}　` : ''}{wrapText(item.name)}
+                </Text>
+                <Text style={[S.cellAmount, { fontWeight: 'bold', borderRight: 'none' }]}>
+                  {catTotal > 0 ? fmt(catTotal) : ''}
                 </Text>
                 <Text style={S.cellNote}></Text>
               </View>

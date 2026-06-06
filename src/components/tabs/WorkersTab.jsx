@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Users, Settings, Plus, Calendar, BarChart3, User, ChevronRight, FileText } from 'lucide-react';
+import { Users, Settings, Plus, Calendar, User, ChevronRight } from 'lucide-react';
 import { calculateAge } from '../../utils/dateUtils';
 import WorkerDetailsModal from '../WorkerDetailsModal';
 
@@ -10,48 +10,14 @@ const WorkersTab = ({
     handleWorkerReorder,
     openEditWorkerModal,
     removeWorker,
-    workerSummaryData,
-    setExportModalWorker
 }) => {
     const [selectedWorkerForDetails, setSelectedWorkerForDetails] = useState(null);
     const [showResigned, setShowResigned] = useState(false);
-    const [checkedWorkers, setCheckedWorkers] = useState({});
 
     const filteredWorkers = useMemo(() => {
         if (showResigned) return workers;
         return (workers || []).filter(w => !w.resignation_date);
     }, [workers, showResigned]);
-
-    const filteredSummaryData = useMemo(() => {
-        if (showResigned) return workerSummaryData;
-        return (workerSummaryData || []).filter(data => {
-            const worker = workers.find(w => w.name === data.name);
-            return !worker || !worker.resignation_date;
-        });
-    }, [workerSummaryData, workers, showResigned]);
-
-    const allChecked = filteredSummaryData.length > 0 && filteredSummaryData.every(d => checkedWorkers[d.name]);
-    const checkedCount = filteredSummaryData.filter(d => checkedWorkers[d.name]).length;
-
-    const handleToggleAll = () => {
-        if (allChecked) {
-            setCheckedWorkers({});
-        } else {
-            const next = {};
-            filteredSummaryData.forEach(d => { next[d.name] = true; });
-            setCheckedWorkers(next);
-        }
-    };
-
-    const handleToggleWorker = (name) => {
-        setCheckedWorkers(prev => ({ ...prev, [name]: !prev[name] }));
-    };
-
-    const handleBatchExport = () => {
-        const selected = filteredSummaryData.filter(d => checkedWorkers[d.name]).map(d => d.name);
-        if (selected.length === 0) return;
-        setExportModalWorker(selected.length === 1 ? selected[0] : selected);
-    };
 
     return (
         <div className={`p-6 bg-slate-50 min-h-[500px] ${isLoading ? 'opacity-50 pointer-events-none' : ''}`}>
@@ -77,8 +43,8 @@ const WorkersTab = ({
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* 左側：マスター管理（名簿・順番） */}
+            <div className="grid grid-cols-1 gap-6">
+                {/* マスター管理（名簿・順番） */}
                 <div className="bg-white rounded-xl border object-contain border-slate-200 shadow-sm p-4 h-fit">
                     <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-100">
                         <h3 className="font-bold text-slate-700 flex items-center gap-2">
@@ -148,74 +114,6 @@ const WorkersTab = ({
                     </p>
                 </div>
 
-                {/* 右側：日報出力 */}
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 h-fit">
-                    <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-100">
-                        <h3 className="font-bold text-slate-700 flex items-center gap-2">
-                            <BarChart3 size={18} className="text-slate-400" />
-                            作業員別 日報出力
-                        </h3>
-                        <button
-                            onClick={handleBatchExport}
-                            disabled={checkedCount === 0}
-                            className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-blue-700 transition disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                            <FileText size={16} />
-                            {checkedCount > 0 ? `${checkedCount}名分を出力` : '出力する作業員を選択'}
-                        </button>
-                    </div>
-
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left">
-                            <thead>
-                                <tr className="bg-slate-100 text-slate-600 text-xs tracking-wider uppercase">
-                                    <th className="p-3 font-bold rounded-l-lg w-10 text-center">
-                                        <input
-                                            type="checkbox"
-                                            checked={allChecked}
-                                            onChange={handleToggleAll}
-                                            className="w-4 h-4 rounded accent-blue-600 cursor-pointer"
-                                            title="全選択/全解除"
-                                        />
-                                    </th>
-                                    <th className="p-3 font-bold rounded-r-lg">作業員名</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                                {filteredSummaryData.length === 0 ? (
-                                    <tr>
-                                        <td colSpan="2" className="p-8 text-center text-slate-400 font-bold">まだ作業実績がありません</td>
-                                    </tr>
-                                ) : (
-                                    filteredSummaryData.map((data, idx) => (
-                                        <tr
-                                            key={idx}
-                                            className={`transition cursor-pointer ${checkedWorkers[data.name] ? 'bg-blue-50 hover:bg-blue-100' : 'hover:bg-slate-50'}`}
-                                            onClick={() => handleToggleWorker(data.name)}
-                                        >
-                                            <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                                                <input
-                                                    type="checkbox"
-                                                    checked={!!checkedWorkers[data.name]}
-                                                    onChange={() => handleToggleWorker(data.name)}
-                                                    className="w-4 h-4 rounded accent-blue-600 cursor-pointer"
-                                                />
-                                            </td>
-                                            <td className="p-3 font-bold text-slate-800 flex items-center gap-2 whitespace-nowrap">
-                                                <User size={16} className="text-slate-400" /> {data.name}
-                                                {workers.find(w => w.name === data.name)?.birthDate && (
-                                                    <span className="text-xs font-normal text-slate-500">
-                                                        ({calculateAge(workers.find(w => w.name === data.name).birthDate)}歳)
-                                                    </span>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    ))
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
             </div>
         </div>
     );

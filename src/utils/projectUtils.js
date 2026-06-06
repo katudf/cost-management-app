@@ -1,4 +1,5 @@
 // HOURLY_WAGE is now dynamically passed as 'hourlyWage' in calculateProjectsSummary
+import { PROJECT_STATUS } from './constants';
 
 export const calculateProjectsSummary = (projects, hourlyWage) => {
     return projects.map(proj => {
@@ -25,7 +26,7 @@ export const calculateProjectsSummary = (projects, hourlyWage) => {
         const subcontractorCost = (proj.subcontractors || []).reduce((sum, s) => sum + (Number(s.worker_count) * Number(s.unit_price || 0)), 0);
 
         let overallProgress = Math.round(overallProgressValue);
-        if (proj.status === '完了' && masterData.length === 0) {
+        if (proj.status === PROJECT_STATUS.COMPLETED && masterData.length === 0) {
             overallProgress = 100;
         }
 

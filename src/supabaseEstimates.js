@@ -2,7 +2,7 @@
 // 見積書機能のSupabase操作関数
 
 import { supabase } from './lib/supabase';
-import { ITEM_TYPE } from './utils/constants';
+import { ITEM_TYPE, ESTIMATE_STATUS } from './utils/constants';
 
 // ============================================================
 // 見積書一覧取得
@@ -136,7 +136,7 @@ export const duplicateEstimate = async (id) => {
   const newEstimate = await createEstimate({
     ...headerData,
     estimate_number: newNumber,
-    status: 'draft',
+    status: ESTIMATE_STATUS.DRAFT,
     issue_date: new Date().toISOString().split('T')[0],
     customer: undefined,
     creator: undefined,
@@ -170,11 +170,14 @@ export const saveEstimateItems = async (estimateId, items) => {
 
   if (items.length === 0) return;
 
-  const insertData = items.map((item, index) => ({
-    ...item,
-    estimate_id: estimateId,
-    sort_order: index,
-  }));
+  const insertData = items.map((item, index) => {
+    const { id: _id, created_at: _ca, ...rest } = item;
+    return {
+      ...rest,
+      estimate_id: estimateId,
+      sort_order: index,
+    };
+  });
 
   const { error } = await supabase
     .from('estimate_items')
@@ -260,4 +263,19 @@ export const fetchOfficeStaff = async () => {
 
   if (error) throw error;
   return data;
+};
+
+// ============================================================
+// システム設定の取得（id=1 固定行）
+// ============================================================
+export const fetchSystemSettings = async () => {
+  const { data, error } = await supabase
+    .from('system_settings')
+    .select('*')
+    .eq('id', 1)
+    .single();
+
+  // PGRST116 = row not found → 空オブジェクトで返す
+  if (error && error.code !== 'PGRST116') throw error;
+  return data || {};
 };
