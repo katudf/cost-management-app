@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './lib/supabase';
 import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2, PlusCircle, Clock, X } from 'lucide-react';
 import { useToast } from './components/Toast';
 import { useConfirm } from './components/ConfirmProvider';
 import { calculateWorkHours, calculateNinku, getSeasonConfig, formatTimeDisplay } from './utils/workTimeUtils';
 import { PROJECT_STATUS } from './utils/constants';
+import { syncOvertimeApproval, fetchPendingApprovals, approveOvertime, fetchApprovalReason } from './lib/overtimeApprovals';
 
 const WorkerApp = () => {
     const { showToast } = useToast();
@@ -30,6 +31,12 @@ const WorkerApp = () => {
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
     const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
+
+    // 残業理由（その現場・その日の残業に対する任意のメモ）
+    const [overtimeReason, setOvertimeReason] = useState('');
+    // 職長: 承認待ちの残業申請リスト
+    const [pendingApprovals, setPendingApprovals] = useState([]);
+    const [approvingId, setApprovingId] = useState(null);
 
     // Initial load
     useEffect(() => {
@@ -132,6 +139,7 @@ const WorkerApp = () => {
                         time_slots,
                         deleted_record_ids: [],
                         today_note: todayRecords.length > 0 ? (todayRecords[0].note || '') : '',
+                        work_allowance: todayRecords.length > 0 ? (todayRecords[0].work_allowance || false) : false,
                     };
                 });
 
@@ -139,6 +147,12 @@ const WorkerApp = () => {
                 setSubcontractors(sData || []);
                 setDeletedSubcontractorIds([]);
                 setHasUnsavedChanges(false);
+
+                // 既存の残業理由を読み込む（その現場・その日・この作業員）
+                try {
+                    const reason = await fetchApprovalReason(selectedProjectId, loggedInWorker.name, selectedDate);
+                    setOvertimeReason(reason);
+                } catch (e) { setOvertimeReason(''); }
 
                 if (project && project.foreman_worker_id === loggedInWorker.id) {
                     const { data: allRecords } = await supabase.from('TaskRecords').select('*').eq('project_id', selectedProjectId);
@@ -157,6 +171,38 @@ const WorkerApp = () => {
         };
         loadProjectDetails();
     }, [selectedProjectId, loggedInWorker, selectedDate]);
+
+    // 職長が担当する全現場の承認待ち残業を読み込む
+    const loadPendingApprovals = useCallback(async () => {
+        if (!loggedInWorker) { setPendingApprovals([]); return; }
+        const foremanProjectIds = projects
+            .filter(p => p.foreman_worker_id === loggedInWorker.id)
+            .map(p => p.id);
+        if (foremanProjectIds.length === 0) { setPendingApprovals([]); return; }
+        try {
+            const data = await fetchPendingApprovals(foremanProjectIds);
+            setPendingApprovals(data);
+        } catch (e) {
+            console.error('Failed to load pending approvals:', e);
+        }
+    }, [loggedInWorker, projects]);
+
+    useEffect(() => { loadPendingApprovals(); }, [loadPendingApprovals]);
+
+    // 残業申請を承認する
+    const handleApproveOvertime = async (id) => {
+        setApprovingId(id);
+        try {
+            await approveOvertime(id, loggedInWorker.name);
+            await loadPendingApprovals();
+            showToast('残業を承認しました。', 'success');
+        } catch (e) {
+            console.error('Approve overtime error:', e);
+            showToast('承認に失敗しました。', 'error');
+        } finally {
+            setApprovingId(null);
+        }
+    };
 
     const handleLogin = (worker) => { setLoggedInWorker(worker); localStorage.setItem('cost-app-worker', JSON.stringify(worker)); };
     const handleLogout = async () => {
@@ -247,7 +293,7 @@ const WorkerApp = () => {
                 setTasks(prev => [...prev, {
                     id: ins.id, name: ins.name, target_hours: ins.target_hours, progress_percentage: ins.progress_percentage, order: ins.order,
                     time_slots: [{ slot_id: `new-${Date.now()}`, record_id: null, start_time: '', end_time: '', is_overnight: false }],
-                    deleted_record_ids: [], today_note: '',
+                    deleted_record_ids: [], today_note: '', work_allowance: false,
                 }]);
                 setHasUnsavedChanges(true);
             }
@@ -433,6 +479,7 @@ const WorkerApp = () => {
                     time_slots: [{ slot_id: `new-${Date.now()}-${t.id}`, record_id: null, start_time: '', end_time: '', is_overnight: false }],
                     deleted_record_ids: [],
                     today_note: '',
+                    work_allowance: false,
                 })));
                 setHasUnsavedChanges(false);
             }
@@ -518,6 +565,7 @@ const WorkerApp = () => {
                         start_time: slot.start_time,
                         end_time: slot.end_time,
                         note: j === 0 ? (t.today_note || '') : '',
+                        work_allowance: t.work_allowance || false,
                     };
 
                     if (slot.record_id) {
@@ -589,6 +637,23 @@ const WorkerApp = () => {
                     const subFailed = subResults.find(r => r.error);
                     if (subFailed) throw subFailed.error;
                 }
+            }
+
+            // 残業承認の同期（その日・その現場・この作業員の残業合計で起票/更新/削除）
+            try {
+                const overtimeTotal = tasksWithCalculation.reduce(
+                    (sum, tc) => sum + (Number(tc.total_overtime) || 0), 0
+                );
+                await syncOvertimeApproval({
+                    projectId: selectedProjectId,
+                    workerName: loggedInWorker.name,
+                    date: targetDate,
+                    overtimeTotal,
+                    reason: overtimeReason,
+                });
+            } catch (e) {
+                console.error('Overtime approval sync error:', e);
+                /* 残業承認の同期失敗は日報保存自体は成功扱いとし、致命的にはしない */
             }
 
             // リフレッシュ
@@ -865,6 +930,49 @@ const WorkerApp = () => {
                             </div>
                         )}
 
+                        {/* 職長: 承認待ちの残業申請 */}
+                        {isForeman && pendingApprovals.length > 0 && (
+                            <div className="bg-white border border-amber-200 rounded-2xl shadow-sm overflow-hidden mb-2">
+                                <div className="bg-amber-500 px-4 py-3 flex gap-2 items-center text-white shadow-sm">
+                                    <Clock className="shrink-0 w-5 h-5" />
+                                    <h3 className="font-bold text-sm">承認待ちの残業（{pendingApprovals.length}件）</h3>
+                                </div>
+                                <div className="p-3 flex flex-col gap-2 bg-amber-50">
+                                    {pendingApprovals.map(a => {
+                                        const proj = projects.find(p => p.id === Number(a.project_id));
+                                        return (
+                                            <div key={a.id} className="bg-white border border-amber-200 rounded-xl p-3 flex items-center justify-between gap-3">
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="text-xs font-bold text-slate-800 truncate">{a.worker_name}</div>
+                                                    <div className="text-[11px] text-slate-500 font-medium truncate">
+                                                        {a.date} ・ {proj?.name || '現場'}
+                                                    </div>
+                                                    <div className="text-xs font-black text-orange-600 mt-0.5">
+                                                        残業 {Number(a.requested_hours).toFixed(1)}H
+                                                    </div>
+                                                    {a.reason && (
+                                                        <div className="text-[11px] text-slate-600 mt-1 bg-slate-50 rounded px-2 py-1 break-words">
+                                                            {a.reason}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <button
+                                                    onClick={() => handleApproveOvertime(a.id)}
+                                                    disabled={approvingId === a.id}
+                                                    className="shrink-0 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-bold text-sm px-4 py-2 rounded-lg transition active:scale-95 flex items-center gap-1"
+                                                >
+                                                    {approvingId === a.id
+                                                        ? <Loader2 className="w-4 h-4 animate-spin" />
+                                                        : <CheckCircle2 className="w-4 h-4" />}
+                                                    承認
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
                         {/* ========== 作業項目カード ========== */}
                         {tasksWithCalculation.map((t) => (
                             <div key={t.id} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
@@ -939,6 +1047,16 @@ const WorkerApp = () => {
                                         </div>
                                     )}
 
+                                    {/* 作業手当 */}
+                                    {t.has_any_input && (
+                                        <label className={`flex items-center gap-2 p-3 rounded-lg border-2 cursor-pointer transition select-none ${t.work_allowance ? 'bg-amber-50 border-amber-300' : 'bg-slate-50 border-slate-200 hover:bg-slate-100'}`}>
+                                            <input type="checkbox" checked={t.work_allowance || false}
+                                                onChange={(e) => updateTaskField(t.id, 'work_allowance', e.target.checked)}
+                                                className="w-5 h-5 text-amber-500 accent-amber-500 cursor-pointer" />
+                                            <span className={`text-sm font-bold ${t.work_allowance ? 'text-amber-700' : 'text-slate-500'}`}>作業手当の対象</span>
+                                        </label>
+                                    )}
+
                                     {/* メモ */}
                                     {t.has_any_input && (
                                         <input type="text" placeholder="メモ（任意）" value={t.today_note || ''}
@@ -967,6 +1085,30 @@ const WorkerApp = () => {
                             className="bg-white border-2 border-dashed border-slate-300 text-slate-500 hover:text-blue-600 hover:border-blue-400 hover:bg-blue-50 py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition">
                             <PlusCircle size={20} /> 新しい作業項目を追加
                         </button>
+
+                        {/* 残業理由（残業がある場合のみ・任意） */}
+                        {totalInputOvertimeHours > 0 && (
+                            <div className="bg-white rounded-2xl shadow-sm border border-orange-200 overflow-hidden mt-2">
+                                <div className="bg-orange-50 px-4 py-3 border-b border-orange-100 flex items-center gap-2">
+                                    <Clock size={16} className="text-orange-500" />
+                                    <h3 className="font-bold text-orange-800 text-sm leading-snug">
+                                        残業 {totalInputOvertimeHours.toFixed(1)}H の理由（任意）
+                                    </h3>
+                                </div>
+                                <div className="p-4">
+                                    <textarea
+                                        value={overtimeReason}
+                                        onChange={(e) => { setOvertimeReason(e.target.value); setHasUnsavedChanges(true); }}
+                                        rows={2}
+                                        placeholder="例）天候による作業遅れの挽回、緊急対応 など"
+                                        className="w-full bg-slate-50 border border-slate-200 p-3 rounded-lg text-sm outline-none focus:border-orange-400 resize-none"
+                                    />
+                                    <p className="text-[11px] text-slate-400 font-medium mt-1.5">
+                                        送信すると職長へ承認申請されます。
+                                    </p>
+                                </div>
+                            </div>
+                        )}
 
                         {/* 協力業者 (職長のみ) */}
                         {isForeman && (

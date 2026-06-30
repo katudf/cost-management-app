@@ -186,7 +186,7 @@ const COMMON_CSS_STYLE = `
 /**
  * 日報用HTMLパーツ（単一作業員用）を生成するヘルパー
  */
-const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, subcontractorsData, companyHolidays) => {
+const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, subcontractorsData, companyHolidays, overtimeApprovals = []) => {
     const dayNames = ["(月)", "(火)", "(水)", "(木)", "(金)", "(土)", "(日)"];
 
     // 日付ごと・現場ごとのグループ化
@@ -305,14 +305,49 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
     }
 
     // ======== 作業手当（1行：時間(H) / 承認サイン を横並び）========
+    // 時間外時間の合計に加え、手当対象作業（work_allowance）の「作業名 実働h」を併記する
     let otRow = `<td class="group-cell">作業手当</td>`;
     otRow += `<td class="item-cell item-label-name" style="writing-mode: horizontal-tb; text-align: center; vertical-align: middle; font-size: 12px; line-height: 1.1;">時<br/>感<br/>(H)</td>`;
     otRow += `<td class="item-cell item-label-qty sub-item vertical-label">承認サイン</td>`;
     days.forEach(d => {
         const dayRecords = (recordsData || []).filter(r => r.date === d);
         const dayOt = dayRecords.reduce((sum, r) => sum + Number(r.overtime_hours || 0), 0);
-        otRow += `<td class="data-cell data-cell-l">${dayOt > 0 ? dayOt.toFixed(1) + 'H' : '&nbsp;'}</td>`;
-        otRow += `<td class="data-cell data-cell-r sign-cell">&nbsp;</td>`;
+
+        // 手当対象作業を作業項目ごとに集計
+        const taskMap = {};
+        dayRecords.forEach(r => {
+            if (!r.work_allowance) return;
+            const taskName = r.ProjectTasks?.name || '不明な作業';
+            taskMap[taskName] = (taskMap[taskName] || 0) + Number(r.hours || 0);
+        });
+        const allowanceLines = Object.entries(taskMap).map(([name, hours]) => `${esc(name)} ${hours.toFixed(1)}h`);
+
+        const lines = [];
+        let approverName = '';
+        if (dayOt > 0) {
+            // その日に残業がある現場のうち、承認されていない現場が1つでもあれば「未承認」
+            const otProjectIds = [...new Set(
+                dayRecords.filter(r => Number(r.overtime_hours || 0) > 0).map(r => String(r.project_id))
+            )];
+            const hasUnapproved = otProjectIds.some(pid =>
+                !(overtimeApprovals || []).some(a =>
+                    String(a.project_id) === pid && a.date === d && a.status === 'approved'
+                )
+            );
+            lines.push(`残業 ${dayOt.toFixed(1)}H${hasUnapproved ? '（未承認）' : ''}`);
+
+            // 承認サイン: その日の承認済み残業の承認者（職長）名を表示する
+            const approvedRow = (overtimeApprovals || []).find(a =>
+                otProjectIds.includes(String(a.project_id)) &&
+                a.date === d && a.status === 'approved' && a.approved_by
+            );
+            if (approvedRow) approverName = approvedRow.approved_by;
+        }
+        lines.push(...allowanceLines);
+
+        const cellHTML = lines.length > 0 ? lines.join('<br/>') : '&nbsp;';
+        otRow += `<td class="data-cell data-cell-l" style="font-size: 9px; line-height: 1.15; text-align: left; padding: 1px 2px;">${cellHTML}</td>`;
+        otRow += `<td class="data-cell data-cell-r sign-cell">${approverName ? esc(approverName) : '&nbsp;'}</td>`;
     });
 
     // ======== 日計（1行）========
@@ -467,8 +502,8 @@ export const generateMultipleWorkersReportPDF = (workersDataList, weekPrefix, co
     if (!workersDataList || workersDataList.length === 0) return;
 
     const parts = workersDataList.map((data, idx) => {
-        const { workerName, days, recordsData, projects, subcontractorsData } = data;
-        const part = createWorkerReportHTMLPart(workerName, days, recordsData, projects, subcontractorsData, companyHolidays);
+        const { workerName, days, recordsData, projects, subcontractorsData, overtimeApprovals } = data;
+        const part = createWorkerReportHTMLPart(workerName, days, recordsData, projects, subcontractorsData, companyHolidays, overtimeApprovals);
         const isLast = idx === workersDataList.length - 1;
         const breakDiv = isLast ? '' : '<div class="page-break"></div>';
         return part + breakDiv;

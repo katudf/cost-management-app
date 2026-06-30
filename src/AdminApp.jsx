@@ -13,6 +13,7 @@ import { calculateProjectsSummary } from './utils/projectUtils';
 import { parseExcelForImport } from './utils/excelImportUtils';
 import { exportToExcel, generateWorkerReportExcel, generateMultipleWorkersReportExcel } from './utils/excelExportUtils';
 import { generateWorkerReportPDF, generateMultipleWorkersReportPDF } from './utils/pdfExportUtils';
+import { fetchApprovalsForReport } from './lib/overtimeApprovals';
 import { optimizeItemsWithGemini } from './utils/aiOptimizeUtils';
 import ImportModal from './components/ImportModal';
 import WorkerEditModal from './components/WorkerEditModal';
@@ -425,12 +426,19 @@ const App = () => {
                     if (subData) subcontractorsData = subData;
                 }
 
+                // 残業承認状況（未承認の判定に使用）
+                let overtimeApprovals = [];
+                try {
+                    overtimeApprovals = await fetchApprovalsForReport(workerName, days[0], days[6]);
+                } catch (e) { console.error('Failed to fetch overtime approvals:', e); }
+
                 workersDataList.push({
                     workerName,
                     days,
                     recordsData,
                     projects,
-                    subcontractorsData
+                    subcontractorsData,
+                    overtimeApprovals
                 });
             }
 
@@ -491,12 +499,19 @@ const App = () => {
                     if (subData) subcontractorsData = subData;
                 }
 
+                // 残業承認状況（未承認の判定に使用）
+                let overtimeApprovals = [];
+                try {
+                    overtimeApprovals = await fetchApprovalsForReport(workerName, days[0], days[6]);
+                } catch (e) { console.error('Failed to fetch overtime approvals:', e); }
+
                 workersDataList.push({
                     workerName,
                     days,
                     recordsData,
                     projects,
-                    subcontractorsData
+                    subcontractorsData,
+                    overtimeApprovals
                 });
             }
 

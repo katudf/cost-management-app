@@ -4,6 +4,21 @@ import layoutData from '../layout_react.json';
 import * as fflate from 'fflate';
 
 /**
+ * 作業手当の対象作業（work_allowance=true）を作業項目ごとに集計し、
+ * 「作業名 実働h」形式の行を返す。
+ */
+export const buildWorkAllowanceLines = (dayRecords) => {
+    const taskMap = {};
+    (dayRecords || []).forEach(r => {
+        if (!r.work_allowance) return;
+        const taskName = r.ProjectTasks?.name || '不明な作業';
+        if (!taskMap[taskName]) taskMap[taskName] = 0;
+        taskMap[taskName] += Number(r.hours || 0);
+    });
+    return Object.entries(taskMap).map(([name, hours]) => `${name} ${hours.toFixed(1)}h`);
+};
+
+/**
  * A4横向き・1ページに収まる印刷設定を適用する共通ヘルパー
  */
 const applyA4LandscapePrintSettings = (ws) => {
@@ -386,7 +401,7 @@ const truncateSiteName = (name, maxLength = 10) => {
 /**
  * 就労日報の単一ワークシートを生成する内部ヘルパー
  */
-const createWorkerReportSheet = (workerName, days, recordsData, projects, subcontractorsData) => {
+const createWorkerReportSheet = (workerName, days, recordsData, projects, subcontractorsData, overtimeApprovals = []) => {
     const { rows: ROWS, cells: templateCells, mergedCells, colWidths, rowHeights } = layoutData;
     const COLS_COUNT = 17; // A〜Q
 
@@ -533,12 +548,37 @@ const createWorkerReportSheet = (workerName, days, recordsData, projects, subcon
 
     // Rows 16-18: 使用材料（データなし、テンプレートの空セルのまま）
 
-    // Row 19: 作業手当
+    // Row 19: 作業手当（時間外時間の合計 + 手当対象作業の「作業名 実働h」を併記）
     days.forEach((d, i) => {
         const dayRecords = (recordsData || []).filter(r => r.date === d);
         const dayOt = dayRecords.reduce((sum, r) => sum + Number(r.overtime_hours || 0), 0);
-        grid[18][dayMainCols[i] - 1] = dayOt > 0 ? dayOt.toFixed(1) : '';
-        grid[18][daySubCols[i] - 1]  = '';
+        const allowanceLines = buildWorkAllowanceLines(dayRecords);
+
+        const lines = [];
+        let approverName = '';
+        if (dayOt > 0) {
+            // その日に残業がある現場のうち、承認されていない現場が1つでもあれば「未承認」
+            const otProjectIds = [...new Set(
+                dayRecords.filter(r => Number(r.overtime_hours || 0) > 0).map(r => String(r.project_id))
+            )];
+            const hasUnapproved = otProjectIds.some(pid =>
+                !(overtimeApprovals || []).some(a =>
+                    String(a.project_id) === pid && a.date === d && a.status === 'approved'
+                )
+            );
+            lines.push(`残業 ${dayOt.toFixed(1)}H${hasUnapproved ? '（未承認）' : ''}`);
+
+            // 承認サイン: その日の承認済み残業の承認者（職長）名を表示する
+            const approvedRow = (overtimeApprovals || []).find(a =>
+                otProjectIds.includes(String(a.project_id)) &&
+                a.date === d && a.status === 'approved' && a.approved_by
+            );
+            if (approvedRow) approverName = approvedRow.approved_by;
+        }
+        lines.push(...allowanceLines);
+
+        grid[18][dayMainCols[i] - 1] = lines.join('\n');
+        grid[18][daySubCols[i] - 1]  = approverName;
     });
 
     // Row 20: 備考（実働時間 + 人工数サマリー）
@@ -566,8 +606,9 @@ const createWorkerReportSheet = (workerName, days, recordsData, projects, subcon
         if (!ws[cellRef]) ws[cellRef] = { t: 's', v: '' };
         const style = buildCellStyle(cellDef);
 
-        // 時間セル (5, 8, 11) と 作業内容セル (6, 9, 12) の D, F, H, J, L, N, P 列について wrapText を強制適用
-        const isTargetRow = [5, 6, 8, 9, 11, 12].includes(rowNum);
+        // 時間セル (5, 8, 11) と 作業内容セル (6, 9, 12)、作業手当セル (19) の
+        // D, F, H, J, L, N, P 列について wrapText を強制適用
+        const isTargetRow = [5, 6, 8, 9, 11, 12, 19].includes(rowNum);
         const isTargetCol = dayMainCols.includes(colNum);
         if (isTargetRow && isTargetCol) {
             if (!style.alignment) style.alignment = {};
@@ -643,8 +684,8 @@ export const generateMultipleWorkersReportExcel = (workersDataList, weekPrefix) 
     let globalPs = null;
 
     workersDataList.forEach(data => {
-        const { workerName, days, recordsData, projects, subcontractorsData } = data;
-        const { ws, ps } = createWorkerReportSheet(workerName, days, recordsData, projects, subcontractorsData);
+        const { workerName, days, recordsData, projects, subcontractorsData, overtimeApprovals } = data;
+        const { ws, ps } = createWorkerReportSheet(workerName, days, recordsData, projects, subcontractorsData, overtimeApprovals);
         // シート名は作業員名にする（Excelのシート名制限31字に収まるようにスライス）
         const sheetName = workerName.slice(0, 31);
         xlsx.utils.book_append_sheet(wb, ws, sheetName);
