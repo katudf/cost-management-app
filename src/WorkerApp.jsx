@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './lib/supabase';
-import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2, PlusCircle, Clock, X } from 'lucide-react';
+import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2, PlusCircle, Clock, X, Wifi, WifiOff } from 'lucide-react';
 import { useToast } from './components/Toast';
 import { useConfirm } from './components/ConfirmProvider';
 import { calculateWorkHours, calculateNinku, getSeasonConfig, formatTimeDisplay } from './utils/workTimeUtils';
 import { PROJECT_STATUS } from './utils/constants';
 import { syncOvertimeApproval, fetchPendingApprovals, approveOvertime, fetchApprovalReason } from './lib/overtimeApprovals';
 import { syncWorkAllowanceApproval, fetchPendingWorkAllowanceApprovals, approveWorkAllowance } from './lib/workAllowanceApprovals';
+import { fetchWithCache, getDraftQueue, upsertDraft, removeDraft } from './utils/offlineCache';
 
 // ローカルタイムゾーンで 'YYYY-MM-DD' を生成する（toISOString はUTC変換されるため日付がずれる）
 const formatDateLocal = (date) => {
@@ -36,8 +37,10 @@ const WorkerApp = () => {
     const [allProjectRecords, setAllProjectRecords] = useState([]);
     const [allSubcontractorRecords, setAllSubcontractorRecords] = useState([]);
     const [workerDailyAllRecords, setWorkerDailyAllRecords] = useState([]);
-    const [offlineDraft, setOfflineDraft] = useState(null);
+    const [draftQueue, setDraftQueue] = useState([]);
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+    const [isOnline, setIsOnline] = useState(navigator.onLine);
+    const [isSyncingQueue, setIsSyncingQueue] = useState(false);
 
     const [selectedDate, setSelectedDate] = useState(() => formatDateLocal(new Date()));
 
@@ -55,23 +58,26 @@ const WorkerApp = () => {
         const init = async () => {
             setIsLoading(true);
             try {
-                const draftStr = localStorage.getItem('cost-app-unsent-draft');
-                if (draftStr) {
-                    try { setOfflineDraft(JSON.parse(draftStr)); } catch (e) { }
-                }
+                setDraftQueue(getDraftQueue());
 
                 const savedWorkerStr = localStorage.getItem('cost-app-worker');
                 if (savedWorkerStr) setLoggedInWorker(JSON.parse(savedWorkerStr));
                 const savedProjectId = localStorage.getItem('cost-app-worker-project');
                 if (savedProjectId) setSelectedProjectId(savedProjectId);
 
-                const { data: wData } = await supabase.from('Workers').select('id, name, resignation_date').order('display_order', { ascending: true, nullsFirst: false });
+                const { data: wData } = await fetchWithCache('workers',
+                    () => supabase.from('Workers').select('id, name, resignation_date').order('display_order', { ascending: true, nullsFirst: false })
+                );
                 if (wData) setWorkers(wData.filter(w => w.name && w.name.trim() !== '' && !w.resignation_date));
 
-                const { data: pData } = await supabase.from('Projects').select('*').order('created_at', { ascending: true });
+                const { data: pData } = await fetchWithCache('projects',
+                    () => supabase.from('Projects').select('*').order('created_at', { ascending: true })
+                );
                 if (pData) setProjects(pData);
 
-                const { data: settingsData } = await supabase.from('system_settings').select('hourly_wage').eq('id', 1).single();
+                const { data: settingsData } = await fetchWithCache('hourly_wage',
+                    () => supabase.from('system_settings').select('hourly_wage').eq('id', 1).single()
+                );
                 if (settingsData && settingsData.hourly_wage) setHourlyWage(settingsData.hourly_wage);
             } catch (error) {
                 console.error('Initialization error:', error);
@@ -80,6 +86,21 @@ const WorkerApp = () => {
             }
         };
         init();
+
+        const handleOnline = () => {
+            setIsOnline(true);
+            const queued = getDraftQueue();
+            if (queued.length > 0) {
+                showToast(`通信が回復しました。未送信のデータが${queued.length}件あります。内容を確認して送信してください。`, 'warning');
+            }
+        };
+        const handleOffline = () => setIsOnline(false);
+        window.addEventListener('online', handleOnline);
+        window.addEventListener('offline', handleOffline);
+        return () => {
+            window.removeEventListener('online', handleOnline);
+            window.removeEventListener('offline', handleOffline);
+        };
     }, []);
 
     // Fetch worker daily records across ALL projects
@@ -87,7 +108,10 @@ const WorkerApp = () => {
         if (!loggedInWorker || !selectedDate) { setWorkerDailyAllRecords([]); return; }
         const fetch = async () => {
             try {
-                const { data } = await supabase.from('TaskRecords').select('*').eq('worker_name', loggedInWorker.name).eq('date', selectedDate);
+                const cacheKey = `worker-daily-records-${loggedInWorker.name}-${selectedDate}`;
+                const { data } = await fetchWithCache(cacheKey,
+                    () => supabase.from('TaskRecords').select('*').eq('worker_name', loggedInWorker.name).eq('date', selectedDate)
+                );
                 setWorkerDailyAllRecords(data || []);
             } catch (e) { console.error(e); }
         };
@@ -103,12 +127,15 @@ const WorkerApp = () => {
             setSaveMessage('');
             try {
                 const targetDate = selectedDate;
-                let { data: tData } = await supabase.from('ProjectTasks').select('*').eq('projectId', selectedProjectId).order('order', { ascending: true });
+                const tasksCacheKey = `project-tasks-${selectedProjectId}`;
+                let { data: tData, fromCache: tFromCache } = await fetchWithCache(tasksCacheKey,
+                    () => supabase.from('ProjectTasks').select('*').eq('projectId', selectedProjectId).order('order', { ascending: true })
+                );
 
-                // 有給・社内業務などの特別な共通現場で作業項目が未登録の場合は自動生成する
+                // 有給・社内業務などの特別な共通現場で作業項目が未登録の場合は自動生成する（オンライン時のみ）
                 const project = projects.find(p => p.id === Number(selectedProjectId));
                 const COMMON_PROJECT_NAMES = ["【会社】社内業務・雑務", "【会社】有給", "有給", "【有給】"];
-                if (project && COMMON_PROJECT_NAMES.includes(project.name) && (!tData || tData.length === 0)) {
+                if (!tFromCache && project && COMMON_PROJECT_NAMES.includes(project.name) && (!tData || tData.length === 0)) {
                     let defaultTaskName = '社内業務・雑務';
                     if (project.name.includes('有給')) {
                         defaultTaskName = '有給休暇';
@@ -127,8 +154,12 @@ const WorkerApp = () => {
                     }
                 }
 
-                const { data: rData } = await supabase.from('TaskRecords').select('*').eq('project_id', selectedProjectId).eq('worker_name', loggedInWorker.name).eq('date', targetDate);
-                const { data: sData } = await supabase.from('SubcontractorRecords').select('*').eq('project_id', selectedProjectId).eq('date', targetDate);
+                const { data: rData } = await fetchWithCache(`task-records-${selectedProjectId}-${loggedInWorker.name}-${targetDate}`,
+                    () => supabase.from('TaskRecords').select('*').eq('project_id', selectedProjectId).eq('worker_name', loggedInWorker.name).eq('date', targetDate)
+                );
+                const { data: sData } = await fetchWithCache(`subcontractor-records-${selectedProjectId}-${targetDate}`,
+                    () => supabase.from('SubcontractorRecords').select('*').eq('project_id', selectedProjectId).eq('date', targetDate)
+                );
 
                 const mappedTasks = (tData || []).map(t => {
                     // 複数レコード対応: filter で全レコード取得
@@ -167,9 +198,13 @@ const WorkerApp = () => {
                 } catch (e) { setOvertimeReason(''); }
 
                 if (project && project.foreman_worker_id === loggedInWorker.id) {
-                    const { data: allRecords } = await supabase.from('TaskRecords').select('*').eq('project_id', selectedProjectId);
+                    const { data: allRecords } = await fetchWithCache(`all-task-records-${selectedProjectId}`,
+                        () => supabase.from('TaskRecords').select('*').eq('project_id', selectedProjectId)
+                    );
                     setAllProjectRecords(allRecords || []);
-                    const { data: allSubData } = await supabase.from('SubcontractorRecords').select('*').eq('project_id', selectedProjectId);
+                    const { data: allSubData } = await fetchWithCache(`all-subcontractor-records-${selectedProjectId}`,
+                        () => supabase.from('SubcontractorRecords').select('*').eq('project_id', selectedProjectId)
+                    );
                     setAllSubcontractorRecords(allSubData || []);
                 } else {
                     setAllProjectRecords([]);
@@ -346,19 +381,23 @@ const WorkerApp = () => {
     };
 
     // ========== 自動保存 (オートセーブ) ==========
+    // 現場×日付 単位でキューに保存するため、他の現場/日付の未送信ドラフトは上書きされない
     useEffect(() => {
         if (hasUnsavedChanges && selectedProjectId && tasks.length > 0) {
             const timer = setTimeout(() => {
-                const draft = {
-                    timestamp: new Date().toISOString(),
+                const entry = upsertDraft({
                     selectedProjectId,
                     selectedDate,
                     tasks,
                     subcontractors,
                     deletedSubcontractorIds,
-                    isAutoSaved: true
-                };
-                localStorage.setItem('cost-app-unsent-draft', JSON.stringify(draft));
+                    isAutoSaved: true,
+                });
+                setDraftQueue(prev => {
+                    const key = `${entry.selectedProjectId}__${entry.selectedDate}`;
+                    const others = prev.filter(d => `${d.selectedProjectId}__${d.selectedDate}` !== key);
+                    return [...others, entry];
+                });
             }, 1000);
             return () => clearTimeout(timer);
         }
@@ -456,8 +495,18 @@ const WorkerApp = () => {
         return warnings;
     }, [workerDailyAllRecords, tasks, selectedProjectId, projects]);
 
+    // 現在編集中の 現場+日付 のドラフトは「入力中の自動保存」であり、
+    // ユーザーが今まさに見ている内容そのものなので通知不要。
+    // 通信エラーで保存された下書き、または他の現場/日付の未送信下書きのみを通知対象とする。
+    const notifiableDraftQueue = useMemo(() => {
+        return draftQueue.filter(d => {
+            const isCurrent = String(d.selectedProjectId) === String(selectedProjectId) && d.selectedDate === selectedDate;
+            return !d.isAutoSaved || !isCurrent;
+        });
+    }, [draftQueue, selectedProjectId, selectedDate]);
+
     // ========== ドラフト（オフライン下書き）操作 ==========
-    const handleRestoreDraft = async () => {
+    const handleRestoreDraft = async (draft) => {
         const ok = await confirm({
             title: '下書きの復元',
             message: '下書きを復元しますか？（現在の入力内容は上書きされます）',
@@ -465,27 +514,24 @@ const WorkerApp = () => {
             variant: 'primary',
         });
         if (!ok) return;
-        if (!offlineDraft) return;
-        setSelectedProjectId(offlineDraft.selectedProjectId);
-        setSelectedDate(offlineDraft.selectedDate);
-        setTasks(offlineDraft.tasks || []);
-        setSubcontractors(offlineDraft.subcontractors || []);
-        setDeletedSubcontractorIds(offlineDraft.deletedSubcontractorIds || []);
-        localStorage.removeItem('cost-app-unsent-draft');
-        setOfflineDraft(null);
+        setSelectedProjectId(draft.selectedProjectId);
+        setSelectedDate(draft.selectedDate);
+        setTasks(draft.tasks || []);
+        setSubcontractors(draft.subcontractors || []);
+        setDeletedSubcontractorIds(draft.deletedSubcontractorIds || []);
         setHasUnsavedChanges(true);
         showToast('下書きを復元しました。内容を確認し「今日の実績を送信」ボタンを押してください。', 'success');
     };
 
-    const handleDiscardDraft = async () => {
+    const handleDiscardDraft = async (draft) => {
         const ok = await confirm({
             title: '下書きの破棄',
             message: '未送信の下書きを本当に破棄しますか？',
             confirmText: '破棄する',
         });
         if (!ok) return;
-        localStorage.removeItem('cost-app-unsent-draft');
-        setOfflineDraft(null);
+        const remaining = removeDraft(draft.selectedProjectId, draft.selectedDate);
+        setDraftQueue(remaining);
     };
 
     // ========== 入力済み現場レコードの削除 ==========
@@ -720,8 +766,7 @@ const WorkerApp = () => {
                 setWorkerDailyAllRecords(refreshed || []);
             } catch (e) { /* ignore */ }
 
-            localStorage.removeItem('cost-app-unsent-draft');
-            setOfflineDraft(null);
+            setDraftQueue(removeDraft(selectedProjectId, selectedDate));
             setHasUnsavedChanges(false);
 
             setSaveMessage('日報を送信しました！お疲れ様です。');
@@ -729,16 +774,18 @@ const WorkerApp = () => {
         } catch (error) {
             console.error('Submit error:', error);
             if (!navigator.onLine || error.message?.includes('fetch') || error.message?.includes('Network')) {
-                const draft = {
-                    timestamp: new Date().toISOString(),
+                const entry = upsertDraft({
                     selectedProjectId,
                     selectedDate,
                     tasks,
                     subcontractors,
-                    deletedSubcontractorIds
-                };
-                localStorage.setItem('cost-app-unsent-draft', JSON.stringify(draft));
-                setOfflineDraft(draft);
+                    deletedSubcontractorIds,
+                });
+                setDraftQueue(prev => {
+                    const key = `${entry.selectedProjectId}__${entry.selectedDate}`;
+                    const others = prev.filter(d => `${d.selectedProjectId}__${d.selectedDate}` !== key);
+                    return [...others, entry];
+                });
                 showToast('通信エラーが発生したため、未送信の下書きとして保存しました。', 'warning');
             } else {
                 showToast('保存に失敗しました。電波の良いところで再度お試しください。', 'error');
@@ -813,27 +860,54 @@ const WorkerApp = () => {
         <div className="min-h-screen bg-slate-100 font-sans text-slate-900 pb-24">
             <header className="bg-blue-600 text-white p-4 shadow-md sticky top-0 z-40 flex items-center justify-between">
                 <div className="flex items-center gap-2"><HardHat size={20} /><span className="font-bold text-lg leading-none">{loggedInWorker.name}</span></div>
-                <button onClick={handleLogout} className="flex items-center gap-1 bg-blue-700 hover:bg-blue-800 px-3 py-1.5 rounded-lg text-sm font-bold transition"><LogOut size={16} /> 終了</button>
+                <div className="flex items-center gap-2">
+                    <div
+                        className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold ${isOnline ? 'bg-blue-700' : 'bg-orange-500'}`}
+                        title={isOnline ? 'オンライン' : 'オフライン'}
+                    >
+                        {isOnline ? <Wifi size={14} aria-label="オンライン" /> : <WifiOff size={14} aria-label="オフライン" />}
+                        {!isOnline && <span>オフライン</span>}
+                    </div>
+                    {notifiableDraftQueue.length > 0 && (
+                        <div
+                            className="flex items-center gap-1 bg-orange-500 px-2 py-1 rounded-lg text-xs font-bold"
+                            title={`未送信の下書き ${notifiableDraftQueue.length}件`}
+                        >
+                            <AlertCircle size={14} /> {notifiableDraftQueue.length}
+                        </div>
+                    )}
+                    <button onClick={handleLogout} aria-label="終了" title="終了" className="flex items-center gap-1 bg-blue-700 hover:bg-blue-800 px-3 py-1.5 rounded-lg text-sm font-bold transition"><LogOut size={16} /> 終了</button>
+                </div>
             </header>
 
             <main className="p-4 max-w-lg mx-auto">
-                {offlineDraft && (
+                {notifiableDraftQueue.length > 0 && (
                     <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 mb-4 shadow-sm">
                         <div className="flex items-center gap-2 text-orange-700 font-bold mb-2 text-sm">
-                            <AlertCircle size={18} /> 未送信のデータがあります
+                            <AlertCircle size={18} /> 未送信のデータが{notifiableDraftQueue.length}件あります
                         </div>
-                        <p className="text-xs text-orange-600 mb-3 font-medium">
-                            {offlineDraft.isAutoSaved ? 
-                                `${new Date(offlineDraft.timestamp).toLocaleString('ja-JP')} に入力中のデータが自動保存されています。` :
-                                `${new Date(offlineDraft.timestamp).toLocaleString('ja-JP')} に通信エラーで保存されたデータがあります。復元して再送信してください。`}
-                        </p>
-                        <div className="flex gap-2">
-                            <button onClick={handleRestoreDraft} className="flex-1 bg-orange-500 hover:bg-orange-600 text-white font-bold py-2 rounded-lg text-xs transition shadow-sm">
-                                下書きを復元する
-                            </button>
-                            <button onClick={handleDiscardDraft} className="px-3 bg-white text-orange-500 border border-orange-200 hover:bg-orange-100 font-bold py-2 rounded-lg text-xs transition">
-                                破棄
-                            </button>
+                        <div className="space-y-2">
+                            {notifiableDraftQueue.map((draft) => {
+                                const projectName = projects.find(p => String(p.id) === String(draft.selectedProjectId))?.name || '（現場名不明）';
+                                return (
+                                    <div key={`${draft.selectedProjectId}__${draft.selectedDate}`} className="bg-white/60 rounded-lg p-2">
+                                        <p className="text-xs text-orange-600 mb-2 font-medium">
+                                            {projectName}（{draft.selectedDate}）<br />
+                                            {draft.isAutoSaved ?
+                                                `${new Date(draft.timestamp).toLocaleString('ja-JP')} に入力中のデータが自動保存されています。` :
+                                                `${new Date(draft.timestamp).toLocaleString('ja-JP')} に通信エラーで保存されたデータがあります。復元して再送信してください。`}
+                                        </p>
+                                        <div className="flex gap-2">
+                                            <button onClick={() => handleRestoreDraft(draft)} className="flex-1 bg-orange-500 hover:bg-orange-600 text-white font-bold py-2 rounded-lg text-xs transition shadow-sm">
+                                                下書きを復元する
+                                            </button>
+                                            <button onClick={() => handleDiscardDraft(draft)} className="px-3 bg-white text-orange-500 border border-orange-200 hover:bg-orange-100 font-bold py-2 rounded-lg text-xs transition">
+                                                破棄
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
                         </div>
                     </div>
                 )}
