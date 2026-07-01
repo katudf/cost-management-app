@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './lib/supabase';
-import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2, PlusCircle, Clock, X, Wifi, WifiOff } from 'lucide-react';
+import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2, PlusCircle, Clock, X, Wifi, WifiOff, FileText } from 'lucide-react';
 import { useToast } from './components/Toast';
 import { useConfirm } from './components/ConfirmProvider';
 import { calculateWorkHours, calculateNinku, getSeasonConfig, formatTimeDisplay } from './utils/workTimeUtils';
 import { PROJECT_STATUS } from './utils/constants';
-import { syncOvertimeApproval, fetchPendingApprovals, approveOvertime, fetchApprovalReason } from './lib/overtimeApprovals';
-import { syncWorkAllowanceApproval, fetchPendingWorkAllowanceApprovals, approveWorkAllowance } from './lib/workAllowanceApprovals';
+import { syncOvertimeApproval, fetchPendingApprovals, approveOvertime, fetchApprovalReason, fetchApprovalsForReport } from './lib/overtimeApprovals';
+import { syncWorkAllowanceApproval, fetchPendingWorkAllowanceApprovals, approveWorkAllowance, fetchWorkAllowanceApprovalsForReport } from './lib/workAllowanceApprovals';
 import { fetchWithCache, getDraftQueue, upsertDraft, removeDraft } from './utils/offlineCache';
+import { generateMultipleWorkersReportPDF } from './utils/pdfExportUtils';
 
 // ローカルタイムゾーンで 'YYYY-MM-DD' を生成する（toISOString はUTC変換されるため日付がずれる）
 const formatDateLocal = (date) => {
@@ -28,6 +29,7 @@ const WorkerApp = () => {
     const [selectedProjectId, setSelectedProjectId] = useState('');
     const [tasks, setTasks] = useState([]);
     const [isSaving, setIsSaving] = useState(false);
+    const [isExportingPDF, setIsExportingPDF] = useState(false);
     const [saveMessage, setSaveMessage] = useState('');
 
     const [subcontractors, setSubcontractors] = useState([]);
@@ -296,6 +298,70 @@ const WorkerApp = () => {
             setHasUnsavedChanges(false);
             setLoggedInWorker(null); setSelectedProjectId(''); setTasks([]); setSubcontractors([]); setDeletedSubcontractorIds([]);
             localStorage.removeItem('cost-app-worker'); localStorage.removeItem('cost-app-worker-project');
+        }
+    };
+
+    // 日報PDF出力（選択中の日付を含む月〜日の週で出力）
+    const handleExportReportPDF = async () => {
+        if (!loggedInWorker) return;
+        setIsExportingPDF(true);
+        try {
+            const base = new Date(selectedDate);
+            const dow = base.getDay(); // 0=日,1=月,...6=土
+            const mondayOffset = dow === 0 ? -6 : 1 - dow;
+            const monday = new Date(base);
+            monday.setDate(monday.getDate() + mondayOffset);
+            const days = Array.from({ length: 7 }, (_, i) => {
+                const d = new Date(monday);
+                d.setDate(d.getDate() + i);
+                return formatDateLocal(d);
+            });
+            const weekPrefix = days[0].replace(/-/g, '').slice(0, 8);
+
+            const { data: holidayData } = await supabase.from('CompanyHolidays').select('date');
+
+            const { data: recordsData } = await supabase.from('TaskRecords')
+                .select('*, ProjectTasks(name, projectId)')
+                .eq('worker_name', loggedInWorker.name)
+                .gte('date', days[0])
+                .lte('date', days[6]);
+
+            const foremanProjects = projects.filter(p => p.foreman_worker_id === loggedInWorker.id);
+            let subcontractorsData = [];
+            if (foremanProjects.length > 0) {
+                const { data: subData } = await supabase.from('SubcontractorRecords')
+                    .select('*')
+                    .in('project_id', foremanProjects.map(p => p.id))
+                    .gte('date', days[0])
+                    .lte('date', days[6]);
+                if (subData) subcontractorsData = subData;
+            }
+
+            let overtimeApprovals = [];
+            try {
+                overtimeApprovals = await fetchApprovalsForReport(loggedInWorker.name, days[0], days[6]);
+            } catch (e) { console.error('Failed to fetch overtime approvals:', e); }
+
+            let workAllowanceApprovals = [];
+            try {
+                workAllowanceApprovals = await fetchWorkAllowanceApprovalsForReport(loggedInWorker.name, days[0], days[6]);
+            } catch (e) { console.error('Failed to fetch work allowance approvals:', e); }
+
+            generateMultipleWorkersReportPDF([{
+                workerName: loggedInWorker.name,
+                days,
+                recordsData: recordsData || [],
+                projects,
+                subcontractorsData,
+                overtimeApprovals,
+                workAllowanceApprovals,
+            }], weekPrefix, holidayData || []);
+            showToast('日報PDFを出力しました', 'success');
+        } catch (e) {
+            console.error(e);
+            showToast(e?.message || 'PDF出力中にエラーが発生しました。', 'error');
+        } finally {
+            setIsExportingPDF(false);
         }
     };
 
@@ -861,6 +927,15 @@ const WorkerApp = () => {
             <header className="bg-blue-600 text-white p-4 shadow-md sticky top-0 z-40 flex items-center justify-between">
                 <div className="flex items-center gap-2"><HardHat size={20} /><span className="font-bold text-lg leading-none">{loggedInWorker.name}</span></div>
                 <div className="flex items-center gap-2">
+                    <button
+                        onClick={handleExportReportPDF}
+                        disabled={isExportingPDF}
+                        aria-label="日報出力"
+                        title="日報出力"
+                        className="flex items-center gap-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 px-3 py-1.5 rounded-lg text-sm font-bold transition"
+                    >
+                        {isExportingPDF ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />} 日報出力
+                    </button>
                     <div
                         className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold ${isOnline ? 'bg-blue-700' : 'bg-orange-500'}`}
                         title={isOnline ? 'オンライン' : 'オフライン'}
