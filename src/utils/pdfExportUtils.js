@@ -176,10 +176,10 @@ const COMMON_CSS_STYLE = `
         .no-print { display: none !important; }
     }
     @media screen {
-        body { padding: 12px; background: #e8e8e8; }
-        .page-wrap { max-width: 1294px; margin: 0 auto; background: #fff; padding: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.12); }
-        .report-header { max-width: 1294px; margin-left: auto; margin-right: auto; }
-        .print-btn-bar { max-width: 1294px; margin-left: auto; margin-right: auto; background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,0.12); }
+        body { padding: 12px; background: #e8e8e8; overflow-x: auto; }
+        .page-wrap { width: 1294px; max-width: 1294px; margin: 0 auto; background: #fff; padding: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.12); }
+        .report-header { width: 1294px; max-width: 1294px; margin-left: auto; margin-right: auto; }
+        .print-btn-bar { width: 1294px; max-width: 1294px; margin-left: auto; margin-right: auto; background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,0.12); }
     }
     .print-btn-bar {
         text-align: center;
