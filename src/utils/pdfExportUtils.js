@@ -48,7 +48,6 @@ const COMMON_CSS_STYLE = `
 
     /* ===== テーブル ===== */
     table {
-        width: 100%;
         border-collapse: collapse;
         table-layout: fixed;
     }
@@ -167,7 +166,7 @@ const COMMON_CSS_STYLE = `
         line-height: 1.4;
         text-align: left;
         padding: 1px 3px;
-        border: 2px solid #000;
+        border: 1px solid #000;
         border-top: none;
     }
 
