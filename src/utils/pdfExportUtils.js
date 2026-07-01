@@ -177,8 +177,9 @@ const COMMON_CSS_STYLE = `
     }
     @media screen {
         body { padding: 12px; background: #e8e8e8; }
-        .page-wrap { max-width: 1150px; margin: 0 auto; background: #fff; padding: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.12); }
-        .report-header { max-width: 1150px; margin-left: auto; margin-right: auto; }
+        .page-wrap { max-width: 1294px; margin: 0 auto; background: #fff; padding: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.12); }
+        .report-header { max-width: 1294px; margin-left: auto; margin-right: auto; }
+        .print-btn-bar { max-width: 1294px; margin-left: auto; margin-right: auto; background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,0.12); }
     }
     .print-btn-bar {
         text-align: center;
@@ -459,14 +460,16 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
 /**
  * 印刷用ウィンドウを開いて印刷ダイアログを表示する共通処理
  */
-const openPrintWindow = (html) => {
+const openPrintWindow = (html, autoPrint = true) => {
     const printWindow = window.open('', '_blank', 'width=1200,height=800');
     if (printWindow) {
         printWindow.document.write(html);
         printWindow.document.close();
-        printWindow.onload = () => {
-            setTimeout(() => printWindow.print(), 300);
-        };
+        if (autoPrint) {
+            printWindow.onload = () => {
+                setTimeout(() => printWindow.print(), 300);
+            };
+        }
     } else {
         // 呼び出し側（try/catch）で showToast 表示できるよう例外を送出する
         throw new Error('ポップアップがブロックされました。ブラウザの設定でポップアップを許可してください。');
@@ -503,7 +506,7 @@ export const generateWorkerReportPDF = (workerName, weekPrefix, days, recordsDat
 /**
  * 複数名分の就労日報をまとめて1つの印刷用HTML（改ページ区切り）として出力する
  */
-export const generateMultipleWorkersReportPDF = (workersDataList, weekPrefix, companyHolidays = []) => {
+export const generateMultipleWorkersReportPDF = (workersDataList, weekPrefix, companyHolidays = [], autoPrint = true) => {
     if (!workersDataList || workersDataList.length === 0) return;
 
     const parts = workersDataList.map((data, idx) => {
@@ -537,7 +540,7 @@ export const generateMultipleWorkersReportPDF = (workersDataList, weekPrefix, co
 </body>
 </html>`;
 
-    openPrintWindow(html);
+    openPrintWindow(html, autoPrint);
 };
 
 function esc(str) {

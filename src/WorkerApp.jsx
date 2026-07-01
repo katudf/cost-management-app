@@ -355,8 +355,8 @@ const WorkerApp = () => {
                 subcontractorsData,
                 overtimeApprovals,
                 workAllowanceApprovals,
-            }], weekPrefix, holidayData || []);
-            showToast('日報PDFを出力しました', 'success');
+            }], weekPrefix, holidayData || [], false);
+            showToast('日報プレビューを表示しました', 'success');
         } catch (e) {
             console.error(e);
             showToast(e?.message || 'PDF出力中にエラーが発生しました。', 'error');
