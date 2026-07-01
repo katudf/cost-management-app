@@ -14,6 +14,7 @@ import { parseExcelForImport } from './utils/excelImportUtils';
 import { exportToExcel, generateWorkerReportExcel, generateMultipleWorkersReportExcel } from './utils/excelExportUtils';
 import { generateWorkerReportPDF, generateMultipleWorkersReportPDF } from './utils/pdfExportUtils';
 import { fetchApprovalsForReport } from './lib/overtimeApprovals';
+import { fetchWorkAllowanceApprovalsForReport } from './lib/workAllowanceApprovals';
 import { optimizeItemsWithGemini } from './utils/aiOptimizeUtils';
 import ImportModal from './components/ImportModal';
 import WorkerEditModal from './components/WorkerEditModal';
@@ -432,13 +433,20 @@ const App = () => {
                     overtimeApprovals = await fetchApprovalsForReport(workerName, days[0], days[6]);
                 } catch (e) { console.error('Failed to fetch overtime approvals:', e); }
 
+                // 作業手当承認状況（未承認の判定に使用）
+                let workAllowanceApprovals = [];
+                try {
+                    workAllowanceApprovals = await fetchWorkAllowanceApprovalsForReport(workerName, days[0], days[6]);
+                } catch (e) { console.error('Failed to fetch work allowance approvals:', e); }
+
                 workersDataList.push({
                     workerName,
                     days,
                     recordsData,
                     projects,
                     subcontractorsData,
-                    overtimeApprovals
+                    overtimeApprovals,
+                    workAllowanceApprovals
                 });
             }
 
@@ -505,13 +513,20 @@ const App = () => {
                     overtimeApprovals = await fetchApprovalsForReport(workerName, days[0], days[6]);
                 } catch (e) { console.error('Failed to fetch overtime approvals:', e); }
 
+                // 作業手当承認状況（未承認の判定に使用）
+                let workAllowanceApprovals = [];
+                try {
+                    workAllowanceApprovals = await fetchWorkAllowanceApprovalsForReport(workerName, days[0], days[6]);
+                } catch (e) { console.error('Failed to fetch work allowance approvals:', e); }
+
                 workersDataList.push({
                     workerName,
                     days,
                     recordsData,
                     projects,
                     subcontractorsData,
-                    overtimeApprovals
+                    overtimeApprovals,
+                    workAllowanceApprovals
                 });
             }
 

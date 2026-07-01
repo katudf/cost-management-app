@@ -6,16 +6,16 @@ import { calculateNinku, formatTimeDisplay } from './workTimeUtils';
 const COMMON_CSS_STYLE = `
     @page {
         size: A4 landscape;
-        margin-top: 10mm;
+        margin-top: 9mm;
         margin-bottom: 5mm;
-        margin-left: 5mm;
+        margin-left: 7mm;
         margin-right: 5mm;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-        font-family: "Yu Gothic", "Meiryo", "Hiragino Kaku Gothic Pro", sans-serif;
+        font-family: "BIZ UDゴシック", "Yu Gothic", "Meiryo", "Hiragino Kaku Gothic Pro", sans-serif;
         font-size: 8.5px;
-        color: #111;
+        color: #000;
         -webkit-print-color-adjust: exact;
         print-color-adjust: exact;
     }
@@ -31,35 +31,20 @@ const COMMON_CSS_STYLE = `
         display: flex;
         justify-content: space-between;
         align-items: baseline;
-        margin-bottom: 3px;
-        padding: 0 4px;
+        margin-bottom: 2px;
     }
     .report-header h1 {
-        font-size: 24px;
-        font-weight: 900;
-        letter-spacing: 8px;
-        color: #1e3a5f;
+        font-size: 20px;
+        font-weight: 700;
+        color: #000;
     }
     .report-header .worker-info {
-        font-size: 24px;
+        font-size: 20px;
         font-weight: 700;
+        border-bottom: 2px solid #000;
+        padding: 0 4px 1px;
     }
-    .report-header .worker-info span { color: #2563eb; }
-
-    /* 週サマリーバー */
-    .week-summary {
-        display: flex;
-        gap: 14px;
-        margin-bottom: 4px;
-        padding: 3px 8px;
-        background: #eef2ff;
-        border: 1px solid #c7d2fe;
-        border-radius: 4px;
-        font-size: 12px;
-        font-weight: 700;
-        color: #334155;
-    }
-    .week-summary .val { color: #1e40af; font-size: 11px; font-weight: 900; }
+    .report-header .worker-info span { color: #000; }
 
     /* ===== テーブル ===== */
     table {
@@ -68,92 +53,123 @@ const COMMON_CSS_STYLE = `
         table-layout: fixed;
     }
     th, td {
-        border: 1.2px solid #64748b;
-        padding: 2px 3px;
+        border: 1px solid #000;
+        padding: 1px 2px;
         text-align: center;
         vertical-align: middle;
-        line-height: 1.25;
+        line-height: 1.2;
     }
     .day-header {
-        background: #e2e8f0;
-        font-weight: 700;
-        font-size: 12px;
-        color: #334155;
-        padding: 2px 2px;
+        font-weight: 400;
+        font-size: 16px;
+        color: #000;
+        border-top: 2px solid #000;
+        border-bottom: 2px solid #000;
+        border-left: 2px solid #000;
+        border-right: 2px solid #000;
+        height: 44px;
     }
+    .day-header .dow { font-size: 13px; }
     .corner-cell {
-        background: #e2e8f0;
-        font-weight: 700;
-        font-size: 9px;
-        color: #334155;
+        font-weight: 400;
+        font-size: 10px;
+        color: #000;
+        border: 2px solid #000;
+        text-align: left;
+        height: 44px;
+        padding: 0;
+        position: relative;
+        background:
+            linear-gradient(to top right,
+                transparent calc(50% - 1px), #000 calc(50% - 1px),
+                #000 calc(50% + 1px), transparent calc(50% + 1px));
+    }
+    .corner-cell .cc-date {
+        position: absolute;
+        top: 2px;
+        right: 4px;
+        font-size: 10px;
+    }
+    .corner-cell .cc-item {
+        position: absolute;
+        bottom: 2px;
+        left: 4px;
+        font-size: 10px;
     }
     .group-cell {
-        background: #dbeafe;
-        font-weight: 900;
+        font-weight: 400;
         font-size: 13px;
-        color: #1e3a5f;
-        width: 36px;
-        min-width: 36px;
-        max-width: 36px;
+        color: #000;
+        width: 25px;
+        min-width: 25px;
+        max-width: 25px;
         writing-mode: vertical-rl;
         text-orientation: upright;
-        letter-spacing: 2px;
         text-align: center;
         vertical-align: middle;
+        border: 2px solid #000;
     }
     .item-cell {
-        background: #f1f5f9;
-        font-weight: 700;
+        font-weight: 400;
         font-size: 10px;
-        color: #475569;
+        color: #000;
+        border-left: 2px solid #000;
+        border-right: 2px solid #000;
     }
-    .item-label-name { width: 32px; min-width: 32px; } /* 名前カラム */
-    .item-label-qty { width: 22px; min-width: 22px; font-size: 10px; } /* 数量カラム */
+    .item-label-name { width: 36px; min-width: 36px; } /* 名前カラム */
+    .item-label-qty { width: 33px; min-width: 33px; font-size: 9px; } /* 数量カラム */
     .vertical-label { writing-mode: vertical-rl; text-orientation: upright; padding: 2px 0; }
-    
+
     .item-cell.sub-item {
-        background: #f8fafc;
-        font-weight: 600;
-        color: #64748b;
+        font-weight: 400;
+        color: #000;
     }
     .data-cell {
-        font-size: 10px;
-        color: #1e293b;
+        font-size: 11px;
+        color: #000;
         background: #fff;
+        border-left: 2px solid #000;
+        border-right: 2px solid #000;
     }
-    .data-cell-l { text-align: left; padding-left: 2px; border-right: none !important; }
-    .data-cell-r { 
-        text-align: center; 
-        border-left: 1px dashed #cbd5e1 !important; 
-        width: 25px;      /* ← ここで右側（人数・サイン側）の幅を固定します */
-        min-width: 25px; 
-        max-width: 25px;
+    .data-cell-l { text-align: left; padding-left: 2px; }
+    .data-cell-r {
+        text-align: center;
+        width: 33px;      /* ← ここで右側（人数・サイン側）の幅を固定します */
+        min-width: 33px;
+        max-width: 33px;
     }
-    
-    .site-name { 
-        font-weight: 700; 
-        font-size: 11px; 
+
+    .site-name {
+        font-weight: 400;
+        font-size: 12px;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-        max-width: 152px;
+        height: 23px;
     }
-    .time-data { font-size: 11px; height: 30px; }
-    .content-data { 
-        font-size: 11px; 
-        text-align: left; 
-        padding-left: 3px; 
-        height: 55px; 
+    .site-name.site-name-first { height: 28px; }
+    .time-data { font-size: 10px; height: 23px; white-space: pre-line; }
+    .time-data.time-data-first { height: 28px; }
+    .content-data {
+        font-size: 10px;
+        text-align: left;
+        padding-left: 3px;
+        height: 91px;
         overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        max-width: 152px; /* 17列構成時の概算幅に合わせて制限 */
+        white-space: pre-line;
     }
-    .ot { color: #dc2626; font-weight: 700; }
-    .daily-total { font-weight: 700; background: #fef9c3 !important; }
-    .daily-total-label { background: #fef9c3 !important; }
-    .note-cell { height: 18px; text-align: left; padding-left: 4px; }
-    .sign-cell { height: 22px; }
+    .daily-total { font-weight: 400; height: 52px; }
+    .note-cell { height: 52px; text-align: left; padding-left: 4px; }
+    .sign-cell { height: 43px; }
+    .sub-row { height: 34px; }
+    .footnote {
+        font-size: 8px;
+        line-height: 1.4;
+        text-align: left;
+        padding: 1px 3px;
+        border: 2px solid #000;
+        border-top: none;
+    }
 
     @media print {
         body { margin: 0; }
@@ -162,7 +178,6 @@ const COMMON_CSS_STYLE = `
     @media screen {
         body { padding: 12px; background: #e8e8e8; }
         .page-wrap { max-width: 1150px; margin: 0 auto; background: #fff; padding: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.12); }
-        .week-summary { max-width: 1150px; margin-left: auto; margin-right: auto; margin-bottom: 4px; }
         .report-header { max-width: 1150px; margin-left: auto; margin-right: auto; }
     }
     .print-btn-bar {
@@ -175,18 +190,18 @@ const COMMON_CSS_STYLE = `
         font-size: 14px;
         font-weight: 700;
         color: #fff;
-        background: #2563eb;
+        background: #000;
         border: none;
-        border-radius: 8px;
+        border-radius: 4px;
         cursor: pointer;
     }
-    .print-btn-bar button:hover { background: #1d4ed8; }
+    .print-btn-bar button:hover { background: #333; }
 `;
 
 /**
  * 日報用HTMLパーツ（単一作業員用）を生成するヘルパー
  */
-const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, subcontractorsData, companyHolidays, overtimeApprovals = []) => {
+const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, subcontractorsData, companyHolidays, overtimeApprovals = [], workAllowanceApprovals = []) => {
     const dayNames = ["(月)", "(火)", "(水)", "(木)", "(金)", "(土)", "(日)"];
 
     // 日付ごと・現場ごとのグループ化
@@ -224,15 +239,15 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
     // 日付ヘッダー
     const dateHeaders = days.map((d, i) => {
         const parts = d.split('-');
-        const isSunday = i === 6; // 月曜始まりの7番目
-        const isHoliday = companyHolidays.some(h => h.date === d);
-        const style = (isSunday || isHoliday) ? ' style="background-color: #fee2e2; color: #dc2626;"' : '';
-        return `<th class="day-header"${style} colspan="2">${parseInt(parts[1])}/${parseInt(parts[2])}<br/>${dayNames[i]}</th>`;
+        return `<th class="day-header" colspan="2">${parseInt(parts[1])}/${parseInt(parts[2])}<br/><span class="dow">${dayNames[i]}</span></th>`;
     }).join('');
 
     // ======== 現場ブロック（現場①②③ 各3行）========
+    // Excel側は1つ目のブロックのみ行が高い（名前28px/時間28px、2・3つ目は23px）ため、
+    // レイアウトを一致させるために先頭ブロックだけ専用クラスを付与する
     let siteRowsHTML = '';
     for (let g = 0; g < 3; g++) {
+        const sizeClass = g === 0 ? '-first' : '';
         let nameRow = `<td rowspan="3" class="group-cell">現場&#${9312 + g};</td><td class="item-cell" colspan="2" style="font-size: 12px;">現場名</td>`;
         let timeRow = `<td class="item-cell" colspan="2" style="font-size: 12px;">時間</td>`;
         let contentRow = `<td class="item-cell" colspan="2" style="font-size: 12px;">作業<br/>内容</td>`;
@@ -240,7 +255,7 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
         days.forEach(d => {
             const group = (dateProjectMap[d] || [])[g];
             if (group) {
-                nameRow += `<td class="data-cell site-name" colspan="2">${esc(group.siteName)}</td>`;
+                nameRow += `<td class="data-cell site-name${sizeClass}" colspan="2">${esc(group.siteName)}</td>`;
                 let timeText = '';
                 let timeStyle = '';
                 if (group.timeSlots.length > 0) {
@@ -254,7 +269,7 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
                         timeStyle = 'font-size: 9.5px; line-height: 1.1;';
                     }
                 }
-                timeRow += `<td class="data-cell time-data" colspan="2" style="${timeStyle}">${timeText || ': 　〜　:'}</td>`;
+                timeRow += `<td class="data-cell time-data${sizeClass}" colspan="2" style="${timeStyle}">${timeText || ': 　〜　:'}</td>`;
                 const uniqueItems = [...new Set(group.items)];
                 let contentStyle = '';
                 if (uniqueItems.length >= 6) {
@@ -266,8 +281,8 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
                 }
                 contentRow += `<td class="data-cell content-data" colspan="2" style="${contentStyle}">${uniqueItems.map(i => esc(i)).join('<br/>')}</td>`;
             } else {
-                nameRow += `<td class="data-cell site-name" colspan="2">&nbsp;</td>`;
-                timeRow += `<td class="data-cell time-data" colspan="2">: 　〜　:</td>`;
+                nameRow += `<td class="data-cell site-name${sizeClass}" colspan="2">&nbsp;</td>`;
+                timeRow += `<td class="data-cell time-data${sizeClass}" colspan="2">: 　〜　:</td>`;
                 contentRow += `<td class="data-cell content-data" colspan="2">&nbsp;</td>`;
             }
         });
@@ -287,7 +302,7 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
             row += `<td class="data-cell data-cell-l">${sub ? esc(sub.company_name) : '&nbsp;'}</td>`;
             row += `<td class="data-cell data-cell-r">${sub ? sub.worker_count : '&nbsp;'}</td>`;
         });
-        subcontractorsHTML += `<tr style="${c < 2 ? 'border-bottom: 1px dashed #cbd5e1;' : ''}">${row}</tr>`;
+        subcontractorsHTML += `<tr class="sub-row">${row}</tr>`;
     }
 
     // ======== 使用材料（3行 × 1行 = 3行）========
@@ -301,7 +316,7 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
             matRow += `<td class="data-cell data-cell-l">&nbsp;</td>`;
             matRow += `<td class="data-cell data-cell-r">&nbsp;</td>`;
         }
-        materialRowsHTML += `<tr style="${m < 2 ? 'border-bottom: 1px dashed #cbd5e1;' : ''}">${matRow}</tr>`;
+        materialRowsHTML += `<tr class="sub-row">${matRow}</tr>`;
     }
 
     // ======== 作業手当（1行：時間(H) / 承認サイン を横並び）========
@@ -320,7 +335,18 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
             const taskName = r.ProjectTasks?.name || '不明な作業';
             taskMap[taskName] = (taskMap[taskName] || 0) + Number(r.hours || 0);
         });
-        const allowanceLines = Object.entries(taskMap).map(([name, hours]) => `${esc(name)} ${hours.toFixed(1)}h`);
+        // 対象工種がある現場のうち、承認されていない現場が1つでもあれば「未承認」
+        const allowanceProjectIds = [...new Set(
+            dayRecords.filter(r => r.work_allowance).map(r => String(r.project_id))
+        )];
+        const hasUnapprovedAllowance = allowanceProjectIds.some(pid =>
+            !(workAllowanceApprovals || []).some(a =>
+                String(a.project_id) === pid && a.date === d && a.status === 'approved'
+            )
+        );
+        const allowanceLines = Object.entries(taskMap).map(([name, hours]) =>
+            `${esc(name)} ${hours.toFixed(1)}h${hasUnapprovedAllowance ? '（未承認）' : ''}`
+        );
 
         const lines = [];
         let approverName = '';
@@ -345,48 +371,32 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
         }
         lines.push(...allowanceLines);
 
+        // 承認サインが未設定なら、作業手当の承認者名で補完する
+        if (!approverName && allowanceProjectIds.length > 0) {
+            const approvedAllowanceRow = (workAllowanceApprovals || []).find(a =>
+                allowanceProjectIds.includes(String(a.project_id)) &&
+                a.date === d && a.status === 'approved' && a.approved_by
+            );
+            if (approvedAllowanceRow) approverName = approvedAllowanceRow.approved_by;
+        }
+
         const cellHTML = lines.length > 0 ? lines.join('<br/>') : '&nbsp;';
         otRow += `<td class="data-cell data-cell-l" style="font-size: 9px; line-height: 1.15; text-align: left; padding: 1px 2px;">${cellHTML}</td>`;
         otRow += `<td class="data-cell data-cell-r sign-cell">${approverName ? esc(approverName) : '&nbsp;'}</td>`;
     });
 
-    // ======== 日計（1行）========
-    let dailyTotalRow = `<td class="group-cell daily-total-label">日計</td><td class="item-cell daily-total-label" colspan="2">実働/人工</td>`;
+    // ======== 備考（1行：日計 実働/人工 を表示）========
+    let dailyTotalRow = `<td class="group-cell">備考</td><td class="item-cell" colspan="2">実働/人工</td>`;
     days.forEach(d => {
         const dayRecords = (recordsData || []).filter(r => r.date === d);
         const dayTotal = dayRecords.reduce((sum, r) => sum + Number(r.hours || 0), 0);
         if (dayTotal > 0) {
             const dayNinku = calculateNinku(dayTotal, d);
-            dailyTotalRow += `<td class="data-cell daily-total" colspan="2">${dayTotal.toFixed(1)}h<br/>(${dayNinku}人工)</td>`;
+            dailyTotalRow += `<td class="data-cell daily-total" colspan="2">${dayTotal.toFixed(1)}h（${dayNinku}人工）</td>`;
         } else {
-            dailyTotalRow += `<td class="data-cell" colspan="2"></td>`;
+            dailyTotalRow += `<td class="data-cell note-cell" colspan="2">&nbsp;</td>`;
         }
     });
-
-    // ======== 備考欄（3行分の空白、日ごとに分割）========
-    let noteRowsHTML = '';
-    for (let n = 0; n < 3; n++) {
-        const isFirst = n === 0;
-        let row = isFirst ? `<td rowspan="3" class="group-cell">備考</td>` : '';
-        row += `<td class="item-cell" colspan="2"></td>`;
-        for (let i = 0; i < 7; i++) {
-            row += `<td class="data-cell note-cell" colspan="2"></td>`;
-        }
-        noteRowsHTML += `<tr>${row}</tr>`;
-    }
-
-    // 週合計の計算
-    let weekTotalHours = 0, weekTotalOvertime = 0;
-    days.forEach(d => {
-        const dayRecords = (recordsData || []).filter(r => r.date === d);
-        weekTotalHours += dayRecords.reduce((sum, r) => sum + Number(r.hours || 0), 0);
-        weekTotalOvertime += dayRecords.reduce((sum, r) => sum + Number(r.overtime_hours || 0), 0);
-    });
-    const weekNinku = (weekTotalHours / 7.5).toFixed(2);
-
-    // 期間表示
-    const sp = days[0].split('-'), ep = days[6].split('-');
-    const periodStr = `${parseInt(sp[1])}/${parseInt(sp[2])} 〜 ${parseInt(ep[1])}/${parseInt(ep[2])}`;
 
     const startYear = new Date(days[0]).getFullYear();
     const reiwaYear = startYear - 2018;
@@ -395,34 +405,27 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
     <div class="report-wrapper">
         <div class="report-header">
             <h1>就 労 日 報（R${reiwaYear}）</h1>
-            <div class="week-summary">
-                <span>期間: ${periodStr}</span>
-                <span>週合計実働: <span class="val">${weekTotalHours.toFixed(1)}h</span></span>
-                <span>週合計時間外: <span class="val">${weekTotalOvertime.toFixed(1)}h</span></span>
-                <span>週合計人工: <span class="val">${weekNinku}</span></span>
-            </div>
             <div class="worker-info">作業者名：<span>${esc(workerName)}</span></div>
         </div>
 
         <div class="page-wrap">
             <table>
                 <colgroup>
-                    <col style="width: 36px;"> <!-- グループラベル（現場、協力等） -->
-                    <col style="width: 32px;"> <!-- 項目名（左） -->
-                    <col style="width: 25px;"> <!-- 項目名（右：人数・数量） -->
+                    <col style="width: 25px;"> <!-- グループラベル（現場、協力等） -->
+                    <col style="width: 36px;"> <!-- 項目名（左） -->
+                    <col style="width: 33px;"> <!-- 項目名（右：人数・数量） -->
                     <!-- 7日間 × 2列（内容・数値） -->
-                    <col><col style="width: 25px;">
-                    <col><col style="width: 25px;">
-                    <col><col style="width: 25px;">
-                    <col><col style="width: 25px;">
-                    <col><col style="width: 25px;">
-                    <col><col style="width: 25px;">
-                    <col><col style="width: 25px;">
+                    <col style="width: 135px;"><col style="width: 33px;">
+                    <col style="width: 135px;"><col style="width: 33px;">
+                    <col style="width: 135px;"><col style="width: 33px;">
+                    <col style="width: 135px;"><col style="width: 33px;">
+                    <col style="width: 135px;"><col style="width: 33px;">
+                    <col style="width: 135px;"><col style="width: 33px;">
+                    <col style="width: 135px;"><col style="width: 33px;">
                 </colgroup>
                 <thead>
                     <tr>
-                        <th class="corner-cell" style="width:36px">日付<br/>項目</th>
-                        <th class="corner-cell" colspan="2"></th>
+                        <th class="corner-cell" colspan="3"><span class="cc-date">日付</span><span class="cc-item">項目</span></th>
                         ${dateHeaders}
                     </tr>
                 </thead>
@@ -439,13 +442,15 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
                     <!-- 作業手当 -->
                     <tr>${otRow}</tr>
 
-                    <!-- 備考（3行分の手書き欄） -->
-                    ${noteRowsHTML}
-
-                    <!-- 日計 -->
+                    <!-- 備考（日計 実働/人工） -->
                     <tr>${dailyTotalRow}</tr>
                 </tbody>
             </table>
+            <div class="footnote">
+                ※作業手当時間欄：対象作業がある場合、作業内容と作業時間を記入しすること。<br/>
+                　手当対象作業：ブラスト、ブラスト砂回収、吹付け、屋根吹付け（手元は無し）、金属溶射、塗膜剥離（吹付け含む）、サンダーケレン、早出・残業（残業予定時間を事前に報告のこと）<br/>
+                ※上長承認欄：上長承認が無い場合、支給対象外となる場合があります。
+            </div>
         </div>
     </div>
     `;
@@ -502,8 +507,8 @@ export const generateMultipleWorkersReportPDF = (workersDataList, weekPrefix, co
     if (!workersDataList || workersDataList.length === 0) return;
 
     const parts = workersDataList.map((data, idx) => {
-        const { workerName, days, recordsData, projects, subcontractorsData, overtimeApprovals } = data;
-        const part = createWorkerReportHTMLPart(workerName, days, recordsData, projects, subcontractorsData, companyHolidays, overtimeApprovals);
+        const { workerName, days, recordsData, projects, subcontractorsData, overtimeApprovals, workAllowanceApprovals } = data;
+        const part = createWorkerReportHTMLPart(workerName, days, recordsData, projects, subcontractorsData, companyHolidays, overtimeApprovals, workAllowanceApprovals);
         const isLast = idx === workersDataList.length - 1;
         const breakDiv = isLast ? '' : '<div class="page-break"></div>';
         return part + breakDiv;

@@ -5,9 +5,9 @@ import * as fflate from 'fflate';
 
 /**
  * 作業手当の対象作業（work_allowance=true）を作業項目ごとに集計し、
- * 「作業名 実働h」形式の行を返す。
+ * 「作業名 実働h」形式の行を返す。承認待ちの現場が含まれる場合は「（未承認）」を付与する。
  */
-export const buildWorkAllowanceLines = (dayRecords) => {
+export const buildWorkAllowanceLines = (dayRecords, date, workAllowanceApprovals = []) => {
     const taskMap = {};
     (dayRecords || []).forEach(r => {
         if (!r.work_allowance) return;
@@ -15,7 +15,17 @@ export const buildWorkAllowanceLines = (dayRecords) => {
         if (!taskMap[taskName]) taskMap[taskName] = 0;
         taskMap[taskName] += Number(r.hours || 0);
     });
-    return Object.entries(taskMap).map(([name, hours]) => `${name} ${hours.toFixed(1)}h`);
+    const allowanceProjectIds = [...new Set(
+        (dayRecords || []).filter(r => r.work_allowance).map(r => String(r.project_id))
+    )];
+    const hasUnapproved = allowanceProjectIds.some(pid =>
+        !(workAllowanceApprovals || []).some(a =>
+            String(a.project_id) === pid && a.date === date && a.status === 'approved'
+        )
+    );
+    return Object.entries(taskMap).map(([name, hours]) =>
+        `${name} ${hours.toFixed(1)}h${hasUnapproved ? '（未承認）' : ''}`
+    );
 };
 
 /**
@@ -401,7 +411,7 @@ const truncateSiteName = (name, maxLength = 10) => {
 /**
  * 就労日報の単一ワークシートを生成する内部ヘルパー
  */
-const createWorkerReportSheet = (workerName, days, recordsData, projects, subcontractorsData, overtimeApprovals = []) => {
+const createWorkerReportSheet = (workerName, days, recordsData, projects, subcontractorsData, overtimeApprovals = [], workAllowanceApprovals = []) => {
     const { rows: ROWS, cells: templateCells, mergedCells, colWidths, rowHeights } = layoutData;
     const COLS_COUNT = 17; // A〜Q
 
@@ -552,7 +562,7 @@ const createWorkerReportSheet = (workerName, days, recordsData, projects, subcon
     days.forEach((d, i) => {
         const dayRecords = (recordsData || []).filter(r => r.date === d);
         const dayOt = dayRecords.reduce((sum, r) => sum + Number(r.overtime_hours || 0), 0);
-        const allowanceLines = buildWorkAllowanceLines(dayRecords);
+        const allowanceLines = buildWorkAllowanceLines(dayRecords, d, workAllowanceApprovals);
 
         const lines = [];
         let approverName = '';
@@ -576,6 +586,18 @@ const createWorkerReportSheet = (workerName, days, recordsData, projects, subcon
             if (approvedRow) approverName = approvedRow.approved_by;
         }
         lines.push(...allowanceLines);
+
+        // 承認サインが未設定なら、作業手当の承認者名で補完する
+        if (!approverName) {
+            const allowanceProjectIds = [...new Set(
+                dayRecords.filter(r => r.work_allowance).map(r => String(r.project_id))
+            )];
+            const approvedAllowanceRow = (workAllowanceApprovals || []).find(a =>
+                allowanceProjectIds.includes(String(a.project_id)) &&
+                a.date === d && a.status === 'approved' && a.approved_by
+            );
+            if (approvedAllowanceRow) approverName = approvedAllowanceRow.approved_by;
+        }
 
         grid[18][dayMainCols[i] - 1] = lines.join('\n');
         grid[18][daySubCols[i] - 1]  = approverName;
@@ -684,8 +706,8 @@ export const generateMultipleWorkersReportExcel = (workersDataList, weekPrefix) 
     let globalPs = null;
 
     workersDataList.forEach(data => {
-        const { workerName, days, recordsData, projects, subcontractorsData, overtimeApprovals } = data;
-        const { ws, ps } = createWorkerReportSheet(workerName, days, recordsData, projects, subcontractorsData, overtimeApprovals);
+        const { workerName, days, recordsData, projects, subcontractorsData, overtimeApprovals, workAllowanceApprovals } = data;
+        const { ws, ps } = createWorkerReportSheet(workerName, days, recordsData, projects, subcontractorsData, overtimeApprovals, workAllowanceApprovals);
         // シート名は作業員名にする（Excelのシート名制限31字に収まるようにスライス）
         const sheetName = workerName.slice(0, 31);
         xlsx.utils.book_append_sheet(wb, ws, sheetName);

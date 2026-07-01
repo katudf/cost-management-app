@@ -6,6 +6,15 @@ import { useConfirm } from './components/ConfirmProvider';
 import { calculateWorkHours, calculateNinku, getSeasonConfig, formatTimeDisplay } from './utils/workTimeUtils';
 import { PROJECT_STATUS } from './utils/constants';
 import { syncOvertimeApproval, fetchPendingApprovals, approveOvertime, fetchApprovalReason } from './lib/overtimeApprovals';
+import { syncWorkAllowanceApproval, fetchPendingWorkAllowanceApprovals, approveWorkAllowance } from './lib/workAllowanceApprovals';
+
+// ローカルタイムゾーンで 'YYYY-MM-DD' を生成する（toISOString はUTC変換されるため日付がずれる）
+const formatDateLocal = (date) => {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+};
 
 const WorkerApp = () => {
     const { showToast } = useToast();
@@ -30,13 +39,16 @@ const WorkerApp = () => {
     const [offlineDraft, setOfflineDraft] = useState(null);
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
-    const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
+    const [selectedDate, setSelectedDate] = useState(() => formatDateLocal(new Date()));
 
     // 残業理由（その現場・その日の残業に対する任意のメモ）
     const [overtimeReason, setOvertimeReason] = useState('');
     // 職長: 承認待ちの残業申請リスト
     const [pendingApprovals, setPendingApprovals] = useState([]);
     const [approvingId, setApprovingId] = useState(null);
+    // 職長: 承認待ちの作業手当申請リスト
+    const [pendingAllowanceApprovals, setPendingAllowanceApprovals] = useState([]);
+    const [approvingAllowanceId, setApprovingAllowanceId] = useState(null);
 
     // Initial load
     useEffect(() => {
@@ -201,6 +213,38 @@ const WorkerApp = () => {
             showToast('承認に失敗しました。', 'error');
         } finally {
             setApprovingId(null);
+        }
+    };
+
+    // 職長が担当する全現場の承認待ち作業手当を読み込む
+    const loadPendingAllowanceApprovals = useCallback(async () => {
+        if (!loggedInWorker) { setPendingAllowanceApprovals([]); return; }
+        const foremanProjectIds = projects
+            .filter(p => p.foreman_worker_id === loggedInWorker.id)
+            .map(p => p.id);
+        if (foremanProjectIds.length === 0) { setPendingAllowanceApprovals([]); return; }
+        try {
+            const data = await fetchPendingWorkAllowanceApprovals(foremanProjectIds);
+            setPendingAllowanceApprovals(data);
+        } catch (e) {
+            console.error('Failed to load pending work allowance approvals:', e);
+        }
+    }, [loggedInWorker, projects]);
+
+    useEffect(() => { loadPendingAllowanceApprovals(); }, [loadPendingAllowanceApprovals]);
+
+    // 作業手当申請を承認する
+    const handleApproveWorkAllowance = async (id) => {
+        setApprovingAllowanceId(id);
+        try {
+            await approveWorkAllowance(id, loggedInWorker.name);
+            await loadPendingAllowanceApprovals();
+            showToast('作業手当を承認しました。', 'success');
+        } catch (e) {
+            console.error('Approve work allowance error:', e);
+            showToast('承認に失敗しました。', 'error');
+        } finally {
+            setApprovingAllowanceId(null);
         }
     };
 
@@ -656,6 +700,20 @@ const WorkerApp = () => {
                 /* 残業承認の同期失敗は日報保存自体は成功扱いとし、致命的にはしない */
             }
 
+            // 作業手当承認の同期（その日・その現場・この作業員で手当対象にチェックされた工種名で起票/更新/削除）
+            try {
+                const allowanceTaskNames = tasks.filter(t => t.work_allowance).map(t => t.name);
+                await syncWorkAllowanceApproval({
+                    projectId: selectedProjectId,
+                    workerName: loggedInWorker.name,
+                    date: targetDate,
+                    taskNames: allowanceTaskNames,
+                });
+            } catch (e) {
+                console.error('Work allowance approval sync error:', e);
+                /* 作業手当承認の同期失敗は日報保存自体は成功扱いとし、致命的にはしない */
+            }
+
             // リフレッシュ
             try {
                 const { data: refreshed } = await supabase.from('TaskRecords').select('*').eq('worker_name', loggedInWorker.name).eq('date', targetDate);
@@ -782,17 +840,57 @@ const WorkerApp = () => {
 
                 <div className="mb-6">
                     <label className="block text-sm font-bold text-slate-600 mb-2">作業日</label>
-                    <input type="date" value={selectedDate} onChange={async (e) => {
-                        const value = e.target.value;
-                        if (hasUnsavedChanges && !(await confirm({
-                            title: '別の日に移動',
-                            message: '未送信の入力データがあります。破棄して別の日に移動しますか？',
-                            confirmText: '破棄して移動',
-                        }))) return;
-                        setHasUnsavedChanges(false);
-                        setSelectedDate(value);
-                    }}
-                        className="w-full bg-white border-2 border-blue-200 text-slate-800 p-4 rounded-xl font-bold text-lg outline-none focus:border-blue-500 shadow-sm appearance-none mb-2" />
+                    <div className="flex items-center gap-2 mb-2">
+                        <button
+                            type="button"
+                            onClick={async () => {
+                                if (hasUnsavedChanges && !(await confirm({
+                                    title: '別の日に移動',
+                                    message: '未送信の入力データがあります。破棄して別の日に移動しますか？',
+                                    confirmText: '破棄して移動',
+                                }))) return;
+                                setHasUnsavedChanges(false);
+                                const d = new Date(selectedDate + 'T00:00:00');
+                                d.setDate(d.getDate() - 1);
+                                setSelectedDate(formatDateLocal(d));
+                            }}
+                            aria-label="前日に移動"
+                            title="前日に移動"
+                            className="shrink-0 w-12 h-12 flex items-center justify-center bg-white border-2 border-blue-200 text-blue-600 rounded-xl font-bold text-lg active:scale-95 transition shadow-sm"
+                        >
+                            ◀
+                        </button>
+                        <input type="date" value={selectedDate} onChange={async (e) => {
+                            const value = e.target.value;
+                            if (hasUnsavedChanges && !(await confirm({
+                                title: '別の日に移動',
+                                message: '未送信の入力データがあります。破棄して別の日に移動しますか？',
+                                confirmText: '破棄して移動',
+                            }))) return;
+                            setHasUnsavedChanges(false);
+                            setSelectedDate(value);
+                        }}
+                            className="flex-1 bg-white border-2 border-blue-200 text-slate-800 p-4 rounded-xl font-bold text-lg outline-none focus:border-blue-500 shadow-sm appearance-none" />
+                        <button
+                            type="button"
+                            onClick={async () => {
+                                if (hasUnsavedChanges && !(await confirm({
+                                    title: '別の日に移動',
+                                    message: '未送信の入力データがあります。破棄して別の日に移動しますか？',
+                                    confirmText: '破棄して移動',
+                                }))) return;
+                                setHasUnsavedChanges(false);
+                                const d = new Date(selectedDate + 'T00:00:00');
+                                d.setDate(d.getDate() + 1);
+                                setSelectedDate(formatDateLocal(d));
+                            }}
+                            aria-label="翌日に移動"
+                            title="翌日に移動"
+                            className="shrink-0 w-12 h-12 flex items-center justify-center bg-white border-2 border-blue-200 text-blue-600 rounded-xl font-bold text-lg active:scale-95 transition shadow-sm"
+                        >
+                            ▶
+                        </button>
+                    </div>
                     <div className="flex items-center gap-2 mb-2">
                         <span className={`text-xs font-bold px-2 py-1 rounded-full ${seasonLabel === '夏季' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}`}>{seasonLabel}</span>
                         <span className="text-xs font-bold text-slate-400">定時 {scheduledStartStr}〜{scheduledEndStr}</span>
@@ -962,6 +1060,47 @@ const WorkerApp = () => {
                                                     className="shrink-0 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-bold text-sm px-4 py-2 rounded-lg transition active:scale-95 flex items-center gap-1"
                                                 >
                                                     {approvingId === a.id
+                                                        ? <Loader2 className="w-4 h-4 animate-spin" />
+                                                        : <CheckCircle2 className="w-4 h-4" />}
+                                                    承認
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 職長: 承認待ちの作業手当申請 */}
+                        {isForeman && pendingAllowanceApprovals.length > 0 && (
+                            <div className="bg-white border border-indigo-200 rounded-2xl shadow-sm overflow-hidden mb-2">
+                                <div className="bg-indigo-500 px-4 py-3 flex gap-2 items-center text-white shadow-sm">
+                                    <CheckCircle2 className="shrink-0 w-5 h-5" />
+                                    <h3 className="font-bold text-sm">承認待ちの作業手当（{pendingAllowanceApprovals.length}件）</h3>
+                                </div>
+                                <div className="p-3 flex flex-col gap-2 bg-indigo-50">
+                                    {pendingAllowanceApprovals.map(a => {
+                                        const proj = projects.find(p => p.id === Number(a.project_id));
+                                        return (
+                                            <div key={a.id} className="bg-white border border-indigo-200 rounded-xl p-3 flex items-center justify-between gap-3">
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="text-xs font-bold text-slate-800 truncate">{a.worker_name}</div>
+                                                    <div className="text-[11px] text-slate-500 font-medium truncate">
+                                                        {a.date} ・ {proj?.name || '現場'}
+                                                    </div>
+                                                    <div className="text-xs font-black text-indigo-600 mt-0.5 break-words">
+                                                        作業手当: {(a.task_names || []).map(name => {
+                                                            const hours = a.task_hours?.[name];
+                                                            return hours != null ? `${name} ${hours.toFixed(1)}h` : name;
+                                                        }).join('、')}
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={() => handleApproveWorkAllowance(a.id)}
+                                                    disabled={approvingAllowanceId === a.id}
+                                                    className="shrink-0 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-bold text-sm px-4 py-2 rounded-lg transition active:scale-95 flex items-center gap-1"
+                                                >
+                                                    {approvingAllowanceId === a.id
                                                         ? <Loader2 className="w-4 h-4 animate-spin" />
                                                         : <CheckCircle2 className="w-4 h-4" />}
                                                     承認
