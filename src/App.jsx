@@ -10,12 +10,16 @@ const App = () => {
 
     useEffect(() => {
         const queryParams = new URLSearchParams(window.location.search);
-        // ?mode=worker がURLにあればWorkerAppを表示
-        if (queryParams.get('mode') === 'worker') {
+        const queryMode = queryParams.get('mode');
+        // worker.html / inventory.html から開いた場合はホーム画面アイコン用に専用モード固定
+        // （PWAとしてインストールした際に正しいアイコン・マニフェストのエントリから起動するため）
+        const path = window.location.pathname;
+
+        if (queryMode === 'worker' || path.endsWith('/worker.html')) {
             setMode('worker');
-        } else if (queryParams.get('mode') === 'schedule') {
+        } else if (queryMode === 'schedule') {
             setMode('schedule');
-        } else if (queryParams.get('mode') === 'inventory') {
+        } else if (queryMode === 'inventory' || path.endsWith('/inventory.html')) {
             setMode('inventory');
         } else {
             setMode('admin');

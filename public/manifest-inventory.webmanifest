@@ -1,0 +1,16 @@
+{
+  "name": "在庫管理",
+  "short_name": "在庫管理",
+  "description": "資材・在庫管理アプリ",
+  "start_url": "/inventory.html",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#047857",
+  "lang": "ja",
+  "icons": [
+    { "src": "/icons/inventory/pwa-192x192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/inventory/pwa-512x512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/inventory/pwa-512x512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

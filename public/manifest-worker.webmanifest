@@ -1,0 +1,16 @@
+{
+  "name": "作業日報",
+  "short_name": "作業日報",
+  "description": "作業員向け日報入力アプリ",
+  "start_url": "/worker.html",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#c2410c",
+  "lang": "ja",
+  "icons": [
+    { "src": "/icons/worker/pwa-192x192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/worker/pwa-512x512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/worker/pwa-512x512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
