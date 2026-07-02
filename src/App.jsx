@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import AdminApp from './AdminApp';
 import WorkerApp from './WorkerApp';
 import ScheduleViewApp from './ScheduleViewApp';
+import InventoryApp from './InventoryApp';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 const App = () => {
@@ -14,6 +15,8 @@ const App = () => {
             setMode('worker');
         } else if (queryParams.get('mode') === 'schedule') {
             setMode('schedule');
+        } else if (queryParams.get('mode') === 'inventory') {
+            setMode('inventory');
         } else {
             setMode('admin');
         }
@@ -29,6 +32,10 @@ const App = () => {
 
     if (mode === 'schedule') {
         return <ErrorBoundary><ScheduleViewApp /></ErrorBoundary>;
+    }
+
+    if (mode === 'inventory') {
+        return <ErrorBoundary><InventoryApp /></ErrorBoundary>;
     }
 
     return <ErrorBoundary><AdminApp /></ErrorBoundary>;

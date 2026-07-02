@@ -54,6 +54,32 @@ export const ITEM_TYPE = {
     COMMENT: 'comment',
 };
 
+// === 在庫管理 種類 ===
+export const INVENTORY_CATEGORY_LIST = [
+    '塗料',
+    '工具',
+    '塗装用品',
+    '電動工具',
+    '消耗品',
+    '機械',
+    '車用品',
+    '計測、測量',
+    'その他',
+];
+
+// 種類ごとのバッジ表示色（Tailwindクラス）
+export const INVENTORY_CATEGORY_COLOR = {
+    '塗料':     'bg-blue-100 text-blue-700',
+    '工具':     'bg-amber-100 text-amber-700',
+    '塗装用品': 'bg-cyan-100 text-cyan-700',
+    '電動工具': 'bg-orange-100 text-orange-700',
+    '消耗品':   'bg-green-100 text-green-700',
+    '機械':     'bg-purple-100 text-purple-700',
+    '車用品':   'bg-rose-100 text-rose-700',
+    '計測、測量': 'bg-teal-100 text-teal-700',
+    'その他':   'bg-slate-100 text-slate-600',
+};
+
 // === 配置表 カラーパレット ===
 export const DEFAULT_COLORS = [
     '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7',
