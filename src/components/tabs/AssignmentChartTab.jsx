@@ -26,6 +26,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         setEditCell,
         isDragging,
         dragCells,
+        dragWorkerId,
         hoverProjectStats,
         setHoverProjectStats,
         clipboard,
