@@ -59,8 +59,8 @@ export const ESTIMATE_STATUS = {
 };
 export const ESTIMATE_STATUS_LABEL = {
     [ESTIMATE_STATUS.DRAFT]:     '下書き',
-    [ESTIMATE_STATUS.PENDING]:   '申請中',
-    [ESTIMATE_STATUS.APPROVED]:  '承認',
+    [ESTIMATE_STATUS.PENDING]:   '承認依頼',
+    [ESTIMATE_STATUS.APPROVED]:  '承認済',
     [ESTIMATE_STATUS.RETURNED]:  '差し戻し',
     [ESTIMATE_STATUS.SUBMITTED]: '提出済',
     [ESTIMATE_STATUS.ORDERED]:   '受注',

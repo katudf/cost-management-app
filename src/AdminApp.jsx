@@ -8,9 +8,9 @@ import { useToast } from './components/Toast';
 import { useAuth } from './hooks/useAuth';
 import LoginScreen from './components/auth/LoginScreen';
 import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
-import { Table, Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, Upload, GripVertical, LogOut } from 'lucide-react';
+import { Table, Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, Upload, GripVertical, LogOut, Bell } from 'lucide-react';
 import { supabase } from './lib/supabase';
-import { DEFAULT_MASTER_DATA, PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR, ITEM_TYPE, DASHBOARD_VIEW_MODE, DASHBOARD_VIEW_MODE_LIST } from './utils/constants';
+import { DEFAULT_MASTER_DATA, PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR, ITEM_TYPE, DASHBOARD_VIEW_MODE, DASHBOARD_VIEW_MODE_LIST, ESTIMATE_STATUS } from './utils/constants';
 import { calculateAge } from './utils/dateUtils';
 import { calculateProjectsSummary } from './utils/projectUtils';
 import { parseExcelForImport } from './utils/excelImportUtils';
@@ -35,6 +35,7 @@ import PurchaseLedgerTab from './components/tabs/PurchaseLedgerTab';
 import AssignmentChartTab from './components/tabs/AssignmentChartTab';
 import EstimateList from './EstimateList';
 import EstimateForm from './EstimateForm';
+import { fetchEstimates } from './supabaseEstimates';
 
 const App = () => {
     const { showToast } = useToast();
@@ -46,6 +47,22 @@ const App = () => {
     // number    = 編集フォーム（IDを指定）
     const [importModalInfo, setImportModalInfo] = useState(null);
     const [aliasName, setAliasName] = useState("");
+
+    // 見積承認依頼バッジ用: 全見積を保持し、承認者/申請者それぞれの承認待ち件数を算出する
+    const [estimatesForBadge, setEstimatesForBadge] = useState([]);
+    useEffect(() => {
+        if (!currentStaff?.id) return;
+        fetchEstimates().then(setEstimatesForBadge).catch(err => {
+            console.error('見積バッジ用データの取得に失敗しました:', err);
+        });
+    }, [currentStaff?.id, activeTab, estimateEditId]);
+
+    const pendingApprovalCount = estimatesForBadge.filter(
+        e => e.status === ESTIMATE_STATUS.PENDING && e.approver_staff_id === currentStaff?.id
+    ).length;
+    const pendingRequestCount = estimatesForBadge.filter(
+        e => e.status === ESTIMATE_STATUS.PENDING && e.staff_id === currentStaff?.id
+    ).length;
 
 
     const [activeProjectId, setActiveProjectId] = useState(null);
@@ -615,9 +632,14 @@ const App = () => {
                                     { key: 'purchase_ledger', label: '材料', Icon: Table },
                                     { key: 'settings', label: '設定', Icon: Settings },
                                 ].map(({ key, label, Icon }) => (
-                                    <button key={key} onClick={() => setActiveTab(key)} className={`px-4 py-2 rounded-md transition font-bold whitespace-nowrap flex items-center gap-1.5 ${activeTab === key ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 text-slate-600'}`}>
+                                    <button key={key} onClick={() => setActiveTab(key)} className={`relative px-4 py-2 rounded-md transition font-bold whitespace-nowrap flex items-center gap-1.5 ${activeTab === key ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 text-slate-600'}`}>
                                         <Icon size={16} />
                                         {label}
+                                        {key === 'estimate' && (pendingApprovalCount + pendingRequestCount) > 0 && (
+                                            <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold leading-none">
+                                                {pendingApprovalCount + pendingRequestCount}
+                                            </span>
+                                        )}
                                     </button>
                                 ))}
                             </nav>
@@ -635,6 +657,29 @@ const App = () => {
                                 </button>
                             </div>
                         </div>
+
+                        {(pendingApprovalCount > 0 || pendingRequestCount > 0) && (
+                            <div className="flex flex-col gap-1.5">
+                                {pendingApprovalCount > 0 && (
+                                    <button
+                                        onClick={() => { setActiveTab('estimate'); setEstimateEditId(undefined); }}
+                                        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm font-bold text-left hover:bg-red-100 transition"
+                                    >
+                                        <Bell size={16} className="shrink-0" />
+                                        {pendingApprovalCount}件の見積り承認依頼があります
+                                    </button>
+                                )}
+                                {pendingRequestCount > 0 && (
+                                    <button
+                                        onClick={() => { setActiveTab('estimate'); setEstimateEditId(undefined); }}
+                                        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm font-bold text-left hover:bg-amber-100 transition"
+                                    >
+                                        <Bell size={16} className="shrink-0" />
+                                        {pendingRequestCount}件の見積り承認依頼待ち
+                                    </button>
+                                )}
+                            </div>
+                        )}
 
                         <div className="flex flex-wrap items-center gap-2">
                             {activeTab === 'master' && (

@@ -319,38 +319,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
     setHeader(h => ({ ...h, [field]: value }));
   }, []);
 
-  // 承認・差し戻し（証跡を記録してからステータスを変更する）
-  // 承認者は指名された本人（currentStaff）のみが実行できる（EstimateSidebar側でも二重にガード）
-  const handleApprove = useCallback(() => {
-    setHeader(h => ({
-      ...h,
-      status: ESTIMATE_STATUS.APPROVED,
-      approved_by: currentStaff?.name || '',
-      approved_at: new Date().toISOString(),
-      returned_reason: '',
-    }));
-  }, [currentStaff]);
-
-  const handleReturn = useCallback((reason) => {
-    setHeader(h => ({
-      ...h,
-      status: ESTIMATE_STATUS.RETURNED,
-      returned_reason: reason,
-    }));
-  }, []);
-
-  // 申請中（承認依頼）: 承認者を指名してステータスを申請中にする
-  const handleSubmit = useCallback((approverStaffId) => {
-    setHeader(h => ({
-      ...h,
-      status: ESTIMATE_STATUS.PENDING,
-      approver_staff_id: approverStaffId,
-      returned_reason: '',
-    }));
-  }, []);
-
-  // 受注管理フロー（承認後）: 提出済 / 受注 / 失注
-  // 承認後は編集ロック中で保存ボタンが使えないため、ここで直接Supabaseへ反映する
+  // ステータス変更系の操作は、画面遷移で失われないようその場でSupabaseへ反映する
   const persistStatus = useCallback(async (patch) => {
     try {
       setSaving(true);
@@ -362,6 +331,33 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
       setSaving(false);
     }
   }, [estimateId]);
+
+  // 承認・差し戻し（証跡を記録してからステータスを変更する）
+  // 承認者は指名された本人（currentStaff）のみが実行できる（EstimateSidebar側でも二重にガード）
+  const handleApprove = useCallback(() => {
+    persistStatus({
+      status: ESTIMATE_STATUS.APPROVED,
+      approved_by: currentStaff?.name || '',
+      approved_at: new Date().toISOString(),
+      returned_reason: '',
+    });
+  }, [currentStaff, persistStatus]);
+
+  const handleReturn = useCallback((reason) => {
+    persistStatus({
+      status: ESTIMATE_STATUS.RETURNED,
+      returned_reason: reason,
+    });
+  }, [persistStatus]);
+
+  // 申請中（承認依頼）: 承認者を指名してステータスを申請中にする
+  const handleSubmit = useCallback((approverStaffId) => {
+    persistStatus({
+      status: ESTIMATE_STATUS.PENDING,
+      approver_staff_id: approverStaffId,
+      returned_reason: '',
+    });
+  }, [persistStatus]);
 
   const handleSubmitToCustomer = useCallback(() => {
     persistStatus({ status: ESTIMATE_STATUS.SUBMITTED });
