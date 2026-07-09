@@ -2,27 +2,39 @@
 // 見積書入力画面（ヘッダー + 明細）
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { ArrowLeft, FileText, Lock, Eye, RefreshCw, Download, X } from 'lucide-react';
+import { ArrowLeft, FileText, Lock, Eye, RefreshCw, Download, X, AlertCircle } from 'lucide-react';
 import { BlobProvider } from '@react-pdf/renderer';
 import ConfirmModal from './components/ConfirmModal';
 import EstimateHeader from './components/estimate/EstimateHeader';
 import EstimateItemTable from './components/estimate/EstimateItemTable';
 import EstimateSidebar from './components/estimate/EstimateSidebar';
+import ImportItemsModal from './components/estimate/ImportItemsModal';
 import EstimateDocument, { downloadEstimatePDF } from './EstimatePDF';
+import { useToast } from './components/Toast';
+import { useAuth } from './hooks/useAuth';
 import {
   fetchEstimateById,
   createEstimate,
   updateEstimate,
   saveEstimateItems,
+  syncEstimateToProject,
   fetchCustomers,
   fetchWorkers,
   getNextEstimateSeq,
   calcTotals,
   checkDuplicateNumber,
+  findAvailableBranchNumber,
   fetchOfficeStaff,
   fetchSystemSettings,
 } from './supabaseEstimates';
-import { PROJECT_STATUS, ITEM_TYPE, ESTIMATE_STATUS, ESTIMATE_STATUS_LABEL } from './utils/constants';
+import { ITEM_TYPE, ESTIMATE_STATUS, ESTIMATE_STATUS_LABEL } from './utils/constants';
+import {
+  saveEstimateDraft,
+  loadEstimateDraft,
+  clearEstimateDraft,
+  formatDraftAge,
+} from './utils/estimateDraft';
+import { addDays, toDateStr } from './utils/dateUtils';
 
 // 今日の日付を YYMMDD 形式で返す
 const todayPrefix = () => {
@@ -36,6 +48,12 @@ const todayPrefix = () => {
 // 日付をinput[type=date]用のyyyy-mm-dd形式に変換
 const toInputDate = (val) => {
   if (!val) return '';
+  if (val instanceof Date) {
+    const y = val.getFullYear();
+    const m = String(val.getMonth() + 1).padStart(2, '0');
+    const d = String(val.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
   return String(val).slice(0, 10);
 };
 
@@ -94,6 +112,8 @@ const MAX_ROWS = 300;
 // ============================================================
 const EstimateForm = ({ estimateId, onBack, onSaved }) => {
   const isNew = !estimateId;
+  const { showToast } = useToast();
+  const { currentStaff } = useAuth();
 
   // ヘッダー state
   const [header, setHeader] = useState({
@@ -120,6 +140,11 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
     net_calc_type: 'perc', // perc, manual ("auto"は廃止)
     net_perc: 95,
     net_amount: '',
+    approved_by: '',
+    approved_at: '',
+    returned_reason: '',
+    approver_staff_id: null,
+    project_id: null,
   });
 
   // 明細 state（フラットリスト）
@@ -142,11 +167,18 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewSnapshot, setPreviewSnapshot] = useState(null); // プレビュー用データスナップショット
   const [previewKey, setPreviewKey] = useState(0);             // 変更時にBlobProviderを強制再生成
+  const [previewStale, setPreviewStale] = useState(false);     // プレビュー表示後に入力が変更されたか
 
   // 未保存変更の追跡
   const isDirty = useRef(false);
   const isInitialized = useRef(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+
+  // 過去見積からの明細取込モーダル
+  const [showImportModal, setShowImportModal] = useState(false);
+
+  // 自動退避（localStorage）からの復元プロンプト
+  const [pendingDraft, setPendingDraft] = useState(null); // { header, items, savedAt } | null
 
   // 見積番号を文字列に結合
   const estimateNumber = [
@@ -176,12 +208,14 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
         if (isNew) {
           const prefix = todayPrefix();
           const seq = await getNextEstimateSeq(prefix);
+          const validDays = Number(settingsData.est_default_valid_days) || 30;
           setHeader(h => ({
             ...h,
             estimate_number_date: prefix,
             estimate_number_seq: seq,
             customer_honorific: '御中',
             notes: '※別紙項目に無い塗装工事は別途追加見積り申し上げます。',
+            valid_until: toDateStr(addDays(h.issue_date, validDays)),
           }));
           setOriginalStatus(ESTIMATE_STATUS.DRAFT);
           setItems([
@@ -216,6 +250,11 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
             net_calc_type:   (est.net_calc_type === 'auto' || !est.net_calc_type) ? 'perc' : est.net_calc_type,
             net_perc:        est.net_perc ?? 95,
             net_amount:      est.net_amount ?? '',
+            approved_by:     est.approved_by || '',
+            approved_at:     est.approved_at || '',
+            returned_reason: est.returned_reason || '',
+            approver_staff_id: est.approver_staff_id || null,
+            project_id:      est.project_id || null,
           });
           // DBで '__comment__' としてエンコードされたコメント行を復元
           const loadedItems = (est.items || []).map(item =>
@@ -225,6 +264,12 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
           );
           setItems(loadedItems);
           setOriginalStatus(est.status || ESTIMATE_STATUS.DRAFT);
+        }
+
+        // 前回の未保存入力が退避されていれば復元を提案する。
+        const draft = loadEstimateDraft(estimateId);
+        if (draft) {
+          setPendingDraft(draft);
         }
       } catch (e) {
         setError('データの読み込みに失敗しました: ' + e.message);
@@ -240,6 +285,22 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
     if (!isInitialized.current) return;
     isDirty.current = true;
   }, [header, items]);
+
+  // 入力内容を localStorage へ自動退避（debounce 1.5秒）。
+  // ・初期化前は退避しない（読み込み直後のDB値で上書きしない）
+  // ・復元プロンプト表示中は退避しない（ユーザー判断前に退避を上書きしない）
+  // ・ロック中（下書き以外）は編集不可のため退避不要
+  useEffect(() => {
+    if (!isInitialized.current) return;
+    if (pendingDraft) return;
+    if (!isNew && originalStatus !== ESTIMATE_STATUS.DRAFT) return;
+    if (!isDirty.current) return;
+
+    const timer = setTimeout(() => {
+      saveEstimateDraft(estimateId, { header, items });
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [header, items, estimateId, isNew, originalStatus, pendingDraft]);
 
   useEffect(() => {
     const handleBeforeUnload = (e) => {
@@ -257,6 +318,62 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
   const handleHeaderChange = useCallback((field, value) => {
     setHeader(h => ({ ...h, [field]: value }));
   }, []);
+
+  // 承認・差し戻し（証跡を記録してからステータスを変更する）
+  // 承認者は指名された本人（currentStaff）のみが実行できる（EstimateSidebar側でも二重にガード）
+  const handleApprove = useCallback(() => {
+    setHeader(h => ({
+      ...h,
+      status: ESTIMATE_STATUS.APPROVED,
+      approved_by: currentStaff?.name || '',
+      approved_at: new Date().toISOString(),
+      returned_reason: '',
+    }));
+  }, [currentStaff]);
+
+  const handleReturn = useCallback((reason) => {
+    setHeader(h => ({
+      ...h,
+      status: ESTIMATE_STATUS.RETURNED,
+      returned_reason: reason,
+    }));
+  }, []);
+
+  // 申請中（承認依頼）: 承認者を指名してステータスを申請中にする
+  const handleSubmit = useCallback((approverStaffId) => {
+    setHeader(h => ({
+      ...h,
+      status: ESTIMATE_STATUS.PENDING,
+      approver_staff_id: approverStaffId,
+      returned_reason: '',
+    }));
+  }, []);
+
+  // 受注管理フロー（承認後）: 提出済 / 受注 / 失注
+  // 承認後は編集ロック中で保存ボタンが使えないため、ここで直接Supabaseへ反映する
+  const persistStatus = useCallback(async (patch) => {
+    try {
+      setSaving(true);
+      await updateEstimate(estimateId, patch);
+      setHeader(h => ({ ...h, ...patch }));
+    } catch (e) {
+      setError('ステータスの変更に失敗しました: ' + e.message);
+    } finally {
+      setSaving(false);
+    }
+  }, [estimateId]);
+
+  const handleSubmitToCustomer = useCallback(() => {
+    persistStatus({ status: ESTIMATE_STATUS.SUBMITTED });
+  }, [persistStatus]);
+
+  const handleOrder = useCallback(() => {
+    persistStatus({ status: ESTIMATE_STATUS.ORDERED, lost_reason: '' });
+  }, [persistStatus]);
+
+  const handleLose = useCallback((reason) => {
+    persistStatus({ status: ESTIMATE_STATUS.LOST, lost_reason: reason });
+  }, [persistStatus]);
 
   // ============================================================
   // 明細操作
@@ -304,6 +421,41 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
       }
       return prev.filter((_, i) => i !== index);
     });
+  };
+
+  // 過去見積から選択した工種グループを、現在の明細末尾（FIXED行の手前）に取込む
+  const handleImportGroups = (groups) => {
+    setItems(prev => {
+      const nonFixed = prev.filter(i => i.item_type !== ITEM_TYPE.FIXED);
+      const fixed = prev.filter(i => i.item_type === ITEM_TYPE.FIXED);
+      const symbols = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      const existingCatCount = nonFixed.filter(i => i.item_type === ITEM_TYPE.CATEGORY).length;
+
+      const imported = [];
+      groups.forEach((g, gIdx) => {
+        imported.push({
+          ...newCategoryRow(0),
+          category_symbol: symbols[existingCatCount + gIdx] || '',
+          name: g.category?.name || '',
+        });
+        g.rows.forEach(row => {
+          imported.push({
+            ...newItemRow(null, null, 0),
+            name: row.name || '',
+            spec: row.spec || '',
+            quantity: row.quantity ?? '',
+            unit: row.unit || '',
+            unit_price: row.unit_price ?? '',
+            amount: row.amount ?? '',
+            note: row.note || '',
+          });
+        });
+      });
+
+      return [...nonFixed, ...imported, ...fixed].map((r, i) => ({ ...r, sort_order: i }));
+    });
+    setShowImportModal(false);
+    showToast('過去見積から明細を取込みました', 'success');
   };
 
   // ドラッグ並び替え・コピー・一括削除など、items配列全体を置き換えるコールバック
@@ -366,13 +518,21 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
   const handleOpenPreview = useCallback(() => {
     setPreviewSnapshot(buildPreviewEstimate());
     setPreviewKey(0);
+    setPreviewStale(false);
     setPreviewOpen(true);
   }, [buildPreviewEstimate]);
 
   const handleRefreshPreview = useCallback(() => {
     setPreviewSnapshot(buildPreviewEstimate());
     setPreviewKey(k => k + 1);
+    setPreviewStale(false);
   }, [buildPreviewEstimate]);
+
+  // プレビュー表示中に入力が変更されたら「最新化」を促すインジケーターを出す
+  useEffect(() => {
+    if (!previewOpen) return;
+    setPreviewStale(true);
+  }, [header, items]);
 
   // Escape キーでプレビューを閉じる
   useEffect(() => {
@@ -549,6 +709,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
         notes:          header.notes || null,
         tax_rate:       Number(header.tax_rate),
         status:         header.status,
+        lost_reason:    header.lost_reason || null,
         show_fixed_fees: header.show_fixed_fees,
         show_net:        header.show_net,
         show_subtotals:  header.show_subtotals,
@@ -559,6 +720,11 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
         net_perc:        Number(header.net_perc),
         net_amount:      header.net_amount !== '' ? Number(header.net_amount) : null,
         total_with_tax:  savingTotals.total,
+        approved_by:     header.approved_by || null,
+        approved_at:     header.approved_at || null,
+        returned_reason: header.returned_reason || null,
+        approver_staff_id: header.approver_staff_id || null,
+        project_id:      header.project_id || null,
       };
 
       let savedId = estimateId;
@@ -586,44 +752,86 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
         });
       await saveEstimateItems(savedId, saveableItems);
 
-      // 「承認」時の自動連動（Projectsテーブルへのコピー）
-      if (header.status === ESTIMATE_STATUS.APPROVED && originalStatus !== ESTIMATE_STATUS.APPROVED) {
+      // 「受注」時の自動連動（Projectsテーブルへのコピー）
+      // 見積本体は保存済みのため、連携失敗時は保存を成功扱いにしつつ
+      // ユーザーへ通知して手動対応を促す（工事案件が作られないまま施工が
+      // 始まる事故を防ぐ）。
+      // estimates.project_id で連携先を記録し、以後の再受注では同じ案件を使い回す
+      // （工事名変更後の再受注で重複作成されるのを防ぐ）。
+      if (header.status === ESTIMATE_STATUS.ORDERED && originalStatus !== ESTIMATE_STATUS.ORDERED) {
         try {
-          const { supabase } = await import('./lib/supabase');
-          const { data: existing } = await supabase
-            .from('Projects')
-            .select('id')
-            .eq('name', header.title)
-            .eq('customerId', header.customer_id)
-            .limit(1);
-
-          if (!existing || existing.length === 0) {
-            const { data: maxOrder } = await supabase
-              .from('Projects')
-              .select('order')
-              .order('order', { ascending: false })
-              .limit(1);
-            const nextOrder = (maxOrder?.[0]?.order || 0) + 1;
-            await supabase.from('Projects').insert([{
-              name: header.title,
-              customerId: header.customer_id,
-              status: PROJECT_STATUS.ESTIMATE,
-              order: nextOrder
-            }]);
+          const linkedProjectId = await syncEstimateToProject({
+            projectId: header.project_id || null,
+            title: header.title,
+            customerId: header.customer_id,
+          });
+          if (linkedProjectId !== header.project_id) {
+            await updateEstimate(savedId, { project_id: linkedProjectId });
+            setHeader(prev => ({ ...prev, project_id: linkedProjectId }));
           }
         } catch (syncErr) {
           console.error('工事マスタへの連携に失敗しました:', syncErr);
+          showToast(
+            '見積は保存しましたが、工事案件への連携に失敗しました。工事一覧から手動で登録してください。',
+            'error'
+          );
         }
       }
 
       setOriginalStatus(header.status);
       isDirty.current = false;
+      // DB保存が成功したので退避データは破棄する。
+      // 退避キーは新規作成時 'new'（estimateId=undefined）、既存は estimateId。
+      // このフォームインスタンスが使った退避キーと一致するため estimateId で掃除できる。
+      clearEstimateDraft(estimateId);
       onSaved?.();
     } catch (e) {
-      setError('保存に失敗しました: ' + e.message);
+      // 23505 = Postgres unique_violation。事前チェックと保存実行の間に
+      // 他ユーザーが同一番号で保存した競合ウィンドウのケース。
+      if (e.code === '23505') {
+        setNumberError(`見積番号「${estimateNumber}」は他のユーザーによって使用されました。再採番してください。`);
+      } else {
+        setError('保存に失敗しました: ' + e.message);
+      }
     } finally {
       setSaving(false);
     }
+  };
+
+  // 見積番号の競合時、空いている枝番を自動で探して採番し直す
+  const handleReissueNumber = async () => {
+    try {
+      setNumberError('');
+      const newBranch = await findAvailableBranchNumber(
+        header.estimate_number_date,
+        header.estimate_number_seq,
+        Number(header.estimate_number_branch) || 1
+      );
+      const branchPart = newBranch.split('-')[2];
+      setHeader(h => ({ ...h, estimate_number_branch: branchPart }));
+    } catch (e) {
+      showToast('再採番に失敗しました: ' + e.message, 'error');
+    }
+  };
+
+  // ============================================================
+  // 自動退避データの復元／破棄
+  // ============================================================
+  // 退避データを現在のフォームへ反映する。isInitialized は true のままなので
+  // この setHeader/setItems は dirty 扱いになり、以降の自動退避も再開する。
+  const handleRestoreDraft = () => {
+    if (pendingDraft) {
+      setHeader(pendingDraft.header);
+      setItems(pendingDraft.items);
+      isDirty.current = true;
+    }
+    setPendingDraft(null);
+  };
+
+  // 退避を使わず破棄。DBから読み込んだ内容のまま編集を続ける。
+  const handleDiscardDraft = () => {
+    clearEstimateDraft(estimateId);
+    setPendingDraft(null);
   };
 
   // ============================================================
@@ -693,6 +901,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
             officeStaff={officeStaff}
             estimateNumber={estimateNumber}
             numberError={numberError}
+            onReissueNumber={handleReissueNumber}
             disabled={isLocked}
           />
           <EstimateItemTable
@@ -706,6 +915,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
             onAddComment={addComment}
             onRemoveRow={removeRow}
             onSetItems={setAllItems}
+            onImportItems={() => setShowImportModal(true)}
             disabled={isLocked}
           />
           {items.length > MAX_ROWS && (
@@ -723,6 +933,14 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
             isLocked={isLocked}
             onSave={handleSave}
             onUnlock={handleUnlock}
+            officeStaff={officeStaff}
+            currentStaff={currentStaff}
+            onApprove={handleApprove}
+            onReturn={handleReturn}
+            onSubmit={handleSubmit}
+            onSubmitToCustomer={handleSubmitToCustomer}
+            onOrder={handleOrder}
+            onLose={handleLose}
           />
         </div>
       </div>
@@ -735,6 +953,12 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
           <div className="bg-white border-b border-slate-200 px-4 py-2.5 flex items-center gap-3 shrink-0 flex-wrap">
             <FileText size={17} className="text-blue-600 shrink-0" />
             <span className="font-bold text-slate-700 text-sm flex-1">PDFプレビュー</span>
+            {previewStale && (
+              <span className="flex items-center gap-1 text-xs font-bold text-amber-700 bg-amber-100 px-2.5 py-1 rounded-full">
+                <AlertCircle size={12} />
+                入力が変更されています
+              </span>
+            )}
             <p className="text-xs text-slate-400 hidden sm:block">
               ※ 最新の入力内容は「最新化」ボタンで反映
             </p>
@@ -742,7 +966,11 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
               onClick={handleRefreshPreview}
               title="現在の入力内容でプレビューを更新"
               aria-label="プレビューを最新化"
-              className="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-800 border border-blue-200 hover:border-blue-400 px-3 py-1.5 rounded-lg transition font-bold"
+              className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg transition font-bold border ${
+                previewStale
+                  ? 'text-amber-700 bg-amber-50 border-amber-300 hover:border-amber-400'
+                  : 'text-blue-600 border-blue-200 hover:text-blue-800 hover:border-blue-400'
+              }`}
             >
               <RefreshCw size={14} />
               最新化
@@ -824,6 +1052,31 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
         confirmText="破棄して戻る"
         cancelText="編集を続ける"
       />
+
+      {/* 自動退避データの復元プロンプト */}
+      <ConfirmModal
+        isOpen={!!pendingDraft}
+        onClose={handleDiscardDraft}
+        onConfirm={handleRestoreDraft}
+        title="入力途中のデータがあります"
+        message={
+          pendingDraft
+            ? `${formatDraftAge(pendingDraft.savedAt)}に自動退避された未保存の入力内容が見つかりました。復元しますか？（破棄すると保存済みの内容で編集を続けます）`
+            : ''
+        }
+        confirmText="復元する"
+        cancelText="破棄する"
+        variant="primary"
+      />
+
+      {/* 過去見積からの明細取込モーダル */}
+      {showImportModal && (
+        <ImportItemsModal
+          currentEstimateId={estimateId}
+          onImport={handleImportGroups}
+          onClose={() => setShowImportModal(false)}
+        />
+      )}
     </div>
   );
 };

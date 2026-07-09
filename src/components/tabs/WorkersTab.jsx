@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Users, Settings, Plus, Calendar, User, ChevronRight } from 'lucide-react';
 import { calculateAge } from '../../utils/dateUtils';
+import { WORKER_TYPE } from '../../utils/constants';
 import WorkerDetailsModal from '../WorkerDetailsModal';
 
 const WorkersTab = ({
@@ -92,6 +93,9 @@ const WorkersTab = ({
                                         <span className="text-[10px] text-slate-400 font-bold">{worker.kana || 'フリガナ未設定'}</span>
                                         <span className="font-bold text-lg text-slate-800 group-hover:text-blue-700 transition">{worker.name}</span>
                                     </div>
+                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${worker.worker_type === WORKER_TYPE.OFFICE ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                                        {worker.worker_type || WORKER_TYPE.WORKER}
+                                    </span>
                                     <div className="flex flex-col text-sm text-slate-600 ml-4 hidden md:flex">
                                         <div className="flex items-center gap-1"><Calendar size={14} className="text-slate-400" /> {worker.birthDate ? `${calculateAge(worker.birthDate)}歳` : '年齢未定'}</div>
                                     </div>

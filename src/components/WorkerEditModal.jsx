@@ -1,5 +1,6 @@
 import React from 'react';
 import { User } from 'lucide-react';
+import { WORKER_TYPE, WORKER_TYPE_LIST } from '../utils/constants';
 
 const WorkerEditModal = ({ isOpen, editingWorker, setEditingWorker, onClose, onSave }) => {
     if (!isOpen || !editingWorker) return null;
@@ -65,6 +66,19 @@ const WorkerEditModal = ({ isOpen, editingWorker, setEditingWorker, onClose, onS
                             onChange={(e) => setEditingWorker({ ...editingWorker, resignation_date: e.target.value })}
                             className="w-full border border-slate-200 p-2.5 rounded-lg text-sm text-slate-700 outline-none focus:border-blue-500"
                         />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-1">属性</label>
+                        <select
+                            value={editingWorker.worker_type || WORKER_TYPE.WORKER}
+                            onChange={(e) => setEditingWorker({ ...editingWorker, worker_type: e.target.value })}
+                            className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-bold text-sm text-slate-700 outline-none focus:border-blue-500"
+                        >
+                            {WORKER_TYPE_LIST.map(t => (
+                                <option key={t} value={t}>{t}</option>
+                            ))}
+                        </select>
+                        <p className="text-[11px] text-slate-400 mt-1">「事務」は配置表・日報の選択肢に表示されません</p>
                     </div>
                 </div>
 

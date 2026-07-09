@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { toDateStr, addDays, getDayOfWeek, getMonday } from '../utils/dateUtils';
-import { DEFAULT_COLORS, SCHEDULE_TYPES, PROJECT_STATUS } from '../utils/constants';
+import { DEFAULT_COLORS, PROJECT_STATUS, WORKER_TYPE } from '../utils/constants';
 
 export function useAssignmentState({
     projects,
@@ -13,7 +13,8 @@ export function useAssignmentState({
     setActiveTab,
     allProjectsSummary
 }) {
-    const [isLoading, setIsLoading] = useState(true);
+    const [staticLoading, setStaticLoading] = useState(true);
+    const [periodLoading, setPeriodLoading] = useState(true);
     const [assignments, setAssignments] = useState([]);
     const [taskRecords, setTaskRecords] = useState([]);
     const [barProjects, setBarProjects] = useState([]);
@@ -46,9 +47,11 @@ export function useAssignmentState({
     const [startDate, setStartDate] = useState(() => getMonday(new Date()));
     const totalDays = 56;
 
-    // 退社済みの作業員を除外
+    const isLoading = staticLoading || periodLoading;
+
+    // 退社済み・事務属性の作業員を除外
     const activeWorkers = useMemo(() => {
-        return (workers || []).filter(w => !w.resignation_date);
+        return (workers || []).filter(w => !w.resignation_date && w.worker_type !== WORKER_TYPE.OFFICE);
     }, [workers]);
 
     // 顧客情報のMap
@@ -63,16 +66,30 @@ export function useAssignmentState({
     // 今日の日付文字列
     const todayStr = useMemo(() => toDateStr(new Date()), []);
 
+    // 会社休日の日付 → レコードのMap（セル描画時のO(N)走査を排除）
+    const holidayMap = useMemo(() => {
+        const map = {};
+        companyHolidays.forEach(h => { map[h.date] = h; });
+        return map;
+    }, [companyHolidays]);
+
+    // 休工期間の project_id → レコード配列のMap
+    const suspensionsByProject = useMemo(() => {
+        const map = {};
+        projectSuspensions.forEach(s => {
+            if (!map[s.project_id]) map[s.project_id] = [];
+            map[s.project_id].push(s);
+        });
+        return map;
+    }, [projectSuspensions]);
+
     // ===== 日付・稼働日数ロジック (休日考慮) =====
     const isHoliday = useCallback((dateObj) => {
         const dow = dateObj.getDay();
-        const dStr = toDateStr(dateObj);
-        const isRegisteredHoliday = companyHolidays.some(h => h.date === dStr && h.description !== '会議' && h.description !== '社員旅行');
-
         if (dow === 0) return true; // 日曜は常に休み
-        if (dow === 6) return isRegisteredHoliday; // 土曜は登録があれば休み
-        return isRegisteredHoliday; // 平日は登録があれば休み
-    }, [companyHolidays]);
+        const h = holidayMap[toDateStr(dateObj)];
+        return !!(h && h.description !== '会議' && h.description !== '社員旅行');
+    }, [holidayMap]);
 
     const countWorkingDays = useCallback((startStr, endStr) => {
         let count = 0;
@@ -129,57 +146,35 @@ export function useAssignmentState({
         return groups;
     }, [dateColumns]);
 
-    // データ取得
-    const fetchAssignments = useCallback(async () => {
-        setIsLoading(true);
+    // ===== データ取得 =====
+    // 期間に依存しないマスタ系データ（案件バー・会社休日・休工期間）
+    const fetchStaticData = useCallback(async () => {
+        setStaticLoading(true);
         try {
-            const startStr = toDateStr(startDate);
-            const endStr = toDateStr(addDays(startDate, totalDays - 1));
+            const [pRes, hRes] = await Promise.all([
+                supabase
+                    .from('Projects')
+                    .select('id, name, startDate, endDate, bar_color, status, display_order, customerId, is_prime_contractor')
+                    .in('status', [PROJECT_STATUS.SCHEDULED, PROJECT_STATUS.IN_PROGRESS])
+                    .order('display_order', { ascending: true, nullsFirst: false })
+                    .order('created_at', { ascending: true }),
+                supabase
+                    .from('CompanyHolidays')
+                    .select('id, date, description')
+            ]);
 
-            const { data: aData } = await supabase
-                .from('Assignments')
-                .select('*')
-                .gte('date', startStr)
-                .lte('date', endStr);
-            setAssignments(aData || []);
-
-            // 過去(今日含む)日付の日報実績を取得
-            if (todayStr >= startStr) {
-                const pastEndStr = todayStr <= endStr ? todayStr : endStr;
-                const { data: trData } = await supabase
-                    .from('TaskRecords')
-                    .select('id, project_id, worker_name, date')
-                    .gte('date', startStr)
-                    .lte('date', pastEndStr);
-                setTaskRecords(trData || []);
-            } else {
-                setTaskRecords([]);
-            }
-
-            const { data: pData } = await supabase
-                .from('Projects')
-                .select('id, name, startDate, endDate, bar_color, status, display_order, customerId, is_prime_contractor')
-                .in('status', [PROJECT_STATUS.SCHEDULED, PROJECT_STATUS.IN_PROGRESS])
-                .order('display_order', { ascending: true, nullsFirst: false })
-                .order('created_at', { ascending: true });
-
+            const pData = pRes.data || [];
             const excludedNames = ["【会社】有給", "有給", "【有給】"];
-            setBarProjects((pData || [])
+            setBarProjects(pData
                 .filter(p => !excludedNames.includes(p.name))
                 .map((p, idx) => ({
                     ...p,
                     color: p.bar_color || DEFAULT_COLORS[idx % DEFAULT_COLORS.length]
                 }))
             );
+            setCompanyHolidays(hRes.data || []);
 
-            const { data: hData } = await supabase
-                .from('CompanyHolidays')
-                .select('id, date, description');
-
-            setCompanyHolidays(hData || []);
-
-            // 休工期間データの取得
-            const projectIds = (pData || []).map(p => p.id);
+            const projectIds = pData.map(p => p.id);
             if (projectIds.length > 0) {
                 const { data: sData } = await supabase
                     .from('ProjectSuspensions')
@@ -190,15 +185,60 @@ export function useAssignmentState({
                 setProjectSuspensions([]);
             }
         } catch (e) {
+            console.error('配置表マスタデータ取得エラー:', e);
+        } finally {
+            setStaticLoading(false);
+        }
+    }, []);
+
+    // 表示期間に依存するデータ（配置・日報実績）
+    const fetchPeriodData = useCallback(async () => {
+        setPeriodLoading(true);
+        try {
+            const startStr = toDateStr(startDate);
+            const endStr = toDateStr(addDays(startDate, totalDays - 1));
+
+            const assignmentsQuery = supabase
+                .from('Assignments')
+                .select('*')
+                .gte('date', startStr)
+                .lte('date', endStr);
+
+            // 過去(今日含む)日付の日報実績を取得
+            const pastEndStr = todayStr <= endStr ? todayStr : endStr;
+            const taskRecordsQuery = todayStr >= startStr
+                ? supabase
+                    .from('TaskRecords')
+                    .select('id, project_id, worker_name, date')
+                    .gte('date', startStr)
+                    .lte('date', pastEndStr)
+                : Promise.resolve({ data: [] });
+
+            const [aRes, trRes] = await Promise.all([assignmentsQuery, taskRecordsQuery]);
+            setAssignments(aRes.data || []);
+            setTaskRecords(trRes.data || []);
+        } catch (e) {
             console.error('配置表データ取得エラー:', e);
         } finally {
-            setIsLoading(false);
+            setPeriodLoading(false);
         }
     }, [startDate, todayStr]);
 
-    useEffect(() => {
-        fetchAssignments();
+    // 全データの再取得（外部から呼ぶ用）
+    const fetchAssignments = useCallback(async () => {
+        await Promise.all([fetchStaticData(), fetchPeriodData()]);
+    }, [fetchStaticData, fetchPeriodData]);
 
+    useEffect(() => {
+        fetchStaticData();
+    }, [fetchStaticData]);
+
+    useEffect(() => {
+        fetchPeriodData();
+    }, [fetchPeriodData]);
+
+    // リアルタイム購読（マウント時に1回だけ）
+    useEffect(() => {
         const channel = supabase
             .channel('assignments_realtime')
             .on('postgres_changes', { event: '*', schema: 'public', table: 'Assignments' }, (payload) => {
@@ -232,7 +272,7 @@ export function useAssignmentState({
         return () => {
             supabase.removeChannel(channel);
         };
-    }, [fetchAssignments]);
+    }, []);
 
     // ポップアップ外クリックで閉じる
     useEffect(() => {
@@ -367,11 +407,13 @@ export function useAssignmentState({
 
     // prj map
     const projectMap = useMemo(() => {
+        const barColorById = {};
+        barProjects.forEach(bp => { barColorById[bp.id] = bp.color; });
         const map = {};
         projects.forEach((p, idx) => {
             map[p.id] = {
                 name: p.siteName || '無題',
-                color: barProjects.find(bp => bp.id === p.id)?.color || DEFAULT_COLORS[idx % DEFAULT_COLORS.length]
+                color: barColorById[p.id] || DEFAULT_COLORS[idx % DEFAULT_COLORS.length]
             };
         });
         return map;
@@ -594,9 +636,45 @@ export function useAssignmentState({
         }
     }, [editCell, clipboard, showToast]);
 
+    // キーボードショートカット（セル編集ポップアップ表示中のみ有効）
+    useEffect(() => {
+        if (!editCell) return;
+
+        const handleKeyDown = (e) => {
+            const tag = e.target.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
+
+            if (e.key === 'Escape') {
+                setEditCell(null);
+                return;
+            }
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                e.preventDefault();
+                handleActionDelete();
+                return;
+            }
+            if (e.ctrlKey || e.metaKey) {
+                const key = e.key.toLowerCase();
+                if (key === 'c') {
+                    e.preventDefault();
+                    handleActionCopy();
+                } else if (key === 'x') {
+                    e.preventDefault();
+                    handleActionCut();
+                } else if (key === 'v') {
+                    e.preventDefault();
+                    handleActionPaste();
+                }
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [editCell, handleActionDelete, handleActionCopy, handleActionCut, handleActionPaste]);
+
     // === 配置編集アクション ===
 
-    const addAssignment = async (workerId, dateStr, projectId, title = null) => {
+    const addAssignment = useCallback(async (workerId, dateStr, projectId, title = null) => {
         const existingForCell = assignmentLookup[`${workerId}_${dateStr}`] || [];
         if (projectId && existingForCell.some(a => a.projectId === projectId)) return;
         if (title && existingForCell.some(a => a.title === title)) return;
@@ -632,9 +710,9 @@ export function useAssignmentState({
             console.error('配置追加エラー:', e);
             setAssignments(prev => prev.filter(a => a.id !== tempId));
         }
-    };
+    }, [assignmentLookup]);
 
-    const addAssignmentBatch = async (workerId, dateStrs, projectId, title = null) => {
+    const addAssignmentBatch = useCallback(async (workerId, dateStrs, projectId, title = null) => {
         const newRecords = [];
         const tempIds = [];
 
@@ -690,11 +768,14 @@ export function useAssignmentState({
             setAssignments(prev => prev.filter(a => !tempIds.includes(a.id)));
             showToast('配置の追加に失敗しました。', 'error');
         }
-    };
+    }, [assignmentLookup, showToast]);
 
-    const removeAssignment = async (assignmentId) => {
-        const removed = assignments.find(a => a.id === assignmentId);
-        setAssignments(prev => prev.filter(a => a.id !== assignmentId));
+    const removeAssignment = useCallback(async (assignmentId) => {
+        let removed = null;
+        setAssignments(prev => {
+            removed = prev.find(a => a.id === assignmentId) || null;
+            return prev.filter(a => a.id !== assignmentId);
+        });
 
         try {
             const { error } = await supabase
@@ -708,9 +789,9 @@ export function useAssignmentState({
             if (removed) setAssignments(prev => [...prev, removed]);
             showToast('配置の削除に失敗しました。', 'error');
         }
-    };
+    }, [showToast]);
 
-    const handleAssignmentReorder = async (draggedId, targetId) => {
+    const handleAssignmentReorder = useCallback(async (draggedId, targetId) => {
         if (!editCell) return;
         if (draggedId === targetId) return;
 
@@ -745,9 +826,9 @@ export function useAssignmentState({
             console.error('順番変更エラー:', e);
             showToast('順番の変更に失敗しました。', 'error');
         }
-    };
+    }, [editCell, assignmentLookup, showToast]);
 
-    const handleProjectReorder = async (draggedId, targetId) => {
+    const handleProjectReorder = useCallback(async (draggedId, targetId) => {
         if (draggedId === targetId) return;
 
         setBarProjects(prev => {
@@ -792,9 +873,9 @@ export function useAssignmentState({
 
             return next;
         });
-    };
+    }, [showToast]);
 
-    const updateProjectColor = async (projectId, color) => {
+    const updateProjectColor = useCallback(async (projectId, color) => {
         setBarProjects(prev => prev.map(p => p.id === projectId ? { ...p, color } : p));
         if (setProjects) {
             setProjects(prev => prev.map(p => p.id === projectId ? { ...p, bar_color: color } : p));
@@ -809,9 +890,9 @@ export function useAssignmentState({
             showToast('カラーの更新に失敗しました', 'error');
         }
         setEditColorPopup(null);
-    };
+    }, [setProjects, showToast]);
 
-    const updateCompanyHoliday = async (dateStr, description, existingId) => {
+    const updateCompanyHoliday = useCallback(async (dateStr, description, existingId) => {
         try {
             if (description === null && existingId) {
                 const { error } = await supabase.from('CompanyHolidays').delete().eq('id', existingId);
@@ -839,11 +920,11 @@ export function useAssignmentState({
             console.error('会社行事/休日 更新エラー:', err);
             showToast('保存に失敗しました', 'error');
         }
-    };
+    }, [showToast]);
 
     // === ドラッグハンドラ ===
 
-    const handleCellMouseDown = (e, workerId, dateStr) => {
+    const handleCellMouseDown = useCallback((e, workerId, dateStr) => {
         if (e.button !== 0) return;
         e.preventDefault();
         setEditCell(null);
@@ -858,15 +939,15 @@ export function useAssignmentState({
         setDragWorkerId(workerId);
         setDragCells([dateStr]);
         setDragSourceCell({
-            top: showAbove 
+            top: showAbove
                 ? cellRect.top - (containerRect?.top || 0) + (tableContainerRef.current?.scrollTop || 0)
                 : cellRect.bottom - (containerRect?.top || 0) + (tableContainerRef.current?.scrollTop || 0),
             left: cellRect.left - (containerRect?.left || 0) + (tableContainerRef.current?.scrollLeft || 0),
             showAbove
         });
-    };
+    }, []);
 
-    const handleCellMouseEnter = (workerId, dateStr) => {
+    const handleCellMouseEnter = useCallback((workerId, dateStr) => {
         if (!isDragging || workerId !== dragWorkerId) return;
         setDragCells(prev => {
             if (prev.length === 0) return [dateStr];
@@ -879,10 +960,7 @@ export function useAssignmentState({
             const newCells = [];
             let tempD = new Date(startD);
             while (true) {
-                const y = tempD.getFullYear();
-                const m = String(tempD.getMonth() + 1).padStart(2, '0');
-                const d = String(tempD.getDate()).padStart(2, '0');
-                newCells.push(`${y}-${m}-${d}`);
+                newCells.push(toDateStr(tempD));
 
                 if (tempD.getTime() === currentD.getTime()) break;
                 tempD.setDate(tempD.getDate() + step);
@@ -893,9 +971,9 @@ export function useAssignmentState({
             }
             return newCells;
         });
-    };
+    }, [isDragging, dragWorkerId]);
 
-    const handleCellClick = (e, workerId, dateStr) => {
+    const handleCellClick = useCallback((e, workerId, dateStr) => {
         setEditHolidayCell(null);
         if (isDragging) return;
         const cellRect = e.currentTarget.getBoundingClientRect();
@@ -907,15 +985,15 @@ export function useAssignmentState({
             workerId,
             dateStr,
             dragDates: null,
-            top: showAbove 
+            top: showAbove
                 ? cellRect.top - (containerRect?.top || 0) + (tableContainerRef.current?.scrollTop || 0)
                 : cellRect.bottom - (containerRect?.top || 0) + (tableContainerRef.current?.scrollTop || 0),
             left: cellRect.left - (containerRect?.left || 0) + (tableContainerRef.current?.scrollLeft || 0),
             showAbove
         });
-    };
+    }, [isDragging]);
 
-    const handleProjectNameMouseEnter = (e, project) => {
+    const handleProjectNameMouseEnter = useCallback((e, project) => {
         if (!allProjectsSummary) return;
         const stats = allProjectsSummary.find(p => p.id === project.id);
         if (!stats) return;
@@ -929,12 +1007,11 @@ export function useAssignmentState({
             top: rect.top,
             left: rect.right
         });
-    };
+    }, [allProjectsSummary, workers]);
 
-    const handlePopupAssign = async (projectId, title = null) => {
+    const handlePopupAssign = useCallback(async (projectId, title = null) => {
         if (!editCell) return;
         const dates = editCell.dragDates || [editCell.dateStr];
-        setIsLoading(true);
 
         try {
             if (dates.length <= 1) {
@@ -947,22 +1024,20 @@ export function useAssignmentState({
         } catch (e) {
             console.error('配置登録エラー:', e);
             showToast('配置登録中にエラーが発生しました。', 'error');
-        } finally {
-            setIsLoading(false);
         }
-    };
+    }, [editCell, addAssignment, addAssignmentBatch, showToast]);
 
-    const movePeriod = (weeks) => {
+    const movePeriod = useCallback((weeks) => {
         setEditCell(null);
         setStartDate(prev => addDays(prev, weeks * 7));
-    };
+    }, []);
 
-    const goToToday = () => {
+    const goToToday = useCallback(() => {
         setEditCell(null);
         setStartDate(getMonday(new Date()));
-    };
+    }, []);
 
-    const getBarSpan = (project) => {
+    const getBarSpan = useCallback((project) => {
         if (!project.startDate || !project.endDate) return null;
         const pStart = new Date(project.startDate + 'T00:00:00');
         const pEnd = new Date(project.endDate + 'T00:00:00');
@@ -975,18 +1050,19 @@ export function useAssignmentState({
         const endIdx = Math.min(totalDays - 1, Math.round((pEnd - viewStart) / (1000 * 60 * 60 * 24)));
 
         return { startIdx, endIdx, span: endIdx - startIdx + 1 };
-    };
+    }, [startDate]);
 
     return {
         isLoading,
-        setIsLoading,
         assignments,
         setAssignments,
         taskRecords,
         barProjects,
         setBarProjects,
         companyHolidays,
+        holidayMap,
         projectSuspensions,
+        suspensionsByProject,
         editHolidayCell,
         setEditHolidayCell,
         editColorPopup,

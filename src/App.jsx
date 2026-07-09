@@ -4,6 +4,7 @@ import WorkerApp from './WorkerApp';
 import ScheduleViewApp from './ScheduleViewApp';
 import InventoryApp from './InventoryApp';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { AuthProvider } from './hooks/useAuth';
 
 const App = () => {
     const [mode, setMode] = useState(null);
@@ -42,7 +43,7 @@ const App = () => {
         return <ErrorBoundary><InventoryApp /></ErrorBoundary>;
     }
 
-    return <ErrorBoundary><AdminApp /></ErrorBoundary>;
+    return <ErrorBoundary><AuthProvider><AdminApp /></AuthProvider></ErrorBoundary>;
 };
 
 export default App;

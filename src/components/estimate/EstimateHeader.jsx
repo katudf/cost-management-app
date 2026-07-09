@@ -30,6 +30,7 @@ const EstimateHeader = ({
   officeStaff,
   estimateNumber,
   numberError,
+  onReissueNumber,
   disabled,
 }) => {
   const [expanded, setExpanded] = useState(isNew);
@@ -73,7 +74,22 @@ const EstimateHeader = ({
           />
           <span className="text-slate-500 text-sm font-mono ml-1">→ {estimateNumber}</span>
         </div>
-        {numberError && <p className="text-red-500 text-xs mt-1">{numberError}</p>}
+        {numberError && (
+          <div className="flex items-center gap-2 mt-1">
+            <p className="text-red-500 text-xs">{numberError}</p>
+            {onReissueNumber && (
+              <button
+                type="button"
+                onClick={onReissueNumber}
+                className="text-xs text-blue-600 font-semibold underline hover:text-blue-700"
+                aria-label="見積番号を再採番"
+                title="見積番号を再採番"
+              >
+                再採番する
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* 工事情報 アコーディオン */}

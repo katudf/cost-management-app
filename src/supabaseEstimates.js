@@ -2,7 +2,7 @@
 // 見積書機能のSupabase操作関数
 
 import { supabase } from './lib/supabase';
-import { ITEM_TYPE, ESTIMATE_STATUS } from './utils/constants';
+import { ITEM_TYPE, ESTIMATE_STATUS, PROJECT_STATUS } from './utils/constants';
 
 // ============================================================
 // 見積書一覧取得
@@ -13,7 +13,7 @@ export const fetchEstimates = async () => {
     .select(`
       *,
       customer:Customers(id, name),
-      staff:office_staff(id, name)
+      staff:office_staff!staff_id(id, name)
     `)
     .is('deleted_at', null)
     .order('created_at', { ascending: false });
@@ -31,7 +31,7 @@ export const fetchEstimateById = async (id) => {
     .select(`
       *,
       customer:Customers(id, name),
-      staff:office_staff(id, name),
+      staff:office_staff!staff_id(id, name),
       items:estimate_items(*)
     `)
     .eq('id', id)
@@ -120,16 +120,32 @@ export const checkDuplicateNumber = async (estimateNumber, excludeId = null) => 
 };
 
 // ============================================================
-// 見積書の複製（枝番+1）
+// 空き枝番の探索（重複しない見積番号を見つける）
+// ------------------------------------------------------------
+// prefix（発行日8桁）・seq（連番4桁）が同じ枝番のうち、
+// startBranch から始めて未使用の枝番を持つ見積番号を返す。
+// ============================================================
+export const findAvailableBranchNumber = async (prefix, seq, startBranch = 1) => {
+  let branch = startBranch;
+  let estimateNumber = `${prefix}-${seq}-${String(branch).padStart(3, '0')}`;
+  while (await checkDuplicateNumber(estimateNumber)) {
+    branch++;
+    if (branch > 999) throw new Error('見積番号の採番に失敗しました（枝番上限）');
+    estimateNumber = `${prefix}-${seq}-${String(branch).padStart(3, '0')}`;
+  }
+  return estimateNumber;
+};
+
+// ============================================================
+// 見積書の複製（枝番+1、重複時は空き枝番まで繰り上げ）
 // ============================================================
 export const duplicateEstimate = async (id) => {
   // 元データ取得
   const original = await fetchEstimateById(id);
 
-  // 枝番+1の新しい見積番号を生成
+  // 枝番+1から開始し、重複があれば空きが見つかるまで繰り上げる
   const parts = original.estimate_number.split('-');
-  const newBranch = String(parseInt(parts[2]) + 1).padStart(3, '0');
-  const newNumber = `${parts[0]}-${parts[1]}-${newBranch}`;
+  const newNumber = await findAvailableBranchNumber(parts[0], parts[1], parseInt(parts[2]) + 1);
 
   // ヘッダー複製
   const { id: _id, created_at, updated_at, deleted_at, ...headerData } = original;
@@ -157,33 +173,68 @@ export const duplicateEstimate = async (id) => {
 };
 
 // ============================================================
-// 明細の一括保存（upsert）
+// 明細の一括保存（削除＋再挿入を単一トランザクションで実行）
 // ============================================================
 export const saveEstimateItems = async (estimateId, items) => {
-  // 既存明細を全削除してから再挿入（シンプルな実装）
-  const { error: deleteError } = await supabase
-    .from('estimate_items')
-    .delete()
-    .eq('estimate_id', estimateId);
-
-  if (deleteError) throw deleteError;
-
-  if (items.length === 0) return;
-
-  const insertData = items.map((item, index) => {
-    const { id: _id, created_at: _ca, ...rest } = item;
-    return {
-      ...rest,
-      estimate_id: estimateId,
-      sort_order: index,
-    };
+  // save_estimate_items RPC が delete + insert を1トランザクションで実行するため、
+  // 途中で失敗しても明細が全損しない（従来のクライアント側2段階処理を置き換え）。
+  // sort_order はサーバー側で配列順に振り直されるため、渡す順序が保存順になる。
+  const payloadItems = items.map((item) => {
+    const { id: _id, created_at: _ca, estimate_id: _eid, sort_order: _so, ...rest } = item;
+    return rest;
   });
 
-  const { error } = await supabase
-    .from('estimate_items')
-    .insert(insertData);
+  const { error } = await supabase.rpc('save_estimate_items', {
+    p_estimate_id: estimateId,
+    p_items: payloadItems,
+  });
 
   if (error) throw error;
+};
+
+// ============================================================
+// 承認済み見積を工事案件（Projects）へ連携
+// ------------------------------------------------------------
+// estimates.project_id で紐付け済みの案件があればそれを使い回す
+// （工事名変更後の再承認でも重複作成されない）。
+// 未連携の場合のみ status=見積 の案件を order 末尾に新規作成する。
+// 失敗時は例外を投げる（呼び出し側で showToast 通知する想定）。
+// 戻り値: 連携先となった Projects.id
+// ============================================================
+export const syncEstimateToProject = async ({ projectId, title, customerId }) => {
+  if (projectId) {
+    const { data: existing, error: selectError } = await supabase
+      .from('Projects')
+      .select('id')
+      .eq('id', projectId)
+      .limit(1);
+
+    if (selectError) throw selectError;
+    if (existing && existing.length > 0) return projectId; // 既に連携済み → 作成不要
+  }
+
+  const { data: maxOrder, error: orderError } = await supabase
+    .from('Projects')
+    .select('order')
+    .order('order', { ascending: false })
+    .limit(1);
+
+  if (orderError) throw orderError;
+  const nextOrder = (maxOrder?.[0]?.order || 0) + 1;
+
+  const { data: inserted, error: insertError } = await supabase
+    .from('Projects')
+    .insert([{
+      name: title,
+      customerId,
+      status: PROJECT_STATUS.ESTIMATE,
+      order: nextOrder,
+    }])
+    .select('id')
+    .single();
+
+  if (insertError) throw insertError;
+  return inserted.id;
 };
 
 // ============================================================
@@ -194,6 +245,20 @@ export const fetchCustomers = async () => {
     .from('Customers')
     .select('id, name')
     .order('name');
+
+  if (error) throw error;
+  return data;
+};
+
+// ============================================================
+// 顧客の新規登録
+// ============================================================
+export const createCustomer = async (name) => {
+  const { data, error } = await supabase
+    .from('Customers')
+    .insert([{ name }])
+    .select()
+    .single();
 
   if (error) throw error;
   return data;

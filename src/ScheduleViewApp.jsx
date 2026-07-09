@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Calendar, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { toDateStr, addDays, getDayOfWeek, getMonday } from './utils/dateUtils';
-import { DEFAULT_COLORS, SCHEDULE_TYPES } from './utils/constants';
+import { DEFAULT_COLORS, SCHEDULE_TYPES, WORKER_TYPE } from './utils/constants';
 
 
 const ScheduleViewApp = () => {
@@ -55,7 +55,7 @@ const ScheduleViewApp = () => {
                 supabase.from('Projects').select('id, name, startDate, endDate, bar_color, status')
                     .not('startDate', 'is', null).not('endDate', 'is', null)
                     .order('created_at', { ascending: true }),
-                supabase.from('Workers').select('id, name, display_order')
+                supabase.from('Workers').select('id, name, display_order, worker_type')
                     .order('display_order', { ascending: true, nullsFirst: false })
             ]);
 
@@ -64,7 +64,7 @@ const ScheduleViewApp = () => {
                 ...p,
                 color: p.bar_color || DEFAULT_COLORS[idx % DEFAULT_COLORS.length]
             })));
-            setWorkers((wRes.data || []).filter(w => w.name && w.name.trim() !== ''));
+            setWorkers((wRes.data || []).filter(w => w.name && w.name.trim() !== '' && w.worker_type !== WORKER_TYPE.OFFICE));
         } catch (e) {
             console.error('データ取得エラー:', e);
         } finally {

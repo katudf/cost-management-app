@@ -10,22 +10,28 @@ import {
   fetchEstimateById,
   formatCurrency,
   createEstimate,
+  createCustomer,
   saveEstimateItems,
   getNextEstimateSeq,
   fetchCustomers,
+  findAvailableBranchNumber,
+  fetchSystemSettings,
 } from './supabaseEstimates';
+import CustomerResolveModal from './components/estimate/CustomerResolveModal';
 import { downloadEstimatePDF } from './EstimatePDF';
-import { supabase } from './lib/supabase';
 import { parseExcelForEstimate } from './utils/excelImportUtils';
 import { useToast } from './components/Toast';
 import { ESTIMATE_STATUS, ESTIMATE_STATUS_LABEL } from './utils/constants';
 
 // ステータス表示設定（ラベルは constants の定数を参照）
 const STATUS_CONFIG = {
-  [ESTIMATE_STATUS.DRAFT]:    { label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.DRAFT],    className: 'bg-slate-100 text-slate-600' },
-  [ESTIMATE_STATUS.PENDING]:  { label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.PENDING],  className: 'bg-yellow-100 text-yellow-700' },
-  [ESTIMATE_STATUS.APPROVED]: { label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.APPROVED], className: 'bg-green-100 text-green-700' },
-  [ESTIMATE_STATUS.RETURNED]: { label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.RETURNED], className: 'bg-red-100 text-red-600' },
+  [ESTIMATE_STATUS.DRAFT]:     { label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.DRAFT],     className: 'bg-slate-100 text-slate-600' },
+  [ESTIMATE_STATUS.PENDING]:   { label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.PENDING],   className: 'bg-yellow-100 text-yellow-700' },
+  [ESTIMATE_STATUS.APPROVED]:  { label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.APPROVED],  className: 'bg-green-100 text-green-700' },
+  [ESTIMATE_STATUS.RETURNED]:  { label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.RETURNED],  className: 'bg-red-100 text-red-600' },
+  [ESTIMATE_STATUS.SUBMITTED]: { label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.SUBMITTED], className: 'bg-blue-100 text-blue-700' },
+  [ESTIMATE_STATUS.ORDERED]:   { label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.ORDERED],   className: 'bg-emerald-100 text-emerald-700' },
+  [ESTIMATE_STATUS.LOST]:      { label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.LOST],      className: 'bg-rose-100 text-rose-700' },
 };
 
 const StatusBadge = ({ status }) => {
@@ -33,6 +39,46 @@ const StatusBadge = ({ status }) => {
   return (
     <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${cfg.className}`}>
       {cfg.label}
+    </span>
+  );
+};
+
+// ============================================================
+// 見積有効期限バッジ
+// ------------------------------------------------------------
+// valid_until が今日より前なら「期限切れ」、7日以内なら「期限間近」を表示。
+// 承認済み・返却済みの見積は期限管理の対象外として非表示にする。
+// ============================================================
+const EXPIRY_SOON_THRESHOLD_DAYS = 7;
+
+const getExpiryInfo = (validUntil) => {
+  if (!validUntil) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(validUntil);
+  target.setHours(0, 0, 0, 0);
+  const diffDays = Math.round((target - today) / (1000 * 60 * 60 * 24));
+
+  if (diffDays < 0) return 'expired';
+  if (diffDays <= EXPIRY_SOON_THRESHOLD_DAYS) return 'soon';
+  return null;
+};
+
+const ExpiryBadge = ({ validUntil, status }) => {
+  if (status === ESTIMATE_STATUS.APPROVED || status === ESTIMATE_STATUS.RETURNED) return null;
+  const info = getExpiryInfo(validUntil);
+  if (!info) return null;
+
+  if (info === 'expired') {
+    return (
+      <span className="ml-1.5 px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-600">
+        期限切れ
+      </span>
+    );
+  }
+  return (
+    <span className="ml-1.5 px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700">
+      期限間近
     </span>
   );
 };
@@ -49,6 +95,7 @@ const EstimateList = ({ onEdit }) => {
   const [searchText, setSearchText] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(null); // 削除確認対象のID
   const [importing, setImporting] = useState(false);
+  const [pendingImport, setPendingImport] = useState(null); // 顧客未確定のExcel取込データ
   const fileInputRef = useRef(null);
 
   // 一覧取得
@@ -108,11 +155,7 @@ const EstimateList = ({ onEdit }) => {
       console.log('[PDF] 見積データ取得完了, items:', full?.items?.length);
 
       // システム設定（自社情報）を取得
-      const { data: settings } = await supabase
-        .from('system_settings')
-        .select('*')
-        .eq('id', 1)
-        .single();
+      const settings = await fetchSystemSettings();
       console.log('[PDF] システム設定取得完了:', settings?.company_name);
 
       console.log('[PDF] PDF生成開始...');
@@ -149,33 +192,35 @@ const EstimateList = ({ onEdit }) => {
       const prefix = `${yy}${mm}${dd}`;
       const seq = await getNextEstimateSeq(prefix);
 
-      // 枝番001から開始し、重複があればインクリメント
-      let branch = 1;
-      let estimateNumber = `${prefix}-${seq}-${String(branch).padStart(3, '0')}`;
-      const { checkDuplicateNumber } = await import('./supabaseEstimates');
-      while (await checkDuplicateNumber(estimateNumber)) {
-        branch++;
-        estimateNumber = `${prefix}-${seq}-${String(branch).padStart(3, '0')}`;
-        if (branch > 999) throw new Error('見積番号の採番に失敗しました（枝番上限）');
-      }
+      // 枝番001から開始し、重複があれば空き番号まで繰り上げる
+      const estimateNumber = await findAvailableBranchNumber(prefix, seq, 1);
 
-      // 顧客の検索・紐付け
-      let customerId = null;
+      // 顧客の検索。完全一致すればそのまま続行、無ければ確認モーダルで
+      // 「新規登録／既存に紐づけ」を選んでもらう。
       if (result.customerName) {
         const customers = await fetchCustomers();
         const found = customers.find(c => c.name === result.customerName);
         if (found) {
-          customerId = found.id;
+          await continueExcelImport({ file, result, estimateNumber, customerId: found.id });
         } else {
-          // 新規顧客を登録
-          const { data: newCust, error: custErr } = await supabase
-            .from('Customers')
-            .insert([{ name: result.customerName }])
-            .select();
-          if (!custErr && newCust?.length > 0) customerId = newCust[0].id;
+          setPendingImport({ file, result, estimateNumber, customers, customerName: result.customerName });
+          setImporting(false);
         }
+      } else {
+        await continueExcelImport({ file, result, estimateNumber, customerId: null });
       }
+    } catch (err) {
+      console.error('Excel取込エラー:', err);
+      setError('Excelの取り込みに失敗しました: ' + err.message);
+      setImporting(false);
+    }
+  };
 
+  // 顧客が確定した後の取込続行処理（新規見積の作成～明細保存～遷移）
+  const continueExcelImport = async ({ file, result, estimateNumber, customerId }) => {
+    setImporting(true);
+    setError(null);
+    try {
       // 見積書ヘッダーを作成
       const payload = {
         estimate_number: estimateNumber,
@@ -227,6 +272,35 @@ const EstimateList = ({ onEdit }) => {
     }
   };
 
+  // 顧客確認モーダル: 新規登録を選択
+  const handleResolveAsNewCustomer = async () => {
+    const pending = pendingImport;
+    if (!pending) return;
+    setPendingImport(null);
+    try {
+      setImporting(true);
+      const newCust = await createCustomer(pending.customerName);
+      await continueExcelImport({ ...pending, customerId: newCust.id });
+    } catch (err) {
+      console.error('顧客登録エラー:', err);
+      setError('顧客の登録に失敗しました: ' + err.message);
+      setImporting(false);
+    }
+  };
+
+  // 顧客確認モーダル: 既存顧客に紐づけを選択
+  const handleResolveAsExistingCustomer = async (customerId) => {
+    const pending = pendingImport;
+    if (!pending) return;
+    setPendingImport(null);
+    await continueExcelImport({ ...pending, customerId });
+  };
+
+  // 顧客確認モーダル: キャンセル（取込を中断）
+  const handleCancelPendingImport = () => {
+    setPendingImport(null);
+  };
+
   // ============================================================
   // レンダリング
   // ============================================================
@@ -276,11 +350,14 @@ const EstimateList = ({ onEdit }) => {
         />
         <div className="flex gap-1 flex-wrap">
           {[
-            { key: 'all',                     label: 'すべて' },
-            { key: ESTIMATE_STATUS.DRAFT,     label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.DRAFT] },
-            { key: ESTIMATE_STATUS.PENDING,   label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.PENDING] },
-            { key: ESTIMATE_STATUS.APPROVED,  label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.APPROVED] },
-            { key: ESTIMATE_STATUS.RETURNED,  label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.RETURNED] },
+            { key: 'all',                      label: 'すべて' },
+            { key: ESTIMATE_STATUS.DRAFT,      label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.DRAFT] },
+            { key: ESTIMATE_STATUS.PENDING,    label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.PENDING] },
+            { key: ESTIMATE_STATUS.APPROVED,   label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.APPROVED] },
+            { key: ESTIMATE_STATUS.RETURNED,   label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.RETURNED] },
+            { key: ESTIMATE_STATUS.SUBMITTED,  label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.SUBMITTED] },
+            { key: ESTIMATE_STATUS.ORDERED,    label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.ORDERED] },
+            { key: ESTIMATE_STATUS.LOST,       label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.LOST] },
           ].map(({ key, label }) => (
             <button
               key={key}
@@ -391,6 +468,17 @@ const EstimateList = ({ onEdit }) => {
           </div>
         </div>
       )}
+
+      {/* Excel取込: 顧客未一致の確認モーダル */}
+      {pendingImport && (
+        <CustomerResolveModal
+          customerName={pendingImport.customerName}
+          customers={pendingImport.customers}
+          onRegisterNew={handleResolveAsNewCustomer}
+          onLinkExisting={handleResolveAsExistingCustomer}
+          onCancel={handleCancelPendingImport}
+        />
+      )}
     </div>
   );
 };
@@ -419,6 +507,7 @@ const EstimateRow = ({ estimate, onEdit, onDuplicate, onDelete, onDownload }) =>
               year: 'numeric', month: 'numeric', day: 'numeric'
             })
           : '-'}
+        <ExpiryBadge validUntil={estimate.valid_until} status={estimate.status} />
       </td>
       <td className="px-4 py-3 text-right font-mono text-slate-700 whitespace-nowrap">
         {total != null ? `¥${formatCurrency(total)}-` : '-'}

@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { PROJECT_STATUS } from '../utils/constants';
 import { useConfirm } from '../components/ConfirmProvider';
 
-export function useProjects({ projects, setProjects, activeProjectId, setActiveProjectId, showToast, workers }) {
+export function useProjects({ projects, setProjects, activeProjectId, setActiveProjectId, showToast, workers, setActiveTab }) {
     const { confirm } = useConfirm();
 
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -54,6 +54,7 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
         if (!pendingDeleteId) return;
         const id = pendingDeleteId;
 
+        await supabase.from('Assignments').delete().eq('projectId', id);
         await supabase.from('SubcontractorRecords').delete().eq('project_id', id);
         await supabase.from('TaskRecords').delete().eq('project_id', id);
         await supabase.from('ProjectTasks').delete().eq('projectId', id);
@@ -68,6 +69,7 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
         setProjects(prev => prev.filter(p => p.id !== id));
         if (activeProjectId === id) {
             setActiveProjectId(projects.find(p => p.id !== id).id);
+            setActiveTab && setActiveTab('dashboard');
         }
         setIsDeleteModalOpen(false);
         setPendingDeleteId(null);

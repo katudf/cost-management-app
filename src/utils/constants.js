@@ -25,24 +25,55 @@ export const PROJECT_STATUS_COLOR = {
     [PROJECT_STATUS.COMPLETED]:  'bg-slate-400',
 };
 
+// === ホーム画面 工事一覧の表示モード ===
+export const DASHBOARD_VIEW_MODE = {
+    KANBAN: 'kanban',
+    LIST: 'list',
+    COMPACT: 'compact',
+};
+export const DASHBOARD_VIEW_MODE_LIST = [
+    DASHBOARD_VIEW_MODE.KANBAN,
+    DASHBOARD_VIEW_MODE.LIST,
+    DASHBOARD_VIEW_MODE.COMPACT,
+];
+
+// === 作業員 属性 ===
+export const WORKER_TYPE = {
+    WORKER: '作業員',
+    OFFICE: '事務',
+};
+export const WORKER_TYPE_LIST = [
+    WORKER_TYPE.WORKER,
+    WORKER_TYPE.OFFICE,
+];
+
 // === 見積ステータス ===
 export const ESTIMATE_STATUS = {
     DRAFT: 'draft',
     PENDING: 'pending',
     APPROVED: 'approved',
     RETURNED: 'returned',
+    SUBMITTED: 'submitted',
+    ORDERED: 'ordered',
+    LOST: 'lost',
 };
 export const ESTIMATE_STATUS_LABEL = {
-    [ESTIMATE_STATUS.DRAFT]:    '下書き',
-    [ESTIMATE_STATUS.PENDING]:  '申請中',
-    [ESTIMATE_STATUS.APPROVED]: '承認',
-    [ESTIMATE_STATUS.RETURNED]: '差し戻し',
+    [ESTIMATE_STATUS.DRAFT]:     '下書き',
+    [ESTIMATE_STATUS.PENDING]:   '申請中',
+    [ESTIMATE_STATUS.APPROVED]:  '承認',
+    [ESTIMATE_STATUS.RETURNED]:  '差し戻し',
+    [ESTIMATE_STATUS.SUBMITTED]: '提出済',
+    [ESTIMATE_STATUS.ORDERED]:   '受注',
+    [ESTIMATE_STATUS.LOST]:      '失注',
 };
 export const ESTIMATE_STATUS_LIST = [
     ESTIMATE_STATUS.DRAFT,
     ESTIMATE_STATUS.PENDING,
     ESTIMATE_STATUS.APPROVED,
     ESTIMATE_STATUS.RETURNED,
+    ESTIMATE_STATUS.SUBMITTED,
+    ESTIMATE_STATUS.ORDERED,
+    ESTIMATE_STATUS.LOST,
 ];
 
 // === 見積アイテム種別 ===

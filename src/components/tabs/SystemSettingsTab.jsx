@@ -21,6 +21,8 @@ const SystemSettingsTab = ({
 }) => {
     const { showToast } = useToast();
     const [localWage, setLocalWage] = useState(hourlyWage);
+    const [validDays, setValidDays] = useState(30);
+    const [initialValidDays, setInitialValidDays] = useState(30);
     const [isSaving, setIsSaving] = useState(false);
     const [showSuccess, setShowSuccess] = useState(false);
     const [apiUsage, setApiUsage] = useState(null);
@@ -30,18 +32,38 @@ const SystemSettingsTab = ({
         setApiUsage(getDailyApiUsage());
     }, []);
 
+    useEffect(() => {
+        const fetchValidDays = async () => {
+            const { data, error } = await supabase
+                .from('system_settings')
+                .select('est_default_valid_days')
+                .eq('id', 1)
+                .single();
+            if (!error && data) {
+                setValidDays(data.est_default_valid_days ?? 30);
+                setInitialValidDays(data.est_default_valid_days ?? 30);
+            }
+        };
+        fetchValidDays();
+    }, []);
+
     const handleSave = async () => {
         setIsSaving(true);
         setIsLoading(true);
         try {
             const { error } = await supabase
                 .from('system_settings')
-                .update({ hourly_wage: localWage, updated_at: new Date().toISOString() })
+                .update({
+                    hourly_wage: localWage,
+                    est_default_valid_days: validDays,
+                    updated_at: new Date().toISOString(),
+                })
                 .eq('id', 1);
 
             if (error) throw error;
 
             setHourlyWage(localWage);
+            setInitialValidDays(validDays);
             setShowSuccess(true);
             setTimeout(() => setShowSuccess(false), 3000);
         } catch (error) {
@@ -127,6 +149,25 @@ const SystemSettingsTab = ({
                         </div>
 
                         <div className="mb-8 pt-8 border-t border-slate-100">
+                            <label className="block text-sm font-bold text-slate-700 mb-2">
+                                見積書の有効期限（発行日からの日数）
+                            </label>
+                            <div className="flex items-center gap-3">
+                                <input
+                                    type="number"
+                                    min="0"
+                                    value={validDays}
+                                    onChange={(e) => setValidDays(Number(e.target.value))}
+                                    className="w-32 px-4 py-3 rounded-lg border-2 border-slate-200 font-bold text-xl outline-none focus:border-blue-500 transition"
+                                />
+                                <span className="text-slate-500 text-sm font-bold">日間</span>
+                            </div>
+                            <p className="text-xs text-slate-500 mt-2 italic px-1">
+                                新規見積作成時、見積日から自動でこの日数後を有効期限に設定します。
+                            </p>
+                        </div>
+
+                        <div className="mb-8 pt-8 border-t border-slate-100">
                             <label className="block text-sm font-bold text-slate-700 mb-4 text-slate-800">
                                 Gemini AI 機能
                             </label>
@@ -201,7 +242,7 @@ const SystemSettingsTab = ({
                         <div className="flex items-center gap-4 pt-6 border-t border-slate-100">
                             <button
                                 onClick={handleSave}
-                                disabled={isSaving || localWage === hourlyWage}
+                                disabled={isSaving || (localWage === hourlyWage && validDays === initialValidDays)}
                                 className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-blue-700 transition shadow-lg shadow-blue-100 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 <Save size={18} />

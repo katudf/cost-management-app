@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { Plus, Trash2, GripVertical, MessageSquare, Copy } from 'lucide-react';
+import { Plus, Trash2, GripVertical, MessageSquare, Copy, FileDown } from 'lucide-react';
 import { ITEM_TYPE } from '../../utils/constants';
 import { formatCurrency } from '../../supabaseEstimates';
 
@@ -399,6 +399,7 @@ const EstimateItemTable = ({
   onAddComment,
   onRemoveRow,
   onSetItems,
+  onImportItems,
   disabled,
 }) => {
   const tableRef = useRef(null);
@@ -621,8 +622,10 @@ const EstimateItemTable = ({
         <table className="w-full text-xs border-collapse">
           <thead>
             <tr className="bg-slate-100 text-slate-500">
-              <th className="px-1 py-2 w-5"></th>     {/* checkbox */}
-              <th className="px-2 py-2 w-6"></th>     {/* grip */}
+              {/* checkbox */}
+              <th className="px-1 py-2 w-5"></th>
+              {/* grip */}
+              <th className="px-2 py-2 w-6"></th>
               <th className="px-2 py-2 text-left min-w-32">名称</th>
               <th className="px-2 py-2 text-left min-w-40">仕様</th>
               <th className="px-2 py-2 text-right w-16">数量</th>
@@ -630,7 +633,8 @@ const EstimateItemTable = ({
               <th className="px-2 py-2 text-right w-20">単価</th>
               <th className="px-2 py-2 text-right w-24">金額</th>
               <th className="px-2 py-2 text-left min-w-20">摘要</th>
-              <th className="px-2 py-2 w-6"></th>     {/* delete */}
+              {/* delete */}
+              <th className="px-2 py-2 w-6"></th>
             </tr>
           </thead>
           <tbody>
@@ -717,6 +721,13 @@ const EstimateItemTable = ({
           >
             <MessageSquare size={14} />
             コメント行を追加
+          </button>
+          <button
+            onClick={onImportItems}
+            className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 font-bold border border-slate-200 hover:border-slate-400 px-3 py-1.5 rounded-lg transition"
+          >
+            <FileDown size={14} />
+            過去見積から取込
           </button>
         </div>
       )}

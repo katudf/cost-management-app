@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Search, Plus, Edit3, Trash2, Save, X, User, Shield, UserCheck, Loader2 } from 'lucide-react';
+import { Search, Plus, Edit3, Trash2, Save, X, User, Shield, UserCheck, Loader2, Mail, Send, CheckCircle2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../components/Toast';
 import ConfirmModal from '../ConfirmModal';
@@ -10,8 +10,11 @@ const StaffSettings = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
-    const [form, setForm] = useState({ id: null, name: '', role: '' });
+    const [form, setForm] = useState({ id: null, name: '', role: '', is_approver: false });
     const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+    const [inviteTargetId, setInviteTargetId] = useState(null);
+    const [inviteEmail, setInviteEmail] = useState('');
+    const [isInviting, setIsInviting] = useState(false);
 
     const fetchStaff = useCallback(async () => {
         setIsLoading(true);
@@ -46,6 +49,7 @@ const StaffSettings = () => {
             const payload = {
                 name: form.name.trim(),
                 role: form.role.trim() || null,
+                is_approver: form.is_approver,
             };
 
             if (form.id) {
@@ -58,7 +62,7 @@ const StaffSettings = () => {
                 showToast('担当者情報を追加しました', 'success');
             }
 
-            setForm({ id: null, name: '', role: '' });
+            setForm({ id: null, name: '', role: '', is_approver: false });
             fetchStaff();
         } catch (error) {
             console.error('担当者情報保存エラー:', error);
@@ -83,7 +87,29 @@ const StaffSettings = () => {
         }
     };
 
-    const filteredStaff = staffList.filter(s => 
+    const handleInvite = async () => {
+        if (!inviteEmail.trim() || !inviteTargetId) return;
+
+        setIsInviting(true);
+        try {
+            const { error } = await supabase.functions.invoke('invite-staff', {
+                body: { staffId: inviteTargetId, email: inviteEmail.trim() },
+            });
+            if (error) throw error;
+
+            showToast('招待メールを送信しました', 'success');
+            setInviteTargetId(null);
+            setInviteEmail('');
+            fetchStaff();
+        } catch (error) {
+            console.error('招待エラー:', error);
+            showToast('招待の送信に失敗しました', 'error');
+        } finally {
+            setIsInviting(false);
+        }
+    };
+
+    const filteredStaff = staffList.filter(s =>
         s.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         s.role?.toLowerCase().includes(searchQuery.toLowerCase())
     );
@@ -132,10 +158,19 @@ const StaffSettings = () => {
                             </div>
                         </div>
                     </div>
+                    <label className="mt-4 inline-flex items-center gap-2 cursor-pointer select-none">
+                        <input
+                            type="checkbox"
+                            checked={form.is_approver}
+                            onChange={(e) => setForm({ ...form, is_approver: e.target.checked })}
+                            className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <span className="text-sm font-bold text-slate-600">見積の承認者にする</span>
+                    </label>
                     <div className="flex justify-end gap-3 mt-5">
                         {form.id && (
                             <button
-                                onClick={() => setForm({ id: null, name: '', role: '' })}
+                                onClick={() => setForm({ id: null, name: '', role: '', is_approver: false })}
                                 disabled={isSaving}
                                 className="px-5 py-2.5 rounded-lg font-bold text-sm text-slate-500 bg-white border border-slate-200 hover:bg-slate-100 transition flex items-center gap-1 disabled:opacity-50"
                             >
@@ -169,22 +204,24 @@ const StaffSettings = () => {
                     <table className="w-full text-left font-bold text-slate-700">
                         <thead>
                             <tr className="bg-slate-100 text-slate-600 text-xs uppercase tracking-wider">
-                                <th className="p-4 font-bold border-b border-slate-200 w-1/3">担当者名</th>
+                                <th className="p-4 font-bold border-b border-slate-200 w-1/4">担当者名</th>
                                 <th className="p-4 font-bold border-b border-slate-200">役職・権限メモ</th>
+                                <th className="p-4 font-bold border-b border-slate-200 w-28 text-center">承認者</th>
+                                <th className="p-4 font-bold border-b border-slate-200 w-64">ログイン</th>
                                 <th className="p-4 font-bold border-b border-slate-200 text-center w-32">操作</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 bg-white">
                             {isLoading ? (
                                 <tr>
-                                    <td colSpan="3" className="p-8 text-center text-slate-400">
+                                    <td colSpan="5" className="p-8 text-center text-slate-400">
                                         <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
                                         読み込み中...
                                     </td>
                                 </tr>
                             ) : filteredStaff.length === 0 ? (
                                 <tr>
-                                    <td colSpan="3" className="p-8 text-center text-slate-400 font-bold text-sm">
+                                    <td colSpan="5" className="p-8 text-center text-slate-400 font-bold text-sm">
                                         担当者情報がありません
                                     </td>
                                 </tr>
@@ -193,6 +230,61 @@ const StaffSettings = () => {
                                     <tr key={staff.id} className={`hover:bg-slate-50 transition ${form.id === staff.id ? 'bg-blue-50' : ''}`}>
                                         <td className="p-4 text-sm text-slate-800">{staff.name}</td>
                                         <td className="p-4 text-sm text-slate-500">{staff.role || '-'}</td>
+                                        <td className="p-4 text-center">
+                                            {staff.is_approver ? (
+                                                <span className="inline-flex items-center gap-1 text-blue-600 text-xs font-bold bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-full">
+                                                    <Shield size={12} /> 承認可
+                                                </span>
+                                            ) : (
+                                                <span className="text-slate-300 text-xs font-bold">-</span>
+                                            )}
+                                        </td>
+                                        <td className="p-4 text-sm">
+                                            {staff.auth_user_id ? (
+                                                <span className="inline-flex items-center gap-1.5 text-green-600 text-xs font-bold bg-green-50 border border-green-200 px-2.5 py-1 rounded-full">
+                                                    <CheckCircle2 size={14} /> 招待済み
+                                                </span>
+                                            ) : inviteTargetId === staff.id ? (
+                                                <div className="flex items-center gap-2">
+                                                    <div className="relative">
+                                                        <Mail className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 w-3.5 h-3.5" />
+                                                        <input
+                                                            type="email"
+                                                            value={inviteEmail}
+                                                            onChange={(e) => setInviteEmail(e.target.value)}
+                                                            placeholder="you@example.com"
+                                                            autoFocus
+                                                            className="pl-8 pr-2 py-1.5 rounded-lg border-2 border-slate-200 font-bold text-slate-700 text-xs outline-none focus:border-blue-500 transition w-40"
+                                                        />
+                                                    </div>
+                                                    <button
+                                                        onClick={handleInvite}
+                                                        disabled={!inviteEmail.trim() || isInviting}
+                                                        aria-label="招待メールを送信"
+                                                        title="招待メールを送信"
+                                                        className="text-blue-600 hover:text-blue-700 disabled:opacity-50 p-1.5 rounded-lg hover:bg-blue-50 transition"
+                                                    >
+                                                        {isInviting ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                                                    </button>
+                                                    <button
+                                                        onClick={() => { setInviteTargetId(null); setInviteEmail(''); }}
+                                                        disabled={isInviting}
+                                                        aria-label="招待をキャンセル"
+                                                        title="キャンセル"
+                                                        className="text-slate-400 hover:text-slate-600 disabled:opacity-50 p-1.5 rounded-lg hover:bg-slate-100 transition"
+                                                    >
+                                                        <X size={16} />
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <button
+                                                    onClick={() => { setInviteTargetId(staff.id); setInviteEmail(''); }}
+                                                    className="inline-flex items-center gap-1.5 text-slate-500 hover:text-blue-600 text-xs font-bold border border-slate-200 hover:border-blue-300 px-2.5 py-1.5 rounded-lg transition"
+                                                >
+                                                    <Mail size={14} /> 招待する
+                                                </button>
+                                            )}
+                                        </td>
                                         <td className="p-4 text-center">
                                             <div className="flex items-center justify-center gap-2">
                                                 <button

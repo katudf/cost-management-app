@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useConfirm } from '../components/ConfirmProvider';
+import { WORKER_TYPE } from '../utils/constants';
 
 export function useWorkers({ workers, setWorkers, showToast }) {
     const { confirm } = useConfirm();
@@ -11,7 +12,7 @@ export function useWorkers({ workers, setWorkers, showToast }) {
 
     const addWorker = () => {
         setEditingWorker({
-            name: '', kana: '', birthDate: '', hireDate: '', address: '', contactInfo: '', cpdsNumber: ''
+            name: '', kana: '', birthDate: '', hireDate: '', address: '', contactInfo: '', cpdsNumber: '', worker_type: WORKER_TYPE.WORKER
         });
         setIsWorkerModalOpen(true);
     };
@@ -36,7 +37,8 @@ export function useWorkers({ workers, setWorkers, showToast }) {
                 resignation_date: editingWorker.resignation_date || null,
                 address: editingWorker.address || null,
                 contactInfo: editingWorker.contactInfo || null,
-                cpdsNumber: editingWorker.cpdsNumber || null
+                cpdsNumber: editingWorker.cpdsNumber || null,
+                worker_type: editingWorker.worker_type || WORKER_TYPE.WORKER
             };
 
             if (editingWorker.id) {

@@ -5,9 +5,12 @@ import { useWorkers } from './hooks/useWorkers';
 import { useDashboardStats } from './hooks/useDashboardStats';
 
 import { useToast } from './components/Toast';
-import { Table, Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, Upload, GripVertical } from 'lucide-react';
+import { useAuth } from './hooks/useAuth';
+import LoginScreen from './components/auth/LoginScreen';
+import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
+import { Table, Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, Upload, GripVertical, LogOut } from 'lucide-react';
 import { supabase } from './lib/supabase';
-import { DEFAULT_MASTER_DATA, PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR, ITEM_TYPE } from './utils/constants';
+import { DEFAULT_MASTER_DATA, PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR, ITEM_TYPE, DASHBOARD_VIEW_MODE, DASHBOARD_VIEW_MODE_LIST } from './utils/constants';
 import { calculateAge } from './utils/dateUtils';
 import { calculateProjectsSummary } from './utils/projectUtils';
 import { parseExcelForImport } from './utils/excelImportUtils';
@@ -20,6 +23,9 @@ import ImportModal from './components/ImportModal';
 import WorkerEditModal from './components/WorkerEditModal';
 import ExportReportModal from './components/ExportReportModal';
 import DashboardTab from './components/tabs/DashboardTab';
+import DashboardViewSwitcher from './components/dashboard/DashboardViewSwitcher';
+import ProjectListView from './components/dashboard/ProjectListView';
+import ProjectCompactView from './components/dashboard/ProjectCompactView';
 import InputTab from './components/tabs/InputTab';
 import MasterTab from './components/tabs/MasterTab';
 import WorkersTab from './components/tabs/WorkersTab';
@@ -32,6 +38,7 @@ import EstimateForm from './EstimateForm';
 
 const App = () => {
     const { showToast } = useToast();
+    const { isAuthenticated, isLoading: isAuthLoading, currentStaff, signOut, isPasswordRecovery } = useAuth();
     const [activeTab, setActiveTab] = useState('dashboard');
     const [estimateEditId, setEstimateEditId] = useState(undefined);
     // undefined = 一覧表示
@@ -47,6 +54,17 @@ const App = () => {
     );
 
     const [dashboardSubTab, setDashboardSubTab] = useState('all'); // 'all', 'estimate', 'completed'
+
+    // 工事一覧の表示モード（カンバン/リスト/コンパクト）。localStorage に保存して次回起動時も維持する
+    const [dashboardViewMode, setDashboardViewMode] = useState(() => {
+        const saved = localStorage.getItem('cost-app-dashboardViewMode');
+        return DASHBOARD_VIEW_MODE_LIST.includes(saved) ? saved : DASHBOARD_VIEW_MODE.KANBAN;
+    });
+    const handleViewModeChange = (mode) => {
+        setDashboardViewMode(mode);
+        localStorage.setItem('cost-app-dashboardViewMode', mode);
+    };
+
     const [draggedProjectId, setDraggedProjectId] = useState(null);
     const [isDragOverTab, setIsDragOverTab] = useState({ all: false, estimate: false, completed: false });
 
@@ -208,7 +226,7 @@ const App = () => {
     const { projects, setProjects, workers, setWorkers, customers, setCustomers, hourlyWage, setHourlyWage, isGeminiEnabled, setIsGeminiEnabled, isLoading, setIsLoading, fetchAllData, fetchProjectDetails } = useSupabaseData(showToast);
 
     const workerOps = useWorkers({ workers, setWorkers, showToast });
-    const projectOps = useProjects({ projects, setProjects, activeProjectId, setActiveProjectId, showToast, workers });
+    const projectOps = useProjects({ projects, setProjects, activeProjectId, setActiveProjectId, showToast, workers, setActiveTab });
     const dashboardStats = useDashboardStats({ projects, activeProject: projectOps.activeProject, hourlyWage });
 
     const groupedProjects = useMemo(() => {
@@ -219,6 +237,19 @@ const App = () => {
         });
         return groups;
     }, [dashboardStats.displayProjects]);
+
+    // リスト/コンパクト表示用：サブタブ（工事一覧/見積/完了）の表示ルールを適用したフラットな一覧
+    // カンバンの各カラムと同じフィルタ条件（show_on_home の扱い）を踏襲する
+    const dashboardVisibleProjects = useMemo(() => {
+        return (dashboardStats.displayProjects || []).filter(p => {
+            const st = p.status || PROJECT_STATUS.ESTIMATE;
+            if (dashboardSubTab === 'estimate') return st === PROJECT_STATUS.ESTIMATE && p.show_on_home === false;
+            if (dashboardSubTab === 'completed') return st === PROJECT_STATUS.COMPLETED && p.show_on_home === false;
+            // 'all'：見積・完了は show_on_home=false のものを非表示
+            if (st === PROJECT_STATUS.ESTIMATE || st === PROJECT_STATUS.COMPLETED) return p.show_on_home !== false;
+            return true;
+        });
+    }, [dashboardStats.displayProjects, dashboardSubTab]);
 
 
     useEffect(() => {
@@ -549,6 +580,18 @@ const App = () => {
     };
 
 
+    if (isAuthLoading) {
+        return <div className="min-h-screen flex items-center justify-center bg-slate-50"><Loader2 className="w-8 h-8 animate-spin text-blue-500" /></div>;
+    }
+
+    if (isPasswordRecovery) {
+        return <ResetPasswordScreen />;
+    }
+
+    if (!isAuthenticated) {
+        return <LoginScreen />;
+    }
+
     if (isLoading && projects.length === 0) {
         return <div className="min-h-screen flex items-center justify-center bg-slate-50"><Loader2 className="w-8 h-8 animate-spin text-blue-500" /></div>;
     }
@@ -578,8 +621,21 @@ const App = () => {
                                     </button>
                                 ))}
                             </nav>
+                            <div className="flex items-center gap-2 shrink-0">
+                                {currentStaff?.name && (
+                                    <span className="text-sm font-bold text-slate-500 whitespace-nowrap">{currentStaff.name} さん</span>
+                                )}
+                                <button
+                                    onClick={signOut}
+                                    aria-label="ログアウト"
+                                    title="ログアウト"
+                                    className="p-2 text-slate-400 hover:text-red-600 hover:bg-white rounded-lg transition shadow-sm border border-transparent hover:border-red-200"
+                                >
+                                    <LogOut size={18} />
+                                </button>
+                            </div>
                         </div>
-                        
+
                         <div className="flex flex-wrap items-center gap-2">
                             {activeTab === 'master' && (
                                 <div className="flex items-center gap-1">
@@ -653,15 +709,18 @@ const App = () => {
                                 </h2>
 
                                 {projects.length > 0 && (
-                                    <div className="relative group w-full md:w-64">
-                                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 group-focus-within:text-blue-500 transition-colors" />
-                                        <input
-                                            type="text"
-                                            placeholder="工事名で検索..."
-                                            className="pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:border-blue-400 focus:ring-4 focus:ring-blue-50 outline-none w-full font-bold text-slate-700 transition-all shadow-sm"
-                                            value={dashboardStats.searchQuery}
-                                            onChange={(e) => dashboardStats.setSearchQuery(e.target.value)}
-                                        />
+                                    <div className="flex items-center gap-2 w-full md:w-auto">
+                                        <div className="relative group flex-1 md:w-64">
+                                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 group-focus-within:text-blue-500 transition-colors" />
+                                            <input
+                                                type="text"
+                                                placeholder="工事名で検索..."
+                                                className="pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:border-blue-400 focus:ring-4 focus:ring-blue-50 outline-none w-full font-bold text-slate-700 transition-all shadow-sm"
+                                                value={dashboardStats.searchQuery}
+                                                onChange={(e) => dashboardStats.setSearchQuery(e.target.value)}
+                                            />
+                                        </div>
+                                        <DashboardViewSwitcher viewMode={dashboardViewMode} onChange={handleViewModeChange} />
                                     </div>
                                 )}
                             </div>
@@ -676,6 +735,18 @@ const App = () => {
                                 </div>
                             ) : dashboardStats.displayProjects.length === 0 ? (
                                 <div className="text-center py-10 bg-white rounded-xl border border-dashed border-slate-300 text-slate-400 font-bold">該当する条件の現場がありません。</div>
+                            ) : dashboardViewMode === DASHBOARD_VIEW_MODE.LIST ? (
+                                <ProjectListView
+                                    projects={dashboardVisibleProjects}
+                                    workers={workers}
+                                    onOpenProject={(id) => { setActiveProjectId(id); setActiveTab('master'); }}
+                                    onStatusChange={handleStatusSelect}
+                                />
+                            ) : dashboardViewMode === DASHBOARD_VIEW_MODE.COMPACT ? (
+                                <ProjectCompactView
+                                    projects={dashboardVisibleProjects}
+                                    onOpenProject={(id) => { setActiveProjectId(id); setActiveTab('master'); }}
+                                />
                             ) : (
                                 <div className="flex flex-row gap-4 overflow-x-auto pb-4 items-start">
                                     {PROJECT_STATUS_LIST.filter(status => {
@@ -934,7 +1005,10 @@ const App = () => {
                             <EstimateForm
                                 estimateId={estimateEditId}  // null=新規, number=編集
                                 onBack={() => setEstimateEditId(undefined)}
-                                onSaved={() => setEstimateEditId(undefined)}
+                                onSaved={() => {
+                                    setEstimateEditId(undefined);
+                                    fetchAllData(activeProjectId, setActiveProjectId);
+                                }}
                             />
                         )
                     )}

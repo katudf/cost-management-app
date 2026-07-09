@@ -3,6 +3,7 @@ import { Edit3, Plus, Trash2, Filter, Grid, List as ListIcon, ChevronLeft, Chevr
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmProvider';
+import { WORKER_TYPE } from '../../utils/constants';
 
 const InputTab = ({
     activeProject,
@@ -61,7 +62,7 @@ const InputTab = ({
             };
         });
 
-        const masterWorkerNames = workers.filter(w => !w.resignation_date).map(w => w.name);
+        const masterWorkerNames = workers.filter(w => !w.resignation_date && w.worker_type !== WORKER_TYPE.OFFICE).map(w => w.name);
         const projectWorkerNames = [...new Set(activeProject.records.map(r => r.worker))].filter(Boolean);
         const displayWorkerNames = [
             ...masterWorkerNames,
@@ -249,7 +250,7 @@ const InputTab = ({
                                             />
                                             {focusedWorkerRow === r.id && workers.length > 0 && (
                                                 <ul className="absolute z-[100] left-2 right-2 top-[calc(100%-4px)] mt-1 bg-white border border-slate-200 shadow-2xl max-h-48 overflow-y-auto rounded-md py-1">
-                                                    {workers.filter(w => !w.resignation_date).map(w => (
+                                                    {workers.filter(w => !w.resignation_date && w.worker_type !== WORKER_TYPE.OFFICE).map(w => (
                                                         <li
                                                             key={w.id}
                                                             className="px-3 py-2 text-xs hover:bg-blue-100 cursor-pointer text-slate-800 font-bold"

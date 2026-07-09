@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { FileText, User } from 'lucide-react';
+import { FileText, User, Edit3 } from 'lucide-react';
 import { calculateAge } from '../../utils/dateUtils';
 
 const DailyReportTab = ({
@@ -59,17 +59,6 @@ const DailyReportTab = ({
                     <FileText className="text-blue-600" /> 作業員別 日報出力
                 </h2>
                 <div className="flex items-center gap-3">
-                    <div className="bg-white px-4 py-2 rounded-lg border border-slate-200 shadow-sm flex items-center gap-2">
-                        <label className="flex items-center gap-2 cursor-pointer select-none">
-                            <input
-                                type="checkbox"
-                                checked={showResigned}
-                                onChange={(e) => setShowResigned(e.target.checked)}
-                                className="w-4 h-4 rounded accent-blue-600"
-                            />
-                            <span className="text-sm font-bold text-slate-600">退社済みの作業員を表示</span>
-                        </label>
-                    </div>
                     <button
                         onClick={handleBatchExport}
                         disabled={checkedCount === 0}
@@ -94,13 +83,14 @@ const DailyReportTab = ({
                                     title="全選択/全解除"
                                 />
                             </th>
-                            <th className="p-3 font-bold rounded-r-lg">作業員名</th>
+                            <th className="p-3 font-bold">作業員名</th>
+                            <th className="p-3 font-bold rounded-r-lg w-32"></th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                         {filteredSummaryData.length === 0 ? (
                             <tr>
-                                <td colSpan="2" className="p-8 text-center text-slate-400 font-bold">まだ作業実績がありません</td>
+                                <td colSpan="3" className="p-8 text-center text-slate-400 font-bold">まだ作業実績がありません</td>
                             </tr>
                         ) : (
                             filteredSummaryData.map((data, idx) => {
@@ -119,12 +109,27 @@ const DailyReportTab = ({
                                                 className="w-4 h-4 rounded accent-blue-600 cursor-pointer"
                                             />
                                         </td>
-                                        <td className="p-3 font-bold text-slate-800 flex items-center gap-2 whitespace-nowrap">
-                                            <User size={16} className="text-slate-400" /> {data.name}
-                                            {worker?.birthDate && (
-                                                <span className="text-xs font-normal text-slate-500">
-                                                    ({calculateAge(worker.birthDate)}歳)
-                                                </span>
+                                        <td className="p-3 font-bold text-slate-800">
+                                            <div className="flex items-center gap-2 whitespace-nowrap">
+                                                <User size={16} className="text-slate-400" /> {data.name}
+                                                {worker?.birthDate && (
+                                                    <span className="text-xs font-normal text-slate-500">
+                                                        ({calculateAge(worker.birthDate)}歳)
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </td>
+                                        <td className="p-3 text-right" onClick={(e) => e.stopPropagation()}>
+                                            {worker?.id && (
+                                                <a
+                                                    href={`/worker.html?mode=worker&workerId=${worker.id}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 transition"
+                                                    title={`${data.name}さんの日報編集画面を開く`}
+                                                >
+                                                    <Edit3 size={14} /> 日報編集
+                                                </a>
                                             )}
                                         </td>
                                     </tr>

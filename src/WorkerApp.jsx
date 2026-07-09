@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './lib/supabase';
-import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2, PlusCircle, Clock, X, Wifi, WifiOff, FileText } from 'lucide-react';
+import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2, PlusCircle, Clock, X, Wifi, WifiOff, FileText, CalendarDays } from 'lucide-react';
+import WorkerAssignmentView from './components/worker/WorkerAssignmentView';
 import { useToast } from './components/Toast';
 import { useConfirm } from './components/ConfirmProvider';
 import { calculateWorkHours, calculateNinku, getSeasonConfig, formatTimeDisplay } from './utils/workTimeUtils';
-import { PROJECT_STATUS } from './utils/constants';
+import { PROJECT_STATUS, WORKER_TYPE } from './utils/constants';
 import { syncOvertimeApproval, fetchPendingApprovals, approveOvertime, fetchApprovalReason, fetchApprovalsForReport } from './lib/overtimeApprovals';
 import { syncWorkAllowanceApproval, fetchPendingWorkAllowanceApprovals, approveWorkAllowance, fetchWorkAllowanceApprovalsForReport } from './lib/workAllowanceApprovals';
 import { fetchWithCache, getDraftQueue, upsertDraft, removeDraft } from './utils/offlineCache';
@@ -46,6 +47,9 @@ const WorkerApp = () => {
 
     const [selectedDate, setSelectedDate] = useState(() => formatDateLocal(new Date()));
 
+    // 配置表（全画面・閲覧専用）の表示状態
+    const [showAssignmentChart, setShowAssignmentChart] = useState(false);
+
     // 残業理由（その現場・その日の残業に対する任意のメモ）
     const [overtimeReason, setOvertimeReason] = useState('');
     // 職長: 承認待ちの残業申請リスト
@@ -62,15 +66,26 @@ const WorkerApp = () => {
             try {
                 setDraftQueue(getDraftQueue());
 
-                const savedWorkerStr = localStorage.getItem('cost-app-worker');
-                if (savedWorkerStr) setLoggedInWorker(JSON.parse(savedWorkerStr));
                 const savedProjectId = localStorage.getItem('cost-app-worker-project');
                 if (savedProjectId) setSelectedProjectId(savedProjectId);
 
                 const { data: wData } = await fetchWithCache('workers',
-                    () => supabase.from('Workers').select('id, name, resignation_date').order('display_order', { ascending: true, nullsFirst: false })
+                    () => supabase.from('Workers').select('id, name, resignation_date, worker_type').order('display_order', { ascending: true, nullsFirst: false })
                 );
-                if (wData) setWorkers(wData.filter(w => w.name && w.name.trim() !== '' && !w.resignation_date));
+                if (wData) setWorkers(wData.filter(w => w.name && w.name.trim() !== '' && !w.resignation_date && w.worker_type !== WORKER_TYPE.OFFICE));
+
+                // 管理画面の「日報編集」リンクから ?workerId=<id> 付きで開かれた場合はその作業員で自動ログイン
+                const workerIdParam = new URLSearchParams(window.location.search).get('workerId');
+                const targetWorker = workerIdParam && wData
+                    ? wData.find(w => String(w.id) === workerIdParam)
+                    : null;
+                if (targetWorker) {
+                    setLoggedInWorker(targetWorker);
+                    localStorage.setItem('cost-app-worker', JSON.stringify(targetWorker));
+                } else {
+                    const savedWorkerStr = localStorage.getItem('cost-app-worker');
+                    if (savedWorkerStr) setLoggedInWorker(JSON.parse(savedWorkerStr));
+                }
 
                 const { data: pData } = await fetchWithCache('projects',
                     () => supabase.from('Projects').select('*').order('created_at', { ascending: true })
@@ -414,7 +429,8 @@ const WorkerApp = () => {
         
         const project = projects.find(p => p.id === Number(selectedProjectId));
         const isForeman = project && project.foreman_worker_id === loggedInWorker.id;
-        if (!isForeman) {
+        const hasNoForeman = project && !project.foreman_worker_id;
+        if (!isForeman && !hasNoForeman) {
             showToast("新しい作業項目の追加は職長のみ可能です。追加が必要な場合は職長に依頼してください。", 'error');
             return;
         }
@@ -586,7 +602,7 @@ const WorkerApp = () => {
         setSubcontractors(draft.subcontractors || []);
         setDeletedSubcontractorIds(draft.deletedSubcontractorIds || []);
         setHasUnsavedChanges(true);
-        showToast('下書きを復元しました。内容を確認し「今日の実績を送信」ボタンを押してください。', 'success');
+        showToast('下書きを復元しました。内容を確認し「実績を送信」ボタンを押してください。', 'success');
     };
 
     const handleDiscardDraft = async (draft) => {
@@ -927,6 +943,14 @@ const WorkerApp = () => {
             <header className="bg-blue-600 text-white p-4 shadow-md sticky top-0 z-40 flex items-center justify-between">
                 <div className="flex items-center gap-2"><HardHat size={20} /><span className="font-bold text-lg leading-none">{loggedInWorker.name}</span></div>
                 <div className="flex items-center gap-2">
+                    <button
+                        onClick={() => setShowAssignmentChart(true)}
+                        aria-label="配置表を表示"
+                        title="配置表を表示"
+                        className="flex items-center gap-1 bg-blue-700 hover:bg-blue-800 px-3 py-1.5 rounded-lg text-sm font-bold transition"
+                    >
+                        <CalendarDays size={16} /> 配置表
+                    </button>
                     <button
                         onClick={handleExportReportPDF}
                         disabled={isExportingPDF}
@@ -1435,7 +1459,7 @@ const WorkerApp = () => {
                         <button onClick={handleSubmit} disabled={isSaving}
                             className="w-full bg-blue-600 text-white py-4 rounded-xl shadow-xl shadow-blue-600/20 active:bg-blue-700 transition flex flex-col justify-center items-center gap-1 disabled:opacity-70">
                             <div className="flex items-center gap-2 font-black text-lg">
-                                {isSaving ? <Loader2 className="animate-spin" /> : <Save />} 今日の実績を送信
+                                {isSaving ? <Loader2 className="animate-spin" /> : <Save />} 実績を送信
                             </div>
                             <div className="text-blue-200 text-sm font-bold flex items-center gap-1 flex-wrap justify-center">
                                 この現場: <span className="text-white text-lg">{totalInputHours.toFixed(1)}</span> h
@@ -1447,6 +1471,16 @@ const WorkerApp = () => {
                         </button>
                     </div>
                 </div>
+            )}
+
+            {/* 配置表（全画面・閲覧専用） */}
+            {showAssignmentChart && (
+                <WorkerAssignmentView
+                    workers={workers}
+                    projects={projects}
+                    loggedInWorker={loggedInWorker}
+                    onClose={() => setShowAssignmentChart(false)}
+                />
             )}
         </div>
     );

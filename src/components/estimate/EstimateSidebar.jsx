@@ -1,7 +1,19 @@
 import React, { useState } from 'react';
-import { Save, Unlock, ChevronDown, ChevronUp, Lock } from 'lucide-react';
+import { Save, Unlock, ChevronDown, ChevronUp, Lock, UserCheck, Send, Trophy, XCircle } from 'lucide-react';
 import { ESTIMATE_STATUS, ESTIMATE_STATUS_LABEL } from '../../utils/constants';
 import { formatCurrency } from '../../supabaseEstimates';
+import EstimateApprovalModal from './EstimateApprovalModal';
+import EstimateLostReasonModal from './EstimateLostReasonModal';
+import EstimateSubmitModal from './EstimateSubmitModal';
+
+// "2026-07-08T01:23:45.000Z" -> "2026/07/08 10:23"
+const formatDateTime = (val) => {
+  if (!val) return '';
+  const d = new Date(val);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
 
 const STATUS_BADGES = [
   {
@@ -42,8 +54,59 @@ const EstimateSidebar = ({
   isLocked,
   onSave,
   onUnlock,
+  officeStaff = [],
+  currentStaff = null,
+  onApprove,
+  onReturn,
+  onSubmit,
+  onSubmitToCustomer,
+  onOrder,
+  onLose,
 }) => {
   const [pdfExpanded, setPdfExpanded] = useState(false);
+  const [approvalModalMode, setApprovalModalMode] = useState(null); // 'approved' | 'returned' | null
+  const [lostModalOpen, setLostModalOpen] = useState(false);
+  const [submitModalOpen, setSubmitModalOpen] = useState(false);
+
+  const approverStaff = officeStaff.find(s => s.id === header.approver_staff_id);
+  // 申請中で承認者が未指名の場合は誰も承認できない。指名済みなら本人のみ承認・差し戻し可能。
+  const isDesignatedApprover = header.status === ESTIMATE_STATUS.PENDING
+    && !!header.approver_staff_id
+    && currentStaff?.id === header.approver_staff_id;
+
+  const handleBadgeClick = (value) => {
+    if (isLocked) return;
+    if (value === ESTIMATE_STATUS.APPROVED || value === ESTIMATE_STATUS.RETURNED) {
+      // 申請中以外からの直接遷移、または指名された承認者以外からの操作は不可
+      if (header.status !== ESTIMATE_STATUS.PENDING || !isDesignatedApprover) return;
+      setApprovalModalMode(value);
+      return;
+    }
+    if (value === ESTIMATE_STATUS.PENDING) {
+      setSubmitModalOpen(true);
+      return;
+    }
+    onChange('status', value);
+  };
+
+  const handleSubmitConfirm = (approverStaffId) => {
+    onSubmit?.(approverStaffId);
+    setSubmitModalOpen(false);
+  };
+
+  const handleApprovalConfirm = (payload) => {
+    if (approvalModalMode === ESTIMATE_STATUS.APPROVED) {
+      onApprove?.();
+    } else if (approvalModalMode === ESTIMATE_STATUS.RETURNED) {
+      onReturn?.(payload.reason);
+    }
+    setApprovalModalMode(null);
+  };
+
+  const handleLostConfirm = (reason) => {
+    onLose?.(reason);
+    setLostModalOpen(false);
+  };
 
   return (
     <div className="space-y-3">
@@ -83,22 +146,99 @@ const EstimateSidebar = ({
         <div>
           <p className="text-xs font-bold text-slate-500 mb-2">ステータス</p>
           <div className="flex flex-wrap gap-1.5">
-            {STATUS_BADGES.map(({ value, label, base, active, hover }) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => !isLocked && onChange('status', value)}
-                disabled={isLocked}
-                className={`px-2.5 py-1 rounded-full text-xs font-bold border transition ${
-                  header.status === value
-                    ? active
-                    : `bg-white ${base} ${isLocked ? '' : hover}`
-                } ${isLocked ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
-              >
-                {label}
-              </button>
-            ))}
+            {STATUS_BADGES.map(({ value, label, base, active, hover }) => {
+              // 提出済/受注/失注は「承認」の下位状態のため、承認バッジをアクティブ表示で流用する
+              const isActive = value === ESTIMATE_STATUS.APPROVED
+                ? [ESTIMATE_STATUS.APPROVED, ESTIMATE_STATUS.SUBMITTED, ESTIMATE_STATUS.ORDERED, ESTIMATE_STATUS.LOST].includes(header.status)
+                : header.status === value;
+              const badgeLabel = value === ESTIMATE_STATUS.APPROVED && header.status !== ESTIMATE_STATUS.APPROVED && isActive
+                ? `${label}（${ESTIMATE_STATUS_LABEL[header.status]}）`
+                : label;
+              // 承認・差し戻しバッジは、申請中かつ指名された承認者本人以外は操作不可
+              const isApprovalAction = value === ESTIMATE_STATUS.APPROVED || value === ESTIMATE_STATUS.RETURNED;
+              const badgeDisabled = isLocked || (isApprovalAction && !isActive && !isDesignatedApprover);
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => handleBadgeClick(value)}
+                  disabled={badgeDisabled}
+                  title={isApprovalAction && !isActive && !isDesignatedApprover ? '指名された承認者のみ操作できます' : undefined}
+                  className={`px-2.5 py-1 rounded-full text-xs font-bold border transition ${
+                    isActive
+                      ? active
+                      : `bg-white ${base} ${badgeDisabled ? '' : hover}`
+                  } ${badgeDisabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+                >
+                  {badgeLabel}
+                </button>
+              );
+            })}
           </div>
+
+          {/* 申請中: 指名した承認者の表示 */}
+          {header.status === ESTIMATE_STATUS.PENDING && approverStaff && (
+            <p className="text-xs text-amber-700 flex items-center gap-1 mt-2">
+              <UserCheck size={12} />
+              承認依頼中: {approverStaff.name}
+              {isDesignatedApprover && <span className="ml-1 text-amber-600">（あなたが承認者です）</span>}
+            </p>
+          )}
+
+          {/* 承認・差し戻しの証跡表示 */}
+          {header.approved_by && [ESTIMATE_STATUS.APPROVED, ESTIMATE_STATUS.SUBMITTED, ESTIMATE_STATUS.ORDERED, ESTIMATE_STATUS.LOST].includes(header.status) && (
+            <p className="text-xs text-green-700 flex items-center gap-1 mt-2">
+              <UserCheck size={12} />
+              {header.approved_by} が承認（{formatDateTime(header.approved_at)}）
+            </p>
+          )}
+          {header.status === ESTIMATE_STATUS.RETURNED && header.returned_reason && (
+            <p className="text-xs text-red-600 mt-2 leading-relaxed whitespace-pre-line">
+              差し戻し理由: {header.returned_reason}
+            </p>
+          )}
+          {header.status === ESTIMATE_STATUS.LOST && header.lost_reason && (
+            <p className="text-xs text-red-600 mt-2 leading-relaxed whitespace-pre-line">
+              失注理由: {header.lost_reason}
+            </p>
+          )}
+
+          {/* 受注管理フロー（承認後のみ表示。提出済→受注/失注の一方向） */}
+          {header.status === ESTIMATE_STATUS.APPROVED && (
+            <button
+              type="button"
+              onClick={onSubmitToCustomer}
+              className="mt-3 w-full flex items-center justify-center gap-1.5 border border-blue-300 text-blue-700 hover:bg-blue-50 px-2.5 py-1.5 rounded-lg text-xs font-bold transition"
+            >
+              <Send size={13} />
+              提出済にする
+            </button>
+          )}
+          {header.status === ESTIMATE_STATUS.SUBMITTED && (
+            <div className="mt-3 flex gap-1.5">
+              <button
+                type="button"
+                onClick={onOrder}
+                className="flex-1 flex items-center justify-center gap-1.5 border border-green-300 text-green-700 hover:bg-green-50 px-2.5 py-1.5 rounded-lg text-xs font-bold transition"
+              >
+                <Trophy size={13} />
+                受注
+              </button>
+              <button
+                type="button"
+                onClick={() => setLostModalOpen(true)}
+                className="flex-1 flex items-center justify-center gap-1.5 border border-red-300 text-red-700 hover:bg-red-50 px-2.5 py-1.5 rounded-lg text-xs font-bold transition"
+              >
+                <XCircle size={13} />
+                失注
+              </button>
+            </div>
+          )}
+          {(header.status === ESTIMATE_STATUS.ORDERED || header.status === ESTIMATE_STATUS.LOST) && (
+            <p className={`text-xs mt-2 font-bold ${header.status === ESTIMATE_STATUS.ORDERED ? 'text-green-700' : 'text-red-600'}`}>
+              {ESTIMATE_STATUS_LABEL[header.status]}で確定済み
+            </p>
+          )}
         </div>
 
         {/* 保存ボタン */}
@@ -250,6 +390,30 @@ const EstimateSidebar = ({
           </div>
         )}
       </div>
+
+      {approvalModalMode && (
+        <EstimateApprovalModal
+          mode={approvalModalMode}
+          currentStaff={currentStaff}
+          onConfirm={handleApprovalConfirm}
+          onCancel={() => setApprovalModalMode(null)}
+        />
+      )}
+
+      {lostModalOpen && (
+        <EstimateLostReasonModal
+          onConfirm={handleLostConfirm}
+          onCancel={() => setLostModalOpen(false)}
+        />
+      )}
+
+      {submitModalOpen && (
+        <EstimateSubmitModal
+          officeStaff={officeStaff}
+          onConfirm={handleSubmitConfirm}
+          onCancel={() => setSubmitModalOpen(false)}
+        />
+      )}
     </div>
   );
 };
