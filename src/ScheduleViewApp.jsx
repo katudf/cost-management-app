@@ -3,9 +3,13 @@ import { Calendar, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { toDateStr, addDays, getDayOfWeek, getMonday } from './utils/dateUtils';
 import { DEFAULT_COLORS, SCHEDULE_TYPES, WORKER_TYPE } from './utils/constants';
+import { useAuth } from './hooks/useAuth';
+import LoginScreen from './components/auth/LoginScreen';
+import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
 
 
 const ScheduleViewApp = () => {
+    const { isAuthenticated, isLoading: isAuthLoading, isPasswordRecovery } = useAuth();
     const [isLoading, setIsLoading] = useState(true);
     const [workers, setWorkers] = useState([]);
     const [assignments, setAssignments] = useState([]);
@@ -55,7 +59,8 @@ const ScheduleViewApp = () => {
                 supabase.from('Projects').select('id, name, startDate, endDate, bar_color, status')
                     .not('startDate', 'is', null).not('endDate', 'is', null)
                     .order('created_at', { ascending: true }),
-                supabase.from('Workers').select('id, name, display_order, worker_type')
+                // viewer/workerロールはWorkers基表を直接読めない（機微カラム遮蔽）ため安全カラムのみのビューを使う
+                supabase.from('workers_directory').select('id, name, display_order, worker_type')
                     .order('display_order', { ascending: true, nullsFirst: false })
             ]);
 
@@ -113,6 +118,22 @@ const ScheduleViewApp = () => {
     };
 
     const periodLabel = `${startDate.getMonth() + 1}/${startDate.getDate()} 〜 ${addDays(startDate, totalDays - 1).getMonth() + 1}/${addDays(startDate, totalDays - 1).getDate()}`;
+
+    if (isAuthLoading) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-slate-100">
+                <Loader2 className="w-10 h-10 text-blue-500 animate-spin" />
+            </div>
+        );
+    }
+
+    if (isPasswordRecovery) {
+        return <ResetPasswordScreen />;
+    }
+
+    if (!isAuthenticated) {
+        return <LoginScreen title="工程表閲覧" subtitle="ログイン" />;
+    }
 
     if (isLoading && assignments.length === 0) {
         return (

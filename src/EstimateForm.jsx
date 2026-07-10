@@ -16,6 +16,8 @@ import {
   fetchEstimateById,
   createEstimate,
   updateEstimate,
+  approveEstimate,
+  returnEstimate,
   saveEstimateItems,
   syncEstimateToProject,
   fetchCustomers,
@@ -332,23 +334,32 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
     }
   }, [estimateId]);
 
-  // 承認・差し戻し（証跡を記録してからステータスを変更する）
-  // 承認者は指名された本人（currentStaff）のみが実行できる（EstimateSidebar側でも二重にガード）
-  const handleApprove = useCallback(() => {
-    persistStatus({
-      status: ESTIMATE_STATUS.APPROVED,
-      approved_by: currentStaff?.name || '',
-      approved_at: new Date().toISOString(),
-      returned_reason: '',
-    });
-  }, [currentStaff, persistStatus]);
+  // 承認・差し戻し（SECURITY DEFINER RPC経由。証跡カラムはDB側で記録される）
+  // 指名された承認者本人のみ実行できる制約はDB側（approve_estimate / return_estimate）で強制。
+  // UI側のガード（EstimateSidebar）は補助的な二重チェック
+  const handleApprove = useCallback(async () => {
+    try {
+      setSaving(true);
+      const trail = await approveEstimate(estimateId);
+      setHeader(h => ({ ...h, ...trail }));
+    } catch (e) {
+      setError('承認に失敗しました: ' + e.message);
+    } finally {
+      setSaving(false);
+    }
+  }, [estimateId]);
 
-  const handleReturn = useCallback((reason) => {
-    persistStatus({
-      status: ESTIMATE_STATUS.RETURNED,
-      returned_reason: reason,
-    });
-  }, [persistStatus]);
+  const handleReturn = useCallback(async (reason) => {
+    try {
+      setSaving(true);
+      const trail = await returnEstimate(estimateId, reason);
+      setHeader(h => ({ ...h, ...trail }));
+    } catch (e) {
+      setError('差し戻しに失敗しました: ' + e.message);
+    } finally {
+      setSaving(false);
+    }
+  }, [estimateId]);
 
   // 申請中（承認依頼）: 承認者を指名してステータスを申請中にする
   const handleSubmit = useCallback((approverStaffId) => {

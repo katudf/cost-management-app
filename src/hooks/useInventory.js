@@ -23,7 +23,8 @@ export function useInventory({ showToast }) {
                     .order('display_order', { ascending: true, nullsFirst: false }),
                 supabase.from('InventoryItems').select('*')
                     .order('updated_at', { ascending: false }),
-                supabase.from('Workers').select('id, name, resignation_date')
+                // workerロールはWorkers基表を直接読めない（機微カラム遮蔽）ため安全カラムのみのビューを使う
+                supabase.from('workers_directory').select('id, name, resignation_date')
                     .order('display_order', { ascending: true, nullsFirst: false }),
             ]);
             // 一部のテーブルが未作成でも、取得できたデータは反映する

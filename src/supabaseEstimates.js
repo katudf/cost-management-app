@@ -3,6 +3,7 @@
 
 import { supabase } from './lib/supabase';
 import { ITEM_TYPE, ESTIMATE_STATUS, PROJECT_STATUS } from './utils/constants';
+import { getStampSignedUrl } from './utils/stampStorage';
 
 // ============================================================
 // 見積書一覧取得
@@ -85,6 +86,38 @@ export const updateEstimate = async (id, estimateData) => {
 
   if (error) throw error;
   return data;
+};
+
+// ============================================================
+// 見積の承認・差し戻し（SECURITY DEFINER RPC経由）
+// status の pending → approved/returned 遷移と承認証跡（approved_by/approved_at）は
+// DBトリガーで直接UPDATEが拒否されるため、必ずこのRPCを使うこと
+// ============================================================
+// 証跡カラムはDB側（now()）で記録されるため、実行後に再取得して返す。
+// クライアント時刻をローカルstateに持つとDB値とズレ、後続UPDATEがトリガーに拒否されるため
+const fetchApprovalTrail = async (id) => {
+  const { data, error } = await supabase
+    .from('estimates')
+    .select('status, approved_by, approved_at, returned_reason')
+    .eq('id', id)
+    .single();
+  if (error) throw error;
+  return data;
+};
+
+export const approveEstimate = async (id) => {
+  const { error } = await supabase.rpc('approve_estimate', { p_estimate_id: id });
+  if (error) throw error;
+  return fetchApprovalTrail(id);
+};
+
+export const returnEstimate = async (id, reason) => {
+  const { error } = await supabase.rpc('return_estimate', {
+    p_estimate_id: id,
+    p_reason: reason,
+  });
+  if (error) throw error;
+  return fetchApprovalTrail(id);
 };
 
 // ============================================================
@@ -342,5 +375,24 @@ export const fetchSystemSettings = async () => {
 
   // PGRST116 = row not found → 空オブジェクトで返す
   if (error && error.code !== 'PGRST116') throw error;
-  return data || {};
+  const settings = data || {};
+
+  // stamps バケットは private のため、印影はPDF・プレビューから参照できる署名付きURLに変換して返す。
+  // 変換失敗時（画像削除済み等）は null にして印影なしでPDF生成を続行する
+  const [companyUrl, representativeUrl] = await Promise.all([
+    getStampSignedUrl(settings.stamp_company_url).catch((e) => {
+      console.error('社印の署名付きURL取得エラー:', e);
+      return null;
+    }),
+    getStampSignedUrl(settings.stamp_representative_url).catch((e) => {
+      console.error('代表印の署名付きURL取得エラー:', e);
+      return null;
+    }),
+  ]);
+
+  return {
+    ...settings,
+    stamp_company_url: companyUrl,
+    stamp_representative_url: representativeUrl,
+  };
 };

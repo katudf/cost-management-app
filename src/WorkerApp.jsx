@@ -2,6 +2,9 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './lib/supabase';
 import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2, PlusCircle, Clock, X, Wifi, WifiOff, FileText, CalendarDays } from 'lucide-react';
 import WorkerAssignmentView from './components/worker/WorkerAssignmentView';
+import { useAuth } from './hooks/useAuth';
+import LoginScreen from './components/auth/LoginScreen';
+import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
 import { useToast } from './components/Toast';
 import { useConfirm } from './components/ConfirmProvider';
 import { calculateWorkHours, calculateNinku, getSeasonConfig, formatTimeDisplay } from './utils/workTimeUtils';
@@ -22,6 +25,7 @@ const formatDateLocal = (date) => {
 const WorkerApp = () => {
     const { showToast } = useToast();
     const { confirm, prompt } = useConfirm();
+    const { isAuthenticated, isLoading: isAuthLoading, isPasswordRecovery } = useAuth();
     const [workers, setWorkers] = useState([]);
     const [loggedInWorker, setLoggedInWorker] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -70,7 +74,8 @@ const WorkerApp = () => {
                 if (savedProjectId) setSelectedProjectId(savedProjectId);
 
                 const { data: wData } = await fetchWithCache('workers',
-                    () => supabase.from('Workers').select('id, name, resignation_date, worker_type').order('display_order', { ascending: true, nullsFirst: false })
+                    // workerロールはWorkers基表を直接読めない（機微カラム遮蔽）ため安全カラムのみのビューを使う
+                    () => supabase.from('workers_directory').select('id, name, resignation_date, worker_type').order('display_order', { ascending: true, nullsFirst: false })
                 );
                 if (wData) setWorkers(wData.filter(w => w.name && w.name.trim() !== '' && !w.resignation_date && w.worker_type !== WORKER_TYPE.OFFICE));
 
@@ -877,11 +882,23 @@ const WorkerApp = () => {
         }
     };
 
+    if (isAuthLoading) {
+        return <div className="min-h-screen flex items-center justify-center bg-slate-100"><Loader2 className="w-12 h-12 text-blue-500 animate-spin" /></div>;
+    }
+
+    if (isPasswordRecovery) {
+        return <ResetPasswordScreen />;
+    }
+
+    if (!isAuthenticated) {
+        return <LoginScreen title="作業日報システム" subtitle="ログイン" />;
+    }
+
     if (isLoading && !loggedInWorker) {
         return <div className="min-h-screen flex items-center justify-center bg-slate-100"><Loader2 className="w-12 h-12 text-blue-500 animate-spin" /></div>;
     }
 
-    // ========== ログイン画面 ==========
+    // ========== 作業員選択画面 ==========
     if (!loggedInWorker) {
         return (
             <div className="min-h-screen bg-slate-100 flex flex-col items-center p-4">

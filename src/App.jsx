@@ -32,15 +32,15 @@ const App = () => {
     }
 
     if (mode === 'worker') {
-        return <ErrorBoundary><WorkerApp /></ErrorBoundary>;
+        return <ErrorBoundary><AuthProvider><WorkerApp /></AuthProvider></ErrorBoundary>;
     }
 
     if (mode === 'schedule') {
-        return <ErrorBoundary><ScheduleViewApp /></ErrorBoundary>;
+        return <ErrorBoundary><AuthProvider><ScheduleViewApp /></AuthProvider></ErrorBoundary>;
     }
 
     if (mode === 'inventory') {
-        return <ErrorBoundary><InventoryApp /></ErrorBoundary>;
+        return <ErrorBoundary><AuthProvider><InventoryApp /></AuthProvider></ErrorBoundary>;
     }
 
     return <ErrorBoundary><AuthProvider><AdminApp /></AuthProvider></ErrorBoundary>;

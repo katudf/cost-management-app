@@ -44,6 +44,23 @@ serve(async (req) => {
       )
     }
 
+    const adminClient = createClient(supabaseUrl, serviceRoleKey)
+
+    // 呼び出し元がadminロールであることを確認（招待は管理者のみ許可）
+    const { data: callerStaff, error: callerStaffError } = await adminClient
+      .from('office_staff')
+      .select('role')
+      .eq('auth_user_id', callerData.user.id)
+      .maybeSingle()
+
+    if (callerStaffError) throw callerStaffError
+    if (!callerStaff || callerStaff.role !== 'admin') {
+      return new Response(
+        JSON.stringify({ error: "この操作には管理者権限が必要です。" }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      )
+    }
+
     const { staffId, email } = await req.json()
     if (!staffId || !email) {
       return new Response(
@@ -51,8 +68,6 @@ serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       )
     }
-
-    const adminClient = createClient(supabaseUrl, serviceRoleKey)
 
     const { data: staffRow, error: staffFetchError } = await adminClient
       .from('office_staff')

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Building2, Upload, X, Save, CheckCircle2 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { useToast } from '../../../components/Toast';
+import { getStampSignedUrl } from '../../../utils/stampStorage';
 
 const CompanyInfoSettings = ({ isLoading, setIsLoading }) => {
     const { showToast } = useToast();
@@ -19,6 +20,24 @@ const CompanyInfoSettings = ({ isLoading, setIsLoading }) => {
     const [companyLoaded, setCompanyLoaded] = useState(false);
     const [companySaving, setCompanySaving] = useState(false);
     const [companySuccess, setCompanySuccess] = useState(false);
+    // stamps バケットは private のため、プレビュー表示には署名付きURLを使う
+    // （companyInfo にはバケット内パスを保持し、そのままDBへ保存する）
+    const [stampPreviews, setStampPreviews] = useState({ company: '', representative: '' });
+
+    useEffect(() => {
+        let cancelled = false;
+        const resolvePreviews = async () => {
+            const [company, representative] = await Promise.all([
+                getStampSignedUrl(companyInfo.stamp_company_url).catch(() => ''),
+                getStampSignedUrl(companyInfo.stamp_representative_url).catch(() => ''),
+            ]);
+            if (!cancelled) {
+                setStampPreviews({ company: company || '', representative: representative || '' });
+            }
+        };
+        resolvePreviews();
+        return () => { cancelled = true; };
+    }, [companyInfo.stamp_company_url, companyInfo.stamp_representative_url]);
 
     // 自社情報取得
     useEffect(() => {
@@ -88,13 +107,11 @@ const CompanyInfoSettings = ({ isLoading, setIsLoading }) => {
 
             if (uploadError) throw uploadError;
 
-            const { data } = supabase.storage
-                .from('stamps')
-                .getPublicUrl(fileName);
-
+            // stamps バケットは private のため公開URLは使えない。
+            // バケット内パスを保存し、表示・PDF生成時に署名付きURLへ変換する
             setCompanyInfo(prev => ({
                 ...prev,
-                [type === 'company' ? 'stamp_company_url' : 'stamp_representative_url']: data.publicUrl
+                [type === 'company' ? 'stamp_company_url' : 'stamp_representative_url']: fileName
             }));
             showToast(`画像をアップロードしました。「自社情報を保存」ボタンを押して確定してください。`, 'success');
         } catch (error) {
@@ -186,7 +203,9 @@ const CompanyInfoSettings = ({ isLoading, setIsLoading }) => {
                                     <div className="mt-2 border-2 border-dashed border-slate-200 rounded-xl p-4 flex flex-col items-center justify-center bg-slate-50 relative group min-h-[140px]">
                                         {companyInfo.stamp_company_url ? (
                                             <div className="relative w-20 h-20">
-                                                <img src={companyInfo.stamp_company_url} alt="社印" className="w-full h-full object-contain mix-blend-multiply" />
+                                                {stampPreviews.company && (
+                                                    <img src={stampPreviews.company} alt="社印" className="w-full h-full object-contain mix-blend-multiply" />
+                                                )}
                                                 <button 
                                                     onClick={() => setCompanyInfo({ ...companyInfo, stamp_company_url: '' })}
                                                     className="absolute -top-2 -right-2 bg-white rounded-full p-1 text-red-500 shadow-sm border border-red-100 hover:bg-red-50 transition opacity-0 group-hover:opacity-100"
@@ -217,7 +236,9 @@ const CompanyInfoSettings = ({ isLoading, setIsLoading }) => {
                                     <div className="mt-2 border-2 border-dashed border-slate-200 rounded-xl p-4 flex flex-col items-center justify-center bg-slate-50 relative group min-h-[140px]">
                                         {companyInfo.stamp_representative_url ? (
                                             <div className="relative w-16 h-16">
-                                                <img src={companyInfo.stamp_representative_url} alt="代表印" className="w-full h-full object-contain mix-blend-multiply" />
+                                                {stampPreviews.representative && (
+                                                    <img src={stampPreviews.representative} alt="代表印" className="w-full h-full object-contain mix-blend-multiply" />
+                                                )}
                                                 <button 
                                                     onClick={() => setCompanyInfo({ ...companyInfo, stamp_representative_url: '' })}
                                                     className="absolute -top-2 -right-2 bg-white rounded-full p-1 text-red-500 shadow-sm border border-red-100 hover:bg-red-50 transition opacity-0 group-hover:opacity-100"

@@ -4,6 +4,9 @@ import {
     Trash2, ImageIcon, Minus, Upload, MapPin,
 } from 'lucide-react';
 import { useToast } from './components/Toast';
+import { useAuth } from './hooks/useAuth';
+import LoginScreen from './components/auth/LoginScreen';
+import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
 import { useInventory } from './hooks/useInventory';
 import { INVENTORY_CATEGORY_LIST, INVENTORY_CATEGORY_COLOR } from './utils/constants';
 
@@ -33,6 +36,7 @@ const emptyForm = () => ({
 
 const InventoryApp = () => {
     const { showToast } = useToast();
+    const { isAuthenticated, isLoading: isAuthLoading, isPasswordRecovery } = useAuth();
     const {
         items, warehouses, workers, isLoading,
         saveItem, deleteItem, updateQuantity, uploadWarehouseMap,
@@ -197,6 +201,22 @@ const InventoryApp = () => {
     };
 
     // ========== ローディング ==========
+    if (isAuthLoading) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-slate-100">
+                <Loader2 className="w-12 h-12 text-emerald-500 animate-spin" />
+            </div>
+        );
+    }
+
+    if (isPasswordRecovery) {
+        return <ResetPasswordScreen />;
+    }
+
+    if (!isAuthenticated) {
+        return <LoginScreen title="在庫管理システム" subtitle="ログイン" />;
+    }
+
     if (isLoading && !loggedInWorker) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-slate-100">
@@ -205,7 +225,7 @@ const InventoryApp = () => {
         );
     }
 
-    // ========== ログイン画面 ==========
+    // ========== 作業員選択画面 ==========
     if (!loggedInWorker) {
         return (
             <div className="min-h-screen bg-slate-100 flex flex-col items-center p-4">

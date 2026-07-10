@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { LogIn, Mail, Lock, Loader2, AlertCircle, CheckCircle2, ArrowLeft } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 
-const LoginScreen = () => {
+const LoginScreen = ({ title = '工事原価管理システム', subtitle = '管理者ログイン' }) => {
     const { signIn, resetPasswordForEmail } = useAuth();
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -68,8 +68,8 @@ const LoginScreen = () => {
                     <div className="bg-blue-600 text-white rounded-full p-3 mb-3">
                         <LogIn size={24} />
                     </div>
-                    <h1 className="text-lg font-bold text-slate-800">工事原価管理システム</h1>
-                    <p className="text-slate-400 text-sm mt-1">{mode === 'login' ? '管理者ログイン' : 'パスワード再設定'}</p>
+                    <h1 className="text-lg font-bold text-slate-800">{title}</h1>
+                    <p className="text-slate-400 text-sm mt-1">{mode === 'login' ? subtitle : 'パスワード再設定'}</p>
                 </div>
 
                 {mode === 'login' ? (
