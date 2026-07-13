@@ -75,13 +75,14 @@ const EstimateSidebar = ({
     && currentStaff?.id === header.approver_staff_id;
 
   const handleBadgeClick = (value) => {
-    if (isLocked) return;
     if (value === ESTIMATE_STATUS.APPROVED || value === ESTIMATE_STATUS.RETURNED) {
       // 申請中以外からの直接遷移、または指名された承認者以外からの操作は不可
+      // 承認・差し戻しは申請中（ロック状態）で行うアクションのため isLocked では弾かない
       if (header.status !== ESTIMATE_STATUS.PENDING || !isDesignatedApprover) return;
       setApprovalModalMode(value);
       return;
     }
+    if (isLocked) return;
     if (value === ESTIMATE_STATUS.PENDING) {
       setSubmitModalOpen(true);
       return;
@@ -156,7 +157,10 @@ const EstimateSidebar = ({
                 : label;
               // 承認・差し戻しバッジは、申請中かつ指名された承認者本人以外は操作不可
               const isApprovalAction = value === ESTIMATE_STATUS.APPROVED || value === ESTIMATE_STATUS.RETURNED;
-              const badgeDisabled = isLocked || (isApprovalAction && !isActive && !isDesignatedApprover);
+              // 承認・差し戻しバッジは申請中(ロック中)でも指名された承認者本人なら操作可能にする
+              const badgeDisabled = isApprovalAction
+                ? (!isActive && !isDesignatedApprover)
+                : isLocked;
               return (
                 <button
                   key={value}

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useSupabaseData } from './hooks/useSupabaseData';
 import { useProjects } from './hooks/useProjects';
 import { useWorkers } from './hooks/useWorkers';
@@ -50,12 +50,15 @@ const App = () => {
 
     // 見積承認依頼バッジ用: 全見積を保持し、承認者/申請者それぞれの承認待ち件数を算出する
     const [estimatesForBadge, setEstimatesForBadge] = useState([]);
-    useEffect(() => {
-        if (!currentStaff?.id) return;
+    const refreshEstimatesForBadge = useCallback(() => {
         fetchEstimates().then(setEstimatesForBadge).catch(err => {
             console.error('見積バッジ用データの取得に失敗しました:', err);
         });
-    }, [currentStaff?.id, activeTab, estimateEditId]);
+    }, []);
+    useEffect(() => {
+        if (!currentStaff?.id) return;
+        refreshEstimatesForBadge();
+    }, [currentStaff?.id, activeTab, estimateEditId, refreshEstimatesForBadge]);
 
     const pendingApprovalCount = estimatesForBadge.filter(
         e => e.status === ESTIMATE_STATUS.PENDING && e.approver_staff_id === currentStaff?.id
@@ -1054,6 +1057,7 @@ const App = () => {
                                     setEstimateEditId(undefined);
                                     fetchAllData(activeProjectId, setActiveProjectId);
                                 }}
+                                onStatusChanged={refreshEstimatesForBadge}
                             />
                         )
                     )}

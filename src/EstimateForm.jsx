@@ -112,7 +112,7 @@ const MAX_ROWS = 300;
 // ============================================================
 // メインコンポーネント
 // ============================================================
-const EstimateForm = ({ estimateId, onBack, onSaved }) => {
+const EstimateForm = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   const isNew = !estimateId;
   const { showToast } = useToast();
   const { currentStaff } = useAuth();
@@ -327,12 +327,36 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
       setSaving(true);
       await updateEstimate(estimateId, patch);
       setHeader(h => ({ ...h, ...patch }));
+
+      // 「受注」への遷移時はProjectsテーブルへ連携する（handleSave経由の保存を通らない
+      // ステータスバッジ操作のため、ここでも同じ連携処理を行う必要がある）
+      if (patch.status === ESTIMATE_STATUS.ORDERED && originalStatus !== ESTIMATE_STATUS.ORDERED) {
+        try {
+          const linkedProjectId = await syncEstimateToProject({
+            projectId: header.project_id || null,
+            title: header.title,
+            customerId: header.customer_id,
+          });
+          if (linkedProjectId !== header.project_id) {
+            await updateEstimate(estimateId, { project_id: linkedProjectId });
+            setHeader(prev => ({ ...prev, project_id: linkedProjectId }));
+          }
+        } catch (syncErr) {
+          console.error('工事マスタへの連携に失敗しました:', syncErr);
+          showToast(
+            'ステータスは更新しましたが、工事案件への連携に失敗しました。工事一覧から手動で登録してください。',
+            'error'
+          );
+        }
+      }
+
+      onStatusChanged?.();
     } catch (e) {
       setError('ステータスの変更に失敗しました: ' + e.message);
     } finally {
       setSaving(false);
     }
-  }, [estimateId]);
+  }, [estimateId, onStatusChanged, header.project_id, header.title, header.customer_id, originalStatus, showToast]);
 
   // 承認・差し戻し（SECURITY DEFINER RPC経由。証跡カラムはDB側で記録される）
   // 指名された承認者本人のみ実行できる制約はDB側（approve_estimate / return_estimate）で強制。
@@ -342,24 +366,26 @@ const EstimateForm = ({ estimateId, onBack, onSaved }) => {
       setSaving(true);
       const trail = await approveEstimate(estimateId);
       setHeader(h => ({ ...h, ...trail }));
+      onStatusChanged?.();
     } catch (e) {
       setError('承認に失敗しました: ' + e.message);
     } finally {
       setSaving(false);
     }
-  }, [estimateId]);
+  }, [estimateId, onStatusChanged]);
 
   const handleReturn = useCallback(async (reason) => {
     try {
       setSaving(true);
       const trail = await returnEstimate(estimateId, reason);
       setHeader(h => ({ ...h, ...trail }));
+      onStatusChanged?.();
     } catch (e) {
       setError('差し戻しに失敗しました: ' + e.message);
     } finally {
       setSaving(false);
     }
-  }, [estimateId]);
+  }, [estimateId, onStatusChanged]);
 
   // 申請中（承認依頼）: 承認者を指名してステータスを申請中にする
   const handleSubmit = useCallback((approverStaffId) => {
