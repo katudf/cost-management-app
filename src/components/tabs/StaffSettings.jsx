@@ -3,6 +3,7 @@ import { Search, Plus, Edit3, Trash2, Save, X, User, Shield, UserCheck, Loader2,
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../components/Toast';
 import ConfirmModal from '../ConfirmModal';
+import { STAFF_ROLE, STAFF_ROLE_LABEL, STAFF_ROLE_LIST } from '../../utils/constants';
 
 const StaffSettings = () => {
     const { showToast } = useToast();
@@ -10,7 +11,7 @@ const StaffSettings = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
-    const [form, setForm] = useState({ id: null, name: '', role: '', is_approver: false });
+    const [form, setForm] = useState({ id: null, name: '', role: STAFF_ROLE.WORKER, is_approver: false });
     const [confirmDeleteId, setConfirmDeleteId] = useState(null);
     const [inviteTargetId, setInviteTargetId] = useState(null);
     const [inviteEmail, setInviteEmail] = useState('');
@@ -48,7 +49,7 @@ const StaffSettings = () => {
         try {
             const payload = {
                 name: form.name.trim(),
-                role: form.role.trim() || null,
+                role: form.role,
                 is_approver: form.is_approver,
             };
 
@@ -62,7 +63,7 @@ const StaffSettings = () => {
                 showToast('担当者情報を追加しました', 'success');
             }
 
-            setForm({ id: null, name: '', role: '', is_approver: false });
+            setForm({ id: null, name: '', role: STAFF_ROLE.WORKER, is_approver: false });
             fetchStaff();
         } catch (error) {
             console.error('担当者情報保存エラー:', error);
@@ -111,7 +112,7 @@ const StaffSettings = () => {
 
     const filteredStaff = staffList.filter(s =>
         s.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        s.role?.toLowerCase().includes(searchQuery.toLowerCase())
+        (STAFF_ROLE_LABEL[s.role] || s.role || '').toLowerCase().includes(searchQuery.toLowerCase())
     );
 
     return (
@@ -145,16 +146,18 @@ const StaffSettings = () => {
                             </div>
                         </div>
                         <div>
-                            <label className="block text-xs font-bold text-slate-500 mb-1">役職・権限メモ (任意)</label>
+                            <label className="block text-xs font-bold text-slate-500 mb-1">権限区分 <span className="text-red-500">*</span></label>
                             <div className="relative">
-                                <Shield className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
-                                <input
-                                    type="text"
+                                <Shield className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 pointer-events-none" />
+                                <select
                                     value={form.role}
                                     onChange={(e) => setForm({ ...form, role: e.target.value })}
-                                    className="w-full pl-9 pr-4 py-2.5 rounded-lg border-2 border-slate-200 font-bold text-slate-700 outline-none focus:border-blue-500 transition"
-                                    placeholder="例：見積作成者 / 承認者"
-                                />
+                                    className="w-full pl-9 pr-4 py-2.5 rounded-lg border-2 border-slate-200 font-bold text-slate-700 outline-none focus:border-blue-500 transition appearance-none bg-white"
+                                >
+                                    {STAFF_ROLE_LIST.map(role => (
+                                        <option key={role} value={role}>{STAFF_ROLE_LABEL[role]}</option>
+                                    ))}
+                                </select>
                             </div>
                         </div>
                     </div>
@@ -170,7 +173,7 @@ const StaffSettings = () => {
                     <div className="flex justify-end gap-3 mt-5">
                         {form.id && (
                             <button
-                                onClick={() => setForm({ id: null, name: '', role: '', is_approver: false })}
+                                onClick={() => setForm({ id: null, name: '', role: STAFF_ROLE.WORKER, is_approver: false })}
                                 disabled={isSaving}
                                 className="px-5 py-2.5 rounded-lg font-bold text-sm text-slate-500 bg-white border border-slate-200 hover:bg-slate-100 transition flex items-center gap-1 disabled:opacity-50"
                             >
@@ -205,7 +208,7 @@ const StaffSettings = () => {
                         <thead>
                             <tr className="bg-slate-100 text-slate-600 text-xs uppercase tracking-wider">
                                 <th className="p-4 font-bold border-b border-slate-200 w-1/4">担当者名</th>
-                                <th className="p-4 font-bold border-b border-slate-200">役職・権限メモ</th>
+                                <th className="p-4 font-bold border-b border-slate-200">権限区分</th>
                                 <th className="p-4 font-bold border-b border-slate-200 w-28 text-center">承認者</th>
                                 <th className="p-4 font-bold border-b border-slate-200 w-64">ログイン</th>
                                 <th className="p-4 font-bold border-b border-slate-200 text-center w-32">操作</th>
@@ -229,7 +232,7 @@ const StaffSettings = () => {
                                 filteredStaff.map(staff => (
                                     <tr key={staff.id} className={`hover:bg-slate-50 transition ${form.id === staff.id ? 'bg-blue-50' : ''}`}>
                                         <td className="p-4 text-sm text-slate-800">{staff.name}</td>
-                                        <td className="p-4 text-sm text-slate-500">{staff.role || '-'}</td>
+                                        <td className="p-4 text-sm text-slate-500">{STAFF_ROLE_LABEL[staff.role] || staff.role || '-'}</td>
                                         <td className="p-4 text-center">
                                             {staff.is_approver ? (
                                                 <span className="inline-flex items-center gap-1 text-blue-600 text-xs font-bold bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-full">

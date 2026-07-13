@@ -76,6 +76,26 @@ export const ESTIMATE_STATUS_LIST = [
     ESTIMATE_STATUS.LOST,
 ];
 
+// === 担当者ロール（office_staff.role、DBのCHECK制約と一致させること） ===
+export const STAFF_ROLE = {
+    ADMIN: 'admin',
+    OFFICE: 'office',
+    WORKER: 'worker',
+    VIEWER: 'viewer',
+};
+export const STAFF_ROLE_LABEL = {
+    [STAFF_ROLE.ADMIN]:  '管理者',
+    [STAFF_ROLE.OFFICE]: '事務・営業',
+    [STAFF_ROLE.WORKER]: '作業員',
+    [STAFF_ROLE.VIEWER]: '閲覧者',
+};
+export const STAFF_ROLE_LIST = [
+    STAFF_ROLE.ADMIN,
+    STAFF_ROLE.OFFICE,
+    STAFF_ROLE.WORKER,
+    STAFF_ROLE.VIEWER,
+];
+
 // === 見積アイテム種別 ===
 export const ITEM_TYPE = {
     CATEGORY: 'category',

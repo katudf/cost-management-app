@@ -410,6 +410,7 @@ const EstimateList = ({ onEdit }) => {
                     <th className="px-4 py-3 font-semibold whitespace-nowrap">見積No</th>
                     <th className="px-4 py-3 font-semibold">工事名</th>
                     <th className="px-4 py-3 font-semibold whitespace-nowrap">顧客</th>
+                    <th className="px-4 py-3 font-semibold whitespace-nowrap">作成者</th>
                     <th className="px-4 py-3 font-semibold whitespace-nowrap">見積日</th>
                     <th className="px-4 py-3 font-semibold text-right whitespace-nowrap">税込合計</th>
                     <th className="px-4 py-3 font-semibold whitespace-nowrap">ステータス</th>
@@ -500,6 +501,9 @@ const EstimateRow = ({ estimate, onEdit, onDuplicate, onDelete, onDownload }) =>
       </td>
       <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
         {estimate.customer?.name || '-'}
+      </td>
+      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
+        {estimate.staff?.name || '-'}
       </td>
       <td className="px-4 py-3 text-slate-500 whitespace-nowrap">
         {estimate.issue_date

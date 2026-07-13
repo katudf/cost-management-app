@@ -218,6 +218,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
             customer_honorific: '御中',
             notes: '※別紙項目に無い塗装工事は別途追加見積り申し上げます。',
             valid_until: toDateStr(addDays(h.issue_date, validDays)),
+            staff_id: currentStaff?.id ? String(currentStaff.id) : h.staff_id,
           }));
           setOriginalStatus(ESTIMATE_STATUS.DRAFT);
           setItems([
@@ -607,8 +608,12 @@ const EstimateForm = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   // 編集ロック判定
   // ============================================================
   const isLocked = !isNew && originalStatus !== ESTIMATE_STATUS.DRAFT;
+  // 担当者(staff_id)未設定の見積書は作成者チェック対象外とし、誰でも編集可能とする
+  const isCreator = !header.staff_id || String(header.staff_id) === String(currentStaff?.id);
+  const creatorStaff = officeStaff.find(s => String(s.id) === String(header.staff_id)) || null;
 
   const handleUnlock = async () => {
+    if (!isCreator) return;
     try {
       setSaving(true);
       await updateEstimate(estimateId, { status: ESTIMATE_STATUS.DRAFT });
@@ -891,6 +896,11 @@ const EstimateForm = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
           <FileText size={22} className="text-blue-600" />
           {isNew ? '見積書 新規作成' : '見積書 編集'}
         </h2>
+        {!isNew && creatorStaff && (
+          <span className="text-xs text-slate-500">
+            作成者: <span className="font-bold text-slate-600">{creatorStaff.name}</span>
+          </span>
+        )}
         {isLocked && (
           <span className="flex items-center gap-1 px-3 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-bold">
             <Lock size={12} /> 編集ロック中
@@ -907,8 +917,8 @@ const EstimateForm = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
         </button>
       </div>
 
-      {/* 編集ロックバナー */}
-      {isLocked && (
+      {/* 編集ロックバナー（作成者のみ表示） */}
+      {isLocked && isCreator && (
         <div className="bg-amber-50 border border-amber-200 text-amber-700 rounded-lg px-4 py-3 mb-4 text-sm flex items-center gap-2">
           <Lock size={16} />
           この見積書は「{ESTIMATE_STATUS_LABEL[originalStatus] || originalStatus}」のため編集できません。編集するには「下書きに戻す」を実行してください。

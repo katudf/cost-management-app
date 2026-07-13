@@ -32,7 +32,7 @@ const STATUS_BADGES = [
   },
   {
     value: ESTIMATE_STATUS.APPROVED,
-    label: ESTIMATE_STATUS_LABEL[ESTIMATE_STATUS.APPROVED],
+    label: '承認', // サイドバーのボタン表示のみ短縮（一覧・フィルタ等の「承認済」表記はESTIMATE_STATUS_LABELのまま維持）
     base: 'border-green-300 text-green-700',
     active: 'bg-green-600 text-white border-green-600',
     hover: 'hover:bg-green-50',
@@ -73,6 +73,8 @@ const EstimateSidebar = ({
   const isDesignatedApprover = header.status === ESTIMATE_STATUS.PENDING
     && !!header.approver_staff_id
     && currentStaff?.id === header.approver_staff_id;
+  // 担当者(staff_id)未設定の見積書は誰でも編集可能。設定済みなら本人のみ「下書きに戻す」が可能。
+  const isCreator = !header.staff_id || String(header.staff_id) === String(currentStaff?.id);
 
   const handleBadgeClick = (value) => {
     if (value === ESTIMATE_STATUS.APPROVED || value === ESTIMATE_STATUS.RETURNED) {
@@ -247,7 +249,7 @@ const EstimateSidebar = ({
 
         {/* 保存ボタン */}
         <div className="space-y-2 pt-1">
-          {isLocked && (
+          {isLocked && isCreator && (
             <button
               onClick={onUnlock}
               disabled={saving}
