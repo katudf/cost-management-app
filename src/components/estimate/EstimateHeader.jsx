@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { ChevronDown, ChevronUp, ClipboardList } from 'lucide-react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { ChevronDown, ChevronUp, ClipboardList, Search, Plus, X, Check } from 'lucide-react';
 
 // ============================================================
 // 備考テンプレート一覧 ここにテンプレート文を追加
@@ -22,11 +22,176 @@ const Label = ({ children, required }) => (
   </label>
 );
 
+// ============================================================
+// 顧客選択コンボボックス（名称フィルター + 新規顧客追加）
+// ============================================================
+const CustomerCombobox = ({ customers, value, onChange, onCreateCustomer, disabled }) => {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const containerRef = useRef(null);
+  const inputRef = useRef(null);
+
+  const selected = customers.find(c => String(c.id) === String(value));
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setOpen(false);
+        setCreating(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return customers;
+    return customers.filter(c => c.name.toLowerCase().includes(q));
+  }, [customers, query]);
+
+  const openDropdown = () => {
+    if (disabled) return;
+    setOpen(true);
+    setQuery('');
+    setCreating(false);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  const handleSelect = (c) => {
+    onChange(String(c.id));
+    setOpen(false);
+    setQuery('');
+  };
+
+  const startCreating = (prefillName) => {
+    setCreating(true);
+    setNewName(prefillName || '');
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  const handleCreateSubmit = async () => {
+    const trimmed = newName.trim();
+    if (!trimmed || saving) return;
+    setSaving(true);
+    try {
+      const created = await onCreateCustomer(trimmed);
+      if (created) {
+        setOpen(false);
+        setCreating(false);
+        setQuery('');
+        setNewName('');
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <button
+        type="button"
+        onClick={() => (open ? setOpen(false) : openDropdown())}
+        disabled={disabled}
+        className="w-full flex items-center justify-between border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white disabled:bg-slate-50 disabled:text-slate-400 text-left"
+      >
+        <span className={selected ? 'text-slate-800 truncate' : 'text-slate-400 truncate'}>
+          {selected ? selected.name : '-- 選択してください --'}
+        </span>
+        <ChevronDown size={15} className="text-slate-400 shrink-0 ml-2" />
+      </button>
+
+      {open && !disabled && (
+        <div className="absolute z-20 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden">
+          {!creating ? (
+            <>
+              <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-slate-100">
+                <Search size={14} className="text-slate-400 shrink-0" />
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={query}
+                  onChange={e => setQuery(e.target.value)}
+                  placeholder="顧客名で絞り込み"
+                  className="w-full text-sm focus:outline-none"
+                />
+              </div>
+              <ul className="max-h-52 overflow-y-auto py-1">
+                {filtered.length === 0 && (
+                  <li className="px-3 py-2 text-xs text-slate-400">該当する顧客がありません</li>
+                )}
+                {filtered.map(c => (
+                  <li key={c.id}>
+                    <button
+                      type="button"
+                      onClick={() => handleSelect(c)}
+                      className="w-full flex items-center justify-between px-3 py-1.5 text-sm text-left hover:bg-blue-50 transition"
+                    >
+                      <span className="truncate">{c.name}</span>
+                      {String(c.id) === String(value) && <Check size={14} className="text-blue-600 shrink-0 ml-2" />}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <button
+                type="button"
+                onClick={() => startCreating(query)}
+                className="w-full flex items-center gap-1.5 px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 border-t border-slate-100 transition"
+              >
+                <Plus size={14} />
+                新規顧客を追加
+              </button>
+            </>
+          ) : (
+            <div className="p-2.5 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-500">新規顧客名</span>
+                <button
+                  type="button"
+                  onClick={() => setCreating(false)}
+                  aria-label="新規顧客の追加をキャンセル"
+                  title="新規顧客の追加をキャンセル"
+                  className="p-0.5 rounded hover:bg-slate-100 text-slate-400"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+              <input
+                ref={inputRef}
+                type="text"
+                value={newName}
+                onChange={e => setNewName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleCreateSubmit(); } }}
+                placeholder="例: 株式会社〇〇"
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+              <button
+                type="button"
+                onClick={handleCreateSubmit}
+                disabled={!newName.trim() || saving}
+                className="w-full flex items-center justify-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white text-sm font-semibold rounded-lg px-3 py-1.5 transition"
+              >
+                <Plus size={14} />
+                {saving ? '登録中...' : 'この名前で登録して選択'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const EstimateHeader = ({
   isNew,
   header,
   onChange,
   customers,
+  onCreateCustomer,
   officeStaff,
   estimateNumber,
   numberError,
@@ -133,15 +298,13 @@ const EstimateHeader = ({
               {/* 顧客 */}
               <div>
                 <Label required>顧客</Label>
-                <select
+                <CustomerCombobox
+                  customers={customers}
                   value={header.customer_id}
-                  onChange={e => onChange('customer_id', e.target.value)}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                  onChange={v => onChange('customer_id', v)}
+                  onCreateCustomer={onCreateCustomer}
                   disabled={disabled}
-                >
-                  <option value="">-- 選択してください --</option>
-                  {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                />
               </div>
 
               {/* 宛名（御中 / 様 / 殿 / なし） */}

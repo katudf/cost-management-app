@@ -21,9 +21,11 @@ import {
   saveEstimateItems,
   syncEstimateToProject,
   fetchCustomers,
+  createCustomer,
   fetchWorkers,
   getNextEstimateSeq,
   calcTotals,
+  formatCurrency,
   checkDuplicateNumber,
   findAvailableBranchNumber,
   fetchOfficeStaff,
@@ -167,6 +169,7 @@ const EstimateForm = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
 
   // プレビュー state
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [itemTableFullscreen, setItemTableFullscreen] = useState(false);
   const [previewSnapshot, setPreviewSnapshot] = useState(null); // プレビュー用データスナップショット
   const [previewKey, setPreviewKey] = useState(0);             // 変更時にBlobProviderを強制再生成
   const [previewStale, setPreviewStale] = useState(false);     // プレビュー表示後に入力が変更されたか
@@ -321,6 +324,22 @@ const EstimateForm = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   const handleHeaderChange = useCallback((field, value) => {
     setHeader(h => ({ ...h, [field]: value }));
   }, []);
+
+  // 顧客ドロップダウンからの新規顧客登録（登録後は自動選択する）
+  const handleCreateCustomer = useCallback(async (name) => {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return null;
+    try {
+      const created = await createCustomer(trimmed);
+      setCustomers(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name, 'ja')));
+      setHeader(h => ({ ...h, customer_id: created.id }));
+      showToast('新規顧客を登録しました', 'success');
+      return created;
+    } catch (e) {
+      showToast('顧客の登録に失敗しました: ' + e.message, 'error');
+      return null;
+    }
+  }, [showToast]);
 
   // ステータス変更系の操作は、画面遷移で失われないようその場でSupabaseへ反映する
   const persistStatus = useCallback(async (patch) => {
@@ -575,6 +594,14 @@ const EstimateForm = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [previewOpen]);
+
+  // Escape キーで見積内訳明細の全画面表示を閉じる
+  useEffect(() => {
+    if (!itemTableFullscreen) return;
+    const onKeyDown = (e) => { if (e.key === 'Escape') setItemTableFullscreen(false); };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [itemTableFullscreen]);
 
   const updateItem = useCallback((index, field, value) => {
     setItems(prev => {
@@ -941,26 +968,31 @@ const EstimateForm = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
             header={header}
             onChange={handleHeaderChange}
             customers={customers}
+            onCreateCustomer={handleCreateCustomer}
             officeStaff={officeStaff}
             estimateNumber={estimateNumber}
             numberError={numberError}
             onReissueNumber={handleReissueNumber}
             disabled={isLocked}
           />
-          <EstimateItemTable
-            items={items}
-            showFixedFees={header.show_fixed_fees}
-            showSubtotals={header.show_subtotals}
-            categorySubtotals={categorySubtotals}
-            onUpdateItem={updateItem}
-            onAddCategory={addCategory}
-            onAddItem={addItem}
-            onAddComment={addComment}
-            onRemoveRow={removeRow}
-            onSetItems={setAllItems}
-            onImportItems={() => setShowImportModal(true)}
-            disabled={isLocked}
-          />
+          {!itemTableFullscreen && (
+            <EstimateItemTable
+              items={items}
+              showFixedFees={header.show_fixed_fees}
+              showSubtotals={header.show_subtotals}
+              categorySubtotals={categorySubtotals}
+              onUpdateItem={updateItem}
+              onAddCategory={addCategory}
+              onAddItem={addItem}
+              onAddComment={addComment}
+              onRemoveRow={removeRow}
+              onSetItems={setAllItems}
+              onImportItems={() => setShowImportModal(true)}
+              disabled={isLocked}
+              isFullscreen={false}
+              onToggleFullscreen={() => setItemTableFullscreen(true)}
+            />
+          )}
           {items.length > MAX_ROWS && (
             <p className="text-red-500 text-xs font-bold">⚠ 行数が上限（{MAX_ROWS}行）を超えています</p>
           )}
@@ -987,6 +1019,53 @@ const EstimateForm = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
           />
         </div>
       </div>
+
+      {/* ===== 見積内訳明細 全画面オーバーレイ ===== */}
+      {itemTableFullscreen && (
+        <div className="fixed inset-0 z-[9999] flex flex-col bg-slate-100">
+          <div className="bg-white border-b border-slate-200 px-4 py-2.5 flex items-center gap-3 shrink-0 flex-wrap">
+            <FileText size={17} className="text-blue-600 shrink-0" />
+            <div className="flex flex-col gap-1">
+              <span className="font-bold text-slate-700 text-sm">見積内訳明細（全画面表示）</span>
+              <span className="text-xs text-slate-600">{header.title || '（工事名未入力）'}</span>
+            </div>
+            <div className="flex items-center gap-4 ml-auto mr-2">
+              <span className="text-sm text-slate-500">
+                工事費 <span className="font-mono font-bold text-slate-700">¥{formatCurrency(totals.subtotal)}-</span>
+              </span>
+              <span className="text-sm text-slate-500">
+                税込 <span className="font-mono font-bold text-blue-600">¥{formatCurrency(totals.total)}-</span>
+              </span>
+            </div>
+            <button
+              onClick={() => setItemTableFullscreen(false)}
+              title="全画面表示を閉じる（Esc）"
+              aria-label="全画面表示を閉じる"
+              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 transition"
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <div className="flex-1 overflow-hidden p-4">
+            <EstimateItemTable
+              items={items}
+              showFixedFees={header.show_fixed_fees}
+              showSubtotals={header.show_subtotals}
+              categorySubtotals={categorySubtotals}
+              onUpdateItem={updateItem}
+              onAddCategory={addCategory}
+              onAddItem={addItem}
+              onAddComment={addComment}
+              onRemoveRow={removeRow}
+              onSetItems={setAllItems}
+              onImportItems={() => setShowImportModal(true)}
+              disabled={isLocked}
+              isFullscreen={true}
+              onToggleFullscreen={() => setItemTableFullscreen(false)}
+            />
+          </div>
+        </div>
+      )}
 
       {/* ===== PDFプレビューオーバーレイ ===== */}
       {previewOpen && (

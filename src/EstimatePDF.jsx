@@ -667,6 +667,20 @@ const DetailPage = ({ estimate, totals, settings }) => {
           );
         }
 
+        if (item.item_type === ITEM_TYPE.COMMENT) {
+          return (
+            <View key={idx} style={[S.tableRow, pageBottomBorderStyle]} wrap={false} break={shouldBreak}>
+              <Text style={S.cellNo}></Text>
+              <Text style={[S.cellName, { flex: 5 }]}>{wrapText(item.name)}</Text>
+              <Text style={S.cellQty}></Text>
+              <Text style={S.cellUnit}></Text>
+              <Text style={S.cellPrice}></Text>
+              <Text style={S.cellAmount}></Text>
+              <Text style={S.cellNote}></Text>
+            </View>
+          );
+        }
+
         if (item.item_type === ITEM_TYPE.ITEM) {
           itemNo++;
           return (

@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { Plus, Trash2, GripVertical, MessageSquare, Copy, FileDown } from 'lucide-react';
+import { Plus, Trash2, GripVertical, MessageSquare, Copy, FileDown, Maximize2, Minimize2 } from 'lucide-react';
 import { ITEM_TYPE } from '../../utils/constants';
 import { formatCurrency } from '../../supabaseEstimates';
 
@@ -10,6 +10,27 @@ const ITEM_COL_KEYS = ['name', 'spec', 'quantity', 'unit', 'unit_price', 'note']
 
 const isNavigable = (type) =>
   type === ITEM_TYPE.ITEM || type === ITEM_TYPE.CATEGORY || type === ITEM_TYPE.COMMENT;
+
+// 数値入力欄をカンマ区切り表示にするためのフォーマット/パース
+// 負数は "▲" 表記にする（例: -1234 → ▲1,234）
+const formatNumberInput = (value) => {
+  if (value === null || value === undefined || value === '') return '';
+  const num = Number(value);
+  if (isNaN(num)) return '';
+  const formatted = Math.abs(num).toLocaleString('ja-JP', { maximumFractionDigits: 10 });
+  return num < 0 ? `▲${formatted}` : formatted;
+};
+
+// 全角数字・カンマを除去して数値文字列に戻す（末尾の小数点は入力途中として許容）
+// "▲" または "-"/"－" を負符号として許可する
+const parseNumberInput = (raw) => {
+  const isNegative = /^\s*[▲－-]/.test(raw);
+  const halfWidth = raw.replace(/[０-９．]/g, (c) =>
+    c === '．' ? '.' : String.fromCharCode(c.charCodeAt(0) - 0xfee0)
+  );
+  const digits = halfWidth.replace(/[,▲－-]/g, '');
+  return isNegative && digits !== '' ? `-${digits}` : digits;
+};
 
 const getColCount = (itemType) => {
   if (itemType === ITEM_TYPE.CATEGORY) return 2;
@@ -42,6 +63,12 @@ const getCategoryGroupIndices = (items, catIdx) => {
     result.push(i);
   }
   return result;
+};
+
+/** catIdx が属する工種グループの最終行インデックスを返す（グループ末尾への追加位置の基準） */
+const getCategoryGroupTailIndex = (items, catIdx) => {
+  const indices = getCategoryGroupIndices(items, catIdx);
+  return indices[indices.length - 1];
 };
 
 /** srcIndices の行群を dropBeforeIdx の直前に移動した新配列を返す */
@@ -102,18 +129,34 @@ const doCopy = (items, selectedIndices) => {
   return result.map((r, i) => ({ ...r, sort_order: i }));
 };
 
+/** srcIdx の行を複製し、直下に挿入した新配列を返す */
+const duplicateRow = (items, srcIdx) => {
+  const copy = {
+    ...items[srcIdx],
+    id: undefined,
+    _tempId: `copy_${Date.now()}_${Math.random()}_${srcIdx}`,
+  };
+  const result = [
+    ...items.slice(0, srcIdx + 1),
+    copy,
+    ...items.slice(srcIdx + 1),
+  ];
+  return result.map((r, i) => ({ ...r, sort_order: i }));
+};
+
 // ============================================================
 // 明細行コンポーネント
 // 列構成（10列）:
 //  0: checkbox  1: grip  2: 名称  3: 仕様  4: 数量  5: 単位  6: 単価  7: 金額  8: 摘要  9: 削除
 // ============================================================
 const ItemRow = ({
-  item, index, onChange, onAddItem, onRemove, disabled,
+  item, index, onChange, onAddItem, onRemove, onDuplicate, disabled,
   selected, onToggleSelect,
   isDragSource, dropIndicator,
   categorySubtotal,
 }) => {
   const [showUnitSug, setShowUnitSug] = useState(false);
+  const [unitHighlightIdx, setUnitHighlightIdx] = useState(-1);
 
   const trStyle = {};
   if (dropIndicator === 'above') trStyle.borderTop    = '3px solid #3b82f6';
@@ -170,16 +213,6 @@ const ItemRow = ({
               placeholder="工種名（例: 校舎・体育館）"
               disabled={disabled}
             />
-            {!disabled && (
-              <button
-                onClick={onAddItem}
-                title="この工種に細別追加"
-                aria-label="この工種に細別追加"
-                className="text-blue-500 hover:text-blue-700 ml-1"
-              >
-                <Plus size={14} />
-              </button>
-            )}
           </div>
         </td>
         {/* 工種小計（金額列） */}
@@ -247,10 +280,10 @@ const ItemRow = ({
         <td className="px-2 py-1.5"></td>
         <td className="px-2 py-1.5">
           <input
-            type="number"
-            min="0"
-            value={item.amount || ''}
-            onChange={e => onChange('amount', e.target.value)}
+            type="text"
+            inputMode="numeric"
+            value={formatNumberInput(item.amount)}
+            onChange={e => onChange('amount', parseNumberInput(e.target.value))}
             className="w-full border border-slate-300 rounded px-1 py-1 text-xs text-right bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
             placeholder="0"
             disabled={disabled}
@@ -299,14 +332,14 @@ const ItemRow = ({
       </td>
       <td className="px-2 py-1.5">
         <input
-          type="number"
-          min="0"
-          value={item.quantity || ''}
-          onChange={e => onChange('quantity', e.target.value)}
+          type="text"
+          inputMode="decimal"
+          value={formatNumberInput(item.quantity)}
+          onChange={e => onChange('quantity', parseNumberInput(e.target.value))}
           data-row-idx={index}
           data-col-idx={2}
           className="w-full border border-slate-200 rounded px-1 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-400"
-          placeholder="0"
+          placeholder="数量"
           disabled={disabled}
         />
       </td>
@@ -315,21 +348,42 @@ const ItemRow = ({
           type="text"
           value={item.unit || ''}
           onChange={e => onChange('unit', e.target.value)}
-          onFocus={() => !disabled && setShowUnitSug(true)}
+          onFocus={() => { if (!disabled) { setShowUnitSug(true); setUnitHighlightIdx(-1); } }}
           onBlur={() => setTimeout(() => setShowUnitSug(false), 150)}
+          onKeyDown={e => {
+            if (!showUnitSug) return;
+            if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              e.stopPropagation();
+              setUnitHighlightIdx(i => (i + 1) % UNIT_SUGGESTIONS.length);
+            } else if (e.key === 'ArrowUp') {
+              e.preventDefault();
+              e.stopPropagation();
+              setUnitHighlightIdx(i => (i <= 0 ? UNIT_SUGGESTIONS.length - 1 : i - 1));
+            } else if (e.key === 'Enter' && unitHighlightIdx >= 0) {
+              e.preventDefault();
+              e.stopPropagation();
+              onChange('unit', UNIT_SUGGESTIONS[unitHighlightIdx]);
+              setShowUnitSug(false);
+              setUnitHighlightIdx(-1);
+            } else if (e.key === 'Escape') {
+              setShowUnitSug(false);
+              setUnitHighlightIdx(-1);
+            }
+          }}
           data-row-idx={index}
           data-col-idx={3}
-          className="w-full border border-slate-200 rounded px-1 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
+          className="w-full border border-slate-200 rounded px-1 py-1 text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-400"
           placeholder="単位"
           disabled={disabled}
         />
         {showUnitSug && !disabled && (
           <div className="absolute top-full left-0 z-10 bg-white border border-slate-200 rounded shadow-lg py-1 min-w-max">
-            {UNIT_SUGGESTIONS.map(u => (
+            {UNIT_SUGGESTIONS.map((u, i) => (
               <button
                 key={u}
                 onMouseDown={() => onChange('unit', u)}
-                className="block w-full text-left px-3 py-1 text-xs hover:bg-blue-50"
+                className={`block w-full text-left px-3 py-1 text-xs hover:bg-blue-50 ${i === unitHighlightIdx ? 'bg-blue-50' : ''}`}
               >
                 {u}
               </button>
@@ -339,24 +393,24 @@ const ItemRow = ({
       </td>
       <td className="px-2 py-1.5">
         <input
-          type="number"
-          min="0"
-          value={item.unit_price || ''}
-          onChange={e => onChange('unit_price', e.target.value)}
+          type="text"
+          inputMode="decimal"
+          value={formatNumberInput(item.unit_price)}
+          onChange={e => onChange('unit_price', parseNumberInput(e.target.value))}
           data-row-idx={index}
           data-col-idx={4}
           className="w-full border border-slate-200 rounded px-1 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-400"
-          placeholder="0"
+          placeholder="単価"
           disabled={disabled}
         />
       </td>
       <td className="px-2 py-1.5">
         {/* 金額列: data-col-idx なし → Tab スキップ */}
         <input
-          type="number"
-          min="0"
-          value={item.amount || ''}
-          onChange={e => onChange('amount', e.target.value)}
+          type="text"
+          inputMode="numeric"
+          value={formatNumberInput(item.amount)}
+          onChange={e => onChange('amount', parseNumberInput(e.target.value))}
           className="w-full border border-slate-200 rounded px-1 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-400 bg-slate-50"
           placeholder="自動計算"
           disabled={disabled}
@@ -376,9 +430,14 @@ const ItemRow = ({
       </td>
       <td className="px-2 py-1.5">
         {!disabled && (
-          <button onClick={onRemove} aria-label="行を削除" title="行を削除" className="text-red-400 hover:text-red-600">
-            <Trash2 size={14} />
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button onClick={onDuplicate} aria-label="行を複写" title="行を複写" className="text-blue-400 hover:text-blue-600">
+              <Copy size={14} />
+            </button>
+            <button onClick={onRemove} aria-label="行を削除" title="行を削除" className="text-red-400 hover:text-red-600">
+              <Trash2 size={14} />
+            </button>
+          </div>
         )}
       </td>
     </tr>
@@ -401,6 +460,8 @@ const EstimateItemTable = ({
   onSetItems,
   onImportItems,
   disabled,
+  isFullscreen,
+  onToggleFullscreen,
 }) => {
   const tableRef = useRef(null);
   const pendingFocusRef = useRef(null);
@@ -439,7 +500,9 @@ const EstimateItemTable = ({
 
   // ── キーボードナビゲーション ──
   const handleKeyDown = useCallback((e) => {
-    if (e.key !== 'Tab' || e.shiftKey || disabled) return;
+    if (disabled) return;
+    if (e.key !== 'Tab' && e.key !== 'Enter') return;
+    if (e.key === 'Tab' && e.shiftKey) return;
     const rowIdxStr = e.target.dataset?.rowIdx;
     const colIdxStr = e.target.dataset?.colIdx;
     if (rowIdxStr === undefined || colIdxStr === undefined) return;
@@ -579,33 +642,46 @@ const EstimateItemTable = ({
   const hasSelection = selectedIndices.size > 0;
 
   return (
-    <div className="bg-white border border-slate-200 rounded-xl p-4">
+    <div className={`bg-white border border-slate-200 rounded-xl p-4 ${isFullscreen ? 'h-full flex flex-col' : ''}`}>
       {/* ヘッダー */}
-      <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-100">
+      <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-100 shrink-0">
         <h3 className="font-bold text-slate-700 text-sm">
           見積内訳明細（{items.length}行）
         </h3>
-        {hasSelection && !disabled && (
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-400">{selectedIndices.size}行選択</span>
+        <div className="flex items-center gap-2">
+          {hasSelection && !disabled && (
+            <>
+              <span className="text-xs text-slate-400">{selectedIndices.size}行選択</span>
+              <button
+                onClick={handleCopy}
+                title="選択行をコピーして下に挿入"
+                aria-label="選択行をコピー"
+                className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 border border-blue-200 hover:border-blue-400 px-2 py-1 rounded-lg transition"
+              >
+                <Copy size={12} />コピー
+              </button>
+              <button
+                onClick={handleDeleteSelected}
+                title="選択行を削除"
+                aria-label="選択行を削除"
+                className="flex items-center gap-1 text-xs text-red-500 hover:text-red-700 border border-red-200 hover:border-red-400 px-2 py-1 rounded-lg transition"
+              >
+                <Trash2 size={12} />削除
+              </button>
+            </>
+          )}
+          {onToggleFullscreen && (
             <button
-              onClick={handleCopy}
-              title="選択行をコピーして下に挿入"
-              aria-label="選択行をコピー"
-              className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 border border-blue-200 hover:border-blue-400 px-2 py-1 rounded-lg transition"
+              onClick={onToggleFullscreen}
+              title={isFullscreen ? '全画面表示を終了' : '全画面で編集'}
+              aria-label={isFullscreen ? '全画面表示を終了' : '全画面で編集'}
+              className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 border border-slate-200 hover:border-slate-400 px-2 py-1 rounded-lg transition"
             >
-              <Copy size={12} />コピー
+              {isFullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+              {isFullscreen ? '閉じる' : '全画面表示'}
             </button>
-            <button
-              onClick={handleDeleteSelected}
-              title="選択行を削除"
-              aria-label="選択行を削除"
-              className="flex items-center gap-1 text-xs text-red-500 hover:text-red-700 border border-red-200 hover:border-red-400 px-2 py-1 rounded-lg transition"
-            >
-              <Trash2 size={12} />削除
-            </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* テーブル本体 */}
@@ -617,26 +693,21 @@ const EstimateItemTable = ({
         onDragLeave={handleTableDragLeave}
         onDrop={handleTableDrop}
         onDragEnd={handleTableDragEnd}
-        className="overflow-x-auto"
+        className={`overflow-x-auto ${isFullscreen ? 'flex-1 overflow-y-auto' : ''}`}
       >
-        <table className="w-full text-xs border-collapse">
-          <thead>
-            <tr className="bg-slate-100 text-slate-500">
-              {/* checkbox */}
-              <th className="px-1 py-2 w-5"></th>
-              {/* grip */}
-              <th className="px-2 py-2 w-6"></th>
-              <th className="px-2 py-2 text-left min-w-32">名称</th>
-              <th className="px-2 py-2 text-left min-w-40">仕様</th>
-              <th className="px-2 py-2 text-right w-16">数量</th>
-              <th className="px-2 py-2 text-left w-14">単位</th>
-              <th className="px-2 py-2 text-right w-20">単価</th>
-              <th className="px-2 py-2 text-right w-24">金額</th>
-              <th className="px-2 py-2 text-left min-w-20">摘要</th>
-              {/* delete */}
-              <th className="px-2 py-2 w-6"></th>
-            </tr>
-          </thead>
+        <table className="w-full text-xs border-collapse table-fixed">
+          <colgroup>
+            <col className="w-5" />
+            <col className="w-6" />
+            <col style={{ width: '21%' }} />
+            <col style={{ width: '23%' }} />
+            <col style={{ width: '10%' }} />
+            <col style={{ width: '4%' }} />
+            <col style={{ width: '10%' }} />
+            <col style={{ width: '11%' }} />
+            <col style={{ width: '13%' }} />
+            <col className="w-16" />
+          </colgroup>
           <tbody>
             {items.map((item, index) => {
               if (item.item_type === ITEM_TYPE.FIXED && !showFixedFees) return null;
@@ -672,8 +743,9 @@ const EstimateItemTable = ({
                     item={item}
                     index={index}
                     onChange={(field, value) => onUpdateItem(index, field, value)}
-                    onAddItem={() => onAddItem(index)}
+                    onAddItem={() => onAddItem(getCategoryGroupTailIndex(items, index))}
                     onRemove={() => onRemoveRow(index)}
+                    onDuplicate={() => onSetItems(duplicateRow(items, index))}
                     disabled={disabled}
                     selected={selectedIndices.has(index)}
                     onToggleSelect={() => toggleSelect(index)}
@@ -681,6 +753,24 @@ const EstimateItemTable = ({
                     dropIndicator={dropIndicator}
                     categorySubtotal={catSubtotalMap.get(item) || 0}
                   />
+                  {item.item_type === ITEM_TYPE.CATEGORY && !disabled && (
+                    <tr>
+                      <td></td>
+                      <td></td>
+                      <td colSpan={2} className="px-2 py-1">
+                        <button
+                          onClick={() => onAddItem(getCategoryGroupTailIndex(items, index))}
+                          title="この工種に細別追加"
+                          aria-label="この工種に細別追加"
+                          className="flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700"
+                        >
+                          <Plus size={14} />
+                          細別を追加
+                        </button>
+                      </td>
+                      <td colSpan={6}></td>
+                    </tr>
+                  )}
                   {isLastItemBeforeNext(index) && (() => {
                     const catKey = getCategoryKeyForIndex(index);
                     const subtotal = catKey ? (categorySubtotals[catKey] || 0) : 0;
@@ -707,7 +797,7 @@ const EstimateItemTable = ({
 
       {/* アクションバー */}
       {!disabled && (
-        <div className="mt-3 flex gap-2 flex-wrap">
+        <div className="mt-3 flex gap-2 flex-wrap shrink-0">
           <button
             onClick={onAddCategory}
             className="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-800 font-bold border border-blue-200 hover:border-blue-400 px-3 py-1.5 rounded-lg transition"

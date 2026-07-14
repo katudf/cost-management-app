@@ -36,7 +36,7 @@ const emptyForm = () => ({
 
 const InventoryApp = () => {
     const { showToast } = useToast();
-    const { isAuthenticated, isLoading: isAuthLoading, isPasswordRecovery } = useAuth();
+    const { isAuthenticated, isLoading: isAuthLoading, isPasswordRecovery, signOut } = useAuth();
     const {
         items, warehouses, workers, isLoading,
         saveItem, deleteItem, updateQuantity, uploadWarehouseMap,
@@ -230,7 +230,11 @@ const InventoryApp = () => {
         return (
             <div className="min-h-screen bg-slate-100 flex flex-col items-center p-4">
                 <div className="w-full max-w-sm mt-10">
-                    <div className="bg-white rounded-2xl shadow-lg p-6 text-center border-t-4 border-emerald-600">
+                    <div className="bg-white rounded-2xl shadow-lg p-6 text-center border-t-4 border-emerald-600 relative">
+                        <button onClick={signOut} aria-label="ログアウト" title="ログアウト"
+                            className="absolute top-3 right-3 p-2 rounded-full text-slate-400 hover:text-red-600 hover:bg-red-50 transition">
+                            <LogOut size={18} />
+                        </button>
                         <Package className="w-16 h-16 text-emerald-600 mx-auto mb-4" />
                         <h1 className="text-2xl font-black text-slate-800 mb-2">在庫管理システム</h1>
                         <p className="text-sm font-bold text-slate-500 mb-8">名前を選んでください</p>
