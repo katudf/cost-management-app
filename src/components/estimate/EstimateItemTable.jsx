@@ -22,14 +22,45 @@ const formatNumberInput = (value) => {
 };
 
 // 全角数字・カンマを除去して数値文字列に戻す（末尾の小数点は入力途中として許容）
-// "▲" または "-"/"－" を負符号として許可する
+// 先頭の "▲" または "-"/"－" のみを負符号として扱う（それ以外の位置の同記号はカンマ除去のみ行い保持する）
 const parseNumberInput = (raw) => {
-  const isNegative = /^\s*[▲－-]/.test(raw);
-  const halfWidth = raw.replace(/[０-９．]/g, (c) =>
+  const leadingSignMatch = raw.match(/^\s*([▲－-])/);
+  const isNegative = !!leadingSignMatch;
+  const rest = isNegative ? raw.slice(leadingSignMatch[0].length) : raw;
+  const halfWidth = rest.replace(/[０-９．]/g, (c) =>
     c === '．' ? '.' : String.fromCharCode(c.charCodeAt(0) - 0xfee0)
   );
-  const digits = halfWidth.replace(/[,▲－-]/g, '');
+  const digits = halfWidth.replace(/,/g, '');
   return isNegative && digits !== '' ? `-${digits}` : digits;
+};
+
+// カンマ区切りの数値入力欄。フォーカス中は入力途中の生値をそのまま表示し、
+// フォーカスが外れた時点でカンマ/▲付きの表示形式に整形する（末尾の小数点が
+// 入力の都度消えてしまい小数を入力できなくなる問題を防ぐため）
+const NumberInput = ({ value, onValueChange, ...rest }) => {
+  const [draft, setDraft] = useState(null); // null = 非編集中（フォーマット済み表示）
+
+  const displayValue = draft !== null ? draft : formatNumberInput(value);
+
+  return (
+    <input
+      type="text"
+      value={displayValue}
+      onFocus={(e) => {
+        setDraft(String(value ?? ''));
+        rest.onFocus?.(e);
+      }}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        onValueChange(parseNumberInput(e.target.value));
+      }}
+      onBlur={(e) => {
+        setDraft(null);
+        rest.onBlur?.(e);
+      }}
+      {...rest}
+    />
+  );
 };
 
 const getColCount = (itemType) => {
@@ -279,11 +310,10 @@ const ItemRow = ({
         <td className="px-2 py-1.5 text-slate-500 text-xs">式</td>
         <td className="px-2 py-1.5"></td>
         <td className="px-2 py-1.5">
-          <input
-            type="text"
+          <NumberInput
             inputMode="numeric"
-            value={formatNumberInput(item.amount)}
-            onChange={e => onChange('amount', parseNumberInput(e.target.value))}
+            value={item.amount}
+            onValueChange={v => onChange('amount', v)}
             className="w-full border border-slate-300 rounded px-1 py-1 text-xs text-right bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
             placeholder="0"
             disabled={disabled}
@@ -331,11 +361,10 @@ const ItemRow = ({
         />
       </td>
       <td className="px-2 py-1.5">
-        <input
-          type="text"
+        <NumberInput
           inputMode="decimal"
-          value={formatNumberInput(item.quantity)}
-          onChange={e => onChange('quantity', parseNumberInput(e.target.value))}
+          value={item.quantity}
+          onValueChange={v => onChange('quantity', v)}
           data-row-idx={index}
           data-col-idx={2}
           className="w-full border border-slate-200 rounded px-1 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-400"
@@ -352,6 +381,7 @@ const ItemRow = ({
           onBlur={() => setTimeout(() => setShowUnitSug(false), 150)}
           onKeyDown={e => {
             if (!showUnitSug) return;
+            if (e.isComposing || e.nativeEvent?.isComposing) return;
             if (e.key === 'ArrowDown') {
               e.preventDefault();
               e.stopPropagation();
@@ -367,6 +397,8 @@ const ItemRow = ({
               setShowUnitSug(false);
               setUnitHighlightIdx(-1);
             } else if (e.key === 'Escape') {
+              e.preventDefault();
+              e.stopPropagation();
               setShowUnitSug(false);
               setUnitHighlightIdx(-1);
             }
@@ -392,11 +424,10 @@ const ItemRow = ({
         )}
       </td>
       <td className="px-2 py-1.5">
-        <input
-          type="text"
+        <NumberInput
           inputMode="decimal"
-          value={formatNumberInput(item.unit_price)}
-          onChange={e => onChange('unit_price', parseNumberInput(e.target.value))}
+          value={item.unit_price}
+          onValueChange={v => onChange('unit_price', v)}
           data-row-idx={index}
           data-col-idx={4}
           className="w-full border border-slate-200 rounded px-1 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-400"
@@ -406,11 +437,10 @@ const ItemRow = ({
       </td>
       <td className="px-2 py-1.5">
         {/* 金額列: data-col-idx なし → Tab スキップ */}
-        <input
-          type="text"
+        <NumberInput
           inputMode="numeric"
-          value={formatNumberInput(item.amount)}
-          onChange={e => onChange('amount', parseNumberInput(e.target.value))}
+          value={item.amount}
+          onValueChange={v => onChange('amount', v)}
           className="w-full border border-slate-200 rounded px-1 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-400 bg-slate-50"
           placeholder="自動計算"
           disabled={disabled}
@@ -708,6 +738,20 @@ const EstimateItemTable = ({
             <col style={{ width: '13%' }} />
             <col className="w-16" />
           </colgroup>
+          <thead>
+            <tr className="border-b border-slate-200 text-slate-500">
+              <th className="px-1 py-1.5"></th>
+              <th className="px-2 py-1.5"></th>
+              <th className="px-2 py-1.5 text-left font-medium">名称</th>
+              <th className="px-2 py-1.5 text-left font-medium">仕様</th>
+              <th className="px-2 py-1.5 text-right font-medium">数量</th>
+              <th className="px-2 py-1.5 text-center font-medium">単位</th>
+              <th className="px-2 py-1.5 text-right font-medium">単価</th>
+              <th className="px-2 py-1.5 text-right font-medium">金額</th>
+              <th className="px-2 py-1.5 text-left font-medium">摘要</th>
+              <th className="px-2 py-1.5"></th>
+            </tr>
+          </thead>
           <tbody>
             {items.map((item, index) => {
               if (item.item_type === ITEM_TYPE.FIXED && !showFixedFees) return null;

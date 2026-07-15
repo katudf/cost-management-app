@@ -287,9 +287,20 @@ export const fetchCustomers = async () => {
 // 顧客の新規登録
 // ============================================================
 export const createCustomer = async (name) => {
+  const trimmedName = name.trim();
+
+  const { data: existing, error: checkError } = await supabase
+    .from('Customers')
+    .select('id')
+    .eq('name', trimmedName)
+    .maybeSingle();
+
+  if (checkError) throw checkError;
+  if (existing) throw new Error(`顧客「${trimmedName}」は既に登録されています`);
+
   const { data, error } = await supabase
     .from('Customers')
-    .insert([{ name }])
+    .insert([{ name: trimmedName }])
     .select()
     .single();
 

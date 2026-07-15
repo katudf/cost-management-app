@@ -598,7 +598,10 @@ const EstimateForm = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   // Escape キーで見積内訳明細の全画面表示を閉じる
   useEffect(() => {
     if (!itemTableFullscreen) return;
-    const onKeyDown = (e) => { if (e.key === 'Escape') setItemTableFullscreen(false); };
+    const onKeyDown = (e) => {
+      if (e.isComposing || e.nativeEvent?.isComposing) return;
+      if (e.key === 'Escape') setItemTableFullscreen(false);
+    };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [itemTableFullscreen]);

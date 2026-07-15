@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useId } from 'react';
 import { ChevronDown, ChevronUp, ClipboardList, Search, Plus, X, Check } from 'lucide-react';
 
 // ============================================================
@@ -31,8 +31,11 @@ const CustomerCombobox = ({ customers, value, onChange, onCreateCustomer, disabl
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [saving, setSaving] = useState(false);
+  const [highlightIdx, setHighlightIdx] = useState(-1);
   const containerRef = useRef(null);
   const inputRef = useRef(null);
+  const listboxId = useId();
+  const optionId = (id) => `${listboxId}-opt-${id}`;
 
   const selected = customers.find(c => String(c.id) === String(value));
 
@@ -54,6 +57,10 @@ const CustomerCombobox = ({ customers, value, onChange, onCreateCustomer, disabl
     return customers.filter(c => c.name.toLowerCase().includes(q));
   }, [customers, query]);
 
+  useEffect(() => {
+    setHighlightIdx(-1);
+  }, [query, open]);
+
   const openDropdown = () => {
     if (disabled) return;
     setOpen(true);
@@ -72,6 +79,26 @@ const CustomerCombobox = ({ customers, value, onChange, onCreateCustomer, disabl
     setCreating(true);
     setNewName(prefillName || '');
     setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  const handleSearchKeyDown = (e) => {
+    if (e.isComposing || e.nativeEvent?.isComposing) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlightIdx(i => (i + 1 < filtered.length ? i + 1 : 0));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlightIdx(i => (i - 1 >= 0 ? i - 1 : filtered.length - 1));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (highlightIdx >= 0 && filtered[highlightIdx]) {
+        handleSelect(filtered[highlightIdx]);
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      setOpen(false);
+    }
   };
 
   const handleCreateSubmit = async () => {
@@ -97,6 +124,8 @@ const CustomerCombobox = ({ customers, value, onChange, onCreateCustomer, disabl
         type="button"
         onClick={() => (open ? setOpen(false) : openDropdown())}
         disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
         className="w-full flex items-center justify-between border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white disabled:bg-slate-50 disabled:text-slate-400 text-left"
       >
         <span className={selected ? 'text-slate-800 truncate' : 'text-slate-400 truncate'}>
@@ -114,22 +143,29 @@ const CustomerCombobox = ({ customers, value, onChange, onCreateCustomer, disabl
                 <input
                   ref={inputRef}
                   type="text"
+                  role="combobox"
+                  aria-expanded={open}
+                  aria-controls={listboxId}
+                  aria-autocomplete="list"
+                  aria-activedescendant={highlightIdx >= 0 && filtered[highlightIdx] ? optionId(filtered[highlightIdx].id) : undefined}
                   value={query}
                   onChange={e => setQuery(e.target.value)}
+                  onKeyDown={handleSearchKeyDown}
                   placeholder="顧客名で絞り込み"
                   className="w-full text-sm focus:outline-none"
                 />
               </div>
-              <ul className="max-h-52 overflow-y-auto py-1">
+              <ul id={listboxId} role="listbox" aria-label="顧客一覧" className="max-h-52 overflow-y-auto py-1">
                 {filtered.length === 0 && (
                   <li className="px-3 py-2 text-xs text-slate-400">該当する顧客がありません</li>
                 )}
-                {filtered.map(c => (
-                  <li key={c.id}>
+                {filtered.map((c, idx) => (
+                  <li key={c.id} id={optionId(c.id)} role="option" aria-selected={String(c.id) === String(value)}>
                     <button
                       type="button"
                       onClick={() => handleSelect(c)}
-                      className="w-full flex items-center justify-between px-3 py-1.5 text-sm text-left hover:bg-blue-50 transition"
+                      onMouseEnter={() => setHighlightIdx(idx)}
+                      className={`w-full flex items-center justify-between px-3 py-1.5 text-sm text-left transition ${idx === highlightIdx ? 'bg-blue-50' : 'hover:bg-blue-50'}`}
                     >
                       <span className="truncate">{c.name}</span>
                       {String(c.id) === String(value) && <Check size={14} className="text-blue-600 shrink-0 ml-2" />}
