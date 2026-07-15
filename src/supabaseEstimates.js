@@ -181,15 +181,24 @@ export const duplicateEstimate = async (id) => {
   const newNumber = await findAvailableBranchNumber(parts[0], parts[1], parseInt(parts[2]) + 1);
 
   // ヘッダー複製
-  const { id: _id, created_at, updated_at, deleted_at, ...headerData } = original;
+  // customer/staff/items/creator はjoinで付与された関連テーブルのネストオブジェクトのため、
+  // estimatesテーブルに存在しないカラムとしてINSERTされないよう分割代入で除外する
+  const {
+    id: _id,
+    created_at,
+    updated_at,
+    deleted_at,
+    customer,
+    staff,
+    items,
+    creator,
+    ...headerData
+  } = original;
   const newEstimate = await createEstimate({
     ...headerData,
     estimate_number: newNumber,
     status: ESTIMATE_STATUS.DRAFT,
     issue_date: new Date().toISOString().split('T')[0],
-    customer: undefined,
-    creator: undefined,
-    items: undefined,
   });
 
   // 明細複製
