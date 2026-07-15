@@ -1,8 +1,8 @@
 // src/EstimateList.jsx
 // 見積書一覧画面
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, FileText, Copy, Trash2, Edit, Download, ChevronDown, Upload, Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { Plus, FileText, Copy, Trash2, Edit, Download, ChevronDown, ChevronRight, Upload, Loader2, RotateCcw, X } from 'lucide-react';
 import {
   fetchEstimates,
   deleteEstimate,
@@ -16,6 +16,9 @@ import {
   fetchCustomers,
   findAvailableBranchNumber,
   fetchSystemSettings,
+  fetchDeletedEstimates,
+  restoreEstimate,
+  ESTIMATE_TRASH_RETENTION_DAYS,
 } from './supabaseEstimates';
 import CustomerResolveModal from './components/estimate/CustomerResolveModal';
 import { downloadEstimatePDF } from './EstimatePDF';
@@ -84,6 +87,64 @@ const ExpiryBadge = ({ validUntil, status }) => {
 };
 
 // ============================================================
+// 見積番号グルーピング
+// ------------------------------------------------------------
+// estimate_number は `{発行日8桁prefix}-{連番seq}-{枝番branch}` の形式
+// （例: 260714-0001-001）。prefix-seq が同じものを同一グループとして
+// まとめ、枝番が最小のものを親、それ以外を子（ツリーの折りたたみ対象）とする。
+// ============================================================
+const getEstimateGroupKey = (estimateNumber) => {
+  if (!estimateNumber) return null;
+  const parts = estimateNumber.split('-');
+  if (parts.length < 3) return null;
+  return `${parts[0]}-${parts[1]}`;
+};
+
+const buildEstimateGroups = (list) => {
+  const groups = new Map();
+  const singles = [];
+
+  list.forEach(estimate => {
+    const key = getEstimateGroupKey(estimate.estimate_number);
+    if (!key) {
+      singles.push(estimate);
+      return;
+    }
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(estimate);
+  });
+
+  const groupNodes = [];
+  groups.forEach((members, key) => {
+    if (members.length === 1) {
+      singles.push(members[0]);
+      return;
+    }
+    const sorted = [...members].sort((a, b) =>
+      (a.estimate_number || '').localeCompare(b.estimate_number || '')
+    );
+    groupNodes.push({
+      key,
+      parent: sorted[0],
+      children: sorted.slice(1),
+      // グループ内の最新作成日時をソートキーに使う（一覧の並びは作成日降順のため）
+      latestCreatedAt: sorted.reduce(
+        (max, e) => (e.created_at > max ? e.created_at : max),
+        sorted[0].created_at
+      ),
+    });
+  });
+
+  // 単独行とグループ行を作成日時降順でマージ
+  const merged = [
+    ...singles.map(e => ({ type: 'single', estimate: e, sortKey: e.created_at })),
+    ...groupNodes.map(g => ({ type: 'group', ...g, sortKey: g.latestCreatedAt })),
+  ];
+  merged.sort((a, b) => (b.sortKey || '').localeCompare(a.sortKey || ''));
+  return merged;
+};
+
+// ============================================================
 // メインコンポーネント
 // ============================================================
 const EstimateList = ({ onEdit }) => {
@@ -96,7 +157,20 @@ const EstimateList = ({ onEdit }) => {
   const [confirmDelete, setConfirmDelete] = useState(null); // 削除確認対象のID
   const [importing, setImporting] = useState(false);
   const [pendingImport, setPendingImport] = useState(null); // 顧客未確定のExcel取込データ
+  const [expandedGroups, setExpandedGroups] = useState(() => new Set());
+  const [showTrash, setShowTrash] = useState(false);
+  const [deletedEstimates, setDeletedEstimates] = useState([]);
+  const [loadingTrash, setLoadingTrash] = useState(false);
   const fileInputRef = useRef(null);
+
+  const toggleGroup = (key) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   // 一覧取得
   const loadEstimates = useCallback(async () => {
@@ -125,6 +199,13 @@ const EstimateList = ({ onEdit }) => {
     return matchStatus && matchSearch;
   });
 
+  // 枝番付き見積をグループ化してツリー構造に変換
+  const treeRows = useMemo(() => buildEstimateGroups(filtered), [filtered]);
+
+  // 検索中は該当グループを自動展開して結果が隠れないようにする
+  const isSearching = searchText.trim().length > 0;
+  const isGroupExpanded = (key) => isSearching || expandedGroups.has(key);
+
   // 削除
   const handleDelete = async (id) => {
     try {
@@ -133,6 +214,32 @@ const EstimateList = ({ onEdit }) => {
       setConfirmDelete(null);
     } catch (e) {
       showToast('削除に失敗しました: ' + e.message, 'error');
+    }
+  };
+
+  // ゴミ箱（削除済み一覧）を開く
+  const handleOpenTrash = async () => {
+    setShowTrash(true);
+    setLoadingTrash(true);
+    try {
+      const data = await fetchDeletedEstimates();
+      setDeletedEstimates(data);
+    } catch (e) {
+      showToast('削除済み見積書の読み込みに失敗しました: ' + e.message, 'error');
+    } finally {
+      setLoadingTrash(false);
+    }
+  };
+
+  // 復元
+  const handleRestore = async (id) => {
+    try {
+      await restoreEstimate(id);
+      setDeletedEstimates(prev => prev.filter(e => e.id !== id));
+      showToast('見積書を復元しました', 'success');
+      loadEstimates();
+    } catch (e) {
+      showToast('復元に失敗しました: ' + e.message, 'error');
     }
   };
 
@@ -336,6 +443,15 @@ const EstimateList = ({ onEdit }) => {
             <Plus size={18} />
             新規作成
           </button>
+          <button
+            onClick={handleOpenTrash}
+            aria-label="ゴミ箱（削除済み見積書）"
+            title="ゴミ箱（削除済み見積書）"
+            className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-600 px-4 py-2 rounded-lg font-bold transition"
+          >
+            <Trash2 size={18} />
+            ゴミ箱
+          </button>
         </div>
       </div>
 
@@ -418,16 +534,49 @@ const EstimateList = ({ onEdit }) => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filtered.map(estimate => (
-                    <EstimateRow
-                      key={estimate.id}
-                      estimate={estimate}
-                      onEdit={() => onEdit(estimate.id)}
-                      onDuplicate={() => handleDuplicate(estimate)}
-                      onDelete={() => setConfirmDelete(estimate)}
-                      onDownload={() => handleDownloadPDF(estimate)}
-                    />
-                  ))}
+                  {treeRows.map(row => {
+                    if (row.type === 'single') {
+                      const estimate = row.estimate;
+                      return (
+                        <EstimateRow
+                          key={estimate.id}
+                          estimate={estimate}
+                          onEdit={() => onEdit(estimate.id)}
+                          onDuplicate={() => handleDuplicate(estimate)}
+                          onDelete={() => setConfirmDelete(estimate)}
+                          onDownload={() => handleDownloadPDF(estimate)}
+                        />
+                      );
+                    }
+                    const expanded = isGroupExpanded(row.key);
+                    return (
+                      <React.Fragment key={row.key}>
+                        <EstimateRow
+                          estimate={row.parent}
+                          onEdit={() => onEdit(row.parent.id)}
+                          onDuplicate={() => handleDuplicate(row.parent)}
+                          onDelete={() => setConfirmDelete(row.parent)}
+                          onDownload={() => handleDownloadPDF(row.parent)}
+                          groupToggle={{
+                            expanded,
+                            childCount: row.children.length,
+                            onToggle: () => toggleGroup(row.key),
+                          }}
+                        />
+                        {expanded && row.children.map(child => (
+                          <EstimateRow
+                            key={child.id}
+                            estimate={child}
+                            onEdit={() => onEdit(child.id)}
+                            onDuplicate={() => handleDuplicate(child)}
+                            onDelete={() => setConfirmDelete(child)}
+                            onDownload={() => handleDownloadPDF(child)}
+                            isChild
+                          />
+                        ))}
+                      </React.Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -480,6 +629,68 @@ const EstimateList = ({ onEdit }) => {
           onCancel={handleCancelPendingImport}
         />
       )}
+
+      {/* ゴミ箱（削除済み見積書一覧） */}
+      {showTrash && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+              <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                <Trash2 size={18} className="text-slate-500" />
+                ゴミ箱（削除から{ESTIMATE_TRASH_RETENTION_DAYS}日以内のみ復元可能）
+              </h3>
+              <button
+                onClick={() => setShowTrash(false)}
+                aria-label="閉じる"
+                title="閉じる"
+                className="p-1.5 rounded-md hover:bg-slate-100 text-slate-400 transition"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="overflow-y-auto flex-1 p-4">
+              {loadingTrash ? (
+                <div className="text-center py-12 text-slate-400">読み込み中...</div>
+              ) : deletedEstimates.length === 0 ? (
+                <div className="text-center py-12 text-slate-400">
+                  <Trash2 size={32} className="mx-auto mb-2 opacity-30" />
+                  <p>削除済みの見積書はありません</p>
+                </div>
+              ) : (
+                <ul className="divide-y divide-slate-100">
+                  {deletedEstimates.map(e => {
+                    const deletedAt = new Date(e.deleted_at);
+                    const daysLeft = ESTIMATE_TRASH_RETENTION_DAYS - Math.floor((Date.now() - deletedAt.getTime()) / (1000 * 60 * 60 * 24));
+                    return (
+                      <li key={e.id} className="flex items-center justify-between gap-3 py-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-xs text-slate-500">{e.estimate_number}</span>
+                            <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${daysLeft <= 7 ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
+                              残り{Math.max(daysLeft, 0)}日
+                            </span>
+                          </div>
+                          <p className="text-sm text-slate-800 font-medium truncate">{e.title}</p>
+                          <p className="text-xs text-slate-400">{e.customer?.name || '-'}</p>
+                        </div>
+                        <button
+                          onClick={() => handleRestore(e.id)}
+                          aria-label="復元"
+                          title="復元"
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-600 text-sm font-bold transition shrink-0"
+                        >
+                          <RotateCcw size={14} />
+                          復元
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -487,14 +698,32 @@ const EstimateList = ({ onEdit }) => {
 // ============================================================
 // テーブル行コンポーネント
 // ============================================================
-const EstimateRow = ({ estimate, onEdit, onDuplicate, onDelete, onDownload }) => {
+const EstimateRow = ({ estimate, onEdit, onDuplicate, onDelete, onDownload, groupToggle, isChild }) => {
   // 税込合計（保存時にDBに記録される値）
   const total = estimate.total_with_tax;
 
   return (
-    <tr className="hover:bg-slate-50 transition">
+    <tr className={`hover:bg-slate-50 transition ${isChild ? 'bg-slate-50/50' : ''}`}>
       <td className="px-4 py-3 font-mono text-xs text-slate-600 whitespace-nowrap">
-        {estimate.estimate_number}
+        <div className={`flex items-center gap-1 ${isChild ? 'pl-5' : ''}`}>
+          {groupToggle && (
+            <button
+              onClick={groupToggle.onToggle}
+              aria-label={groupToggle.expanded ? '子見積を折りたたむ' : `子見積${groupToggle.childCount}件を展開`}
+              title={groupToggle.expanded ? '折りたたむ' : `関連見積${groupToggle.childCount}件を展開`}
+              className="p-0.5 rounded hover:bg-slate-200 text-slate-500 shrink-0"
+            >
+              {groupToggle.expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </button>
+          )}
+          {isChild && <span className="text-slate-300 shrink-0">└</span>}
+          <span>{estimate.estimate_number}</span>
+          {groupToggle && !groupToggle.expanded && (
+            <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-500 shrink-0">
+              +{groupToggle.childCount}
+            </span>
+          )}
+        </div>
       </td>
       <td className="px-4 py-3 text-slate-800 font-medium max-w-xs">
         <span className="line-clamp-2">{estimate.title}</span>

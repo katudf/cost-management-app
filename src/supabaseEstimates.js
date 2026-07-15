@@ -133,6 +133,38 @@ export const deleteEstimate = async (id) => {
 };
 
 // ============================================================
+// 削除済み見積書の一覧取得（ゴミ箱・30日以内のみ）
+// ============================================================
+export const ESTIMATE_TRASH_RETENTION_DAYS = 30;
+
+export const fetchDeletedEstimates = async () => {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - ESTIMATE_TRASH_RETENTION_DAYS);
+
+  const { data, error } = await supabase
+    .from('estimates')
+    .select(`
+      *,
+      customer:Customers(id, name),
+      staff:office_staff!staff_id(id, name)
+    `)
+    .not('deleted_at', 'is', null)
+    .gte('deleted_at', cutoff.toISOString())
+    .order('deleted_at', { ascending: false });
+
+  if (error) throw error;
+  return data;
+};
+
+// ============================================================
+// 見積書の復元（削除から30日以内のみ・DB側RPCで期限を再検証）
+// ============================================================
+export const restoreEstimate = async (id) => {
+  const { error } = await supabase.rpc('restore_estimate', { p_estimate_id: id });
+  if (error) throw error;
+};
+
+// ============================================================
 // 見積番号の重複チェック
 // ============================================================
 export const checkDuplicateNumber = async (estimateNumber, excludeId = null) => {
