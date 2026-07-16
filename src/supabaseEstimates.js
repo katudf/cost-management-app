@@ -24,7 +24,7 @@ export const fetchEstimates = async () => {
 };
 
 // ============================================================
-// 見積書1件取得（明細含む）
+// 見積書1件取得（シート・明細含む）
 // ============================================================
 export const fetchEstimateById = async (id) => {
   const { data, error } = await supabase
@@ -33,6 +33,7 @@ export const fetchEstimateById = async (id) => {
       *,
       customer:Customers(id, name),
       staff:office_staff!staff_id(id, name),
+      sheets:estimate_sheets(*),
       items:estimate_items(*)
     `)
     .eq('id', id)
@@ -41,9 +42,20 @@ export const fetchEstimateById = async (id) => {
 
   if (error) throw error;
 
-  // 明細をsort_order順に並べ替え
-  if (data?.items) {
-    data.items.sort((a, b) => a.sort_order - b.sort_order);
+  if (data) {
+    data.sheets = (data.sheets || []).sort((a, b) => a.sort_order - b.sort_order);
+
+    // シート未生成の見積（旧エディタ・Excel取込が作成した新規分）は
+    // 仮のトップシートを補う。id:null のシートは保存時にRPCが新規発行する
+    if (data.sheets.length === 0) {
+      data.sheets = [{ id: null, estimate_id: data.id, sort_order: 1, title: null }];
+    }
+
+    // sheet_id が NULL の明細（移行期に旧経路で書かれた行）はトップシートへ帰属
+    const topSheetId = data.sheets[0].id;
+    data.items = (data.items || [])
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((item) => (item.sheet_id == null ? { ...item, sheet_id: topSheetId } : item));
   }
   return data;
 };
@@ -213,7 +225,7 @@ export const duplicateEstimate = async (id) => {
   const newNumber = await findAvailableBranchNumber(parts[0], parts[1], parseInt(parts[2]) + 1);
 
   // ヘッダー複製
-  // customer/staff/items/creator はjoinで付与された関連テーブルのネストオブジェクトのため、
+  // customer/staff/items/sheets/creator はjoinで付与された関連テーブルのネストオブジェクトのため、
   // estimatesテーブルに存在しないカラムとしてINSERTされないよう分割代入で除外する
   const {
     id: _id,
@@ -223,6 +235,7 @@ export const duplicateEstimate = async (id) => {
     customer,
     staff,
     items,
+    sheets,
     creator,
     ...headerData
   } = original;
@@ -233,14 +246,18 @@ export const duplicateEstimate = async (id) => {
     issue_date: new Date().toISOString().split('T')[0],
   });
 
-  // 明細複製
+  // シート＋明細複製
+  // buildSaveItemsPayload で元見積のID参照をインデックス参照に変換し、
+  // シートIDを全てnull（新規発行）にしてv2 RPCへ渡す。これにより
+  // sheet_id / linked_sheet_id / linked_category_item_id の3列が
+  // 複製先の新IDへ自動的に再マップされる（元見積のIDは一切持ち込まない）
   if (original.items?.length > 0) {
-    const newItems = original.items.map(({ id: _iid, created_at: _c, estimate_id: _e, ...item }) => ({
-      ...item,
-      estimate_id: newEstimate.id,
-    }));
-    const { error } = await supabase.from('estimate_items').insert(newItems);
-    if (error) throw error;
+    const { payloadSheets, payloadItems } = buildSaveItemsPayload(
+      original.sheets,
+      original.items
+    );
+    const newSheets = payloadSheets.map((sheet) => ({ ...sheet, id: null }));
+    await saveEstimateItemsV2(newEstimate.id, newSheets, payloadItems);
   }
 
   return newEstimate;
@@ -264,6 +281,88 @@ export const saveEstimateItems = async (estimateId, items) => {
   });
 
   if (error) throw error;
+};
+
+// ============================================================
+// シート＋明細の一括保存 v2（WYSIWYGエディタ用）
+// ------------------------------------------------------------
+// save_estimate_items_v2 RPC は行IDが保存ごとに振り直される問題への対策として、
+// リンク（linked_sheet_id / linked_category_item_id）を配列インデックスで受け取り、
+// INSERT後に新IDへ再マップする。シートはUPSERTされIDが安定する。
+// 引数は buildSaveItemsPayload() で組み立てたペイロードを渡すこと。
+// 戻り値: 確定したシートIDの配列（payloadSheets と同順）
+// ============================================================
+export const saveEstimateItemsV2 = async (estimateId, payloadSheets, payloadItems) => {
+  const { data, error } = await supabase.rpc('save_estimate_items_v2', {
+    p_estimate_id: estimateId,
+    p_sheets: payloadSheets,
+    p_items: payloadItems,
+  });
+
+  if (error) throw error;
+  return data?.sheet_ids || [];
+};
+
+// ============================================================
+// v2保存ペイロードの組み立て（純粋関数）
+// ------------------------------------------------------------
+// エディタ状態（ID参照ベース）をRPCのインデックス参照形式へ変換する。
+// - sheets: 表示順の配列。id は保存済みならuuid、新規シートはnullまたは一時キー
+//   （uuid形式でないidはRPCに渡さず新規扱いにする）
+// - items: 全シート通しの保存順の配列。sheet_id / linked_sheet_id は sheets の
+//   要素の id と、linked_category_item_id は items の要素の id と突き合わせる
+//   （新規行は一時キー同士で対応が取れていればよい）
+// - sheet_id が null の行はトップシート（sheets[0]）へ帰属
+// - リンク先が payload 内に見つからない場合はリンクを外して保存する（削除済み参照）
+// ============================================================
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export const buildSaveItemsPayload = (sheets, items) => {
+  const sheetIndexById = new Map();
+  const payloadSheets = sheets.map((sheet, idx) => {
+    if (sheet.id != null) sheetIndexById.set(sheet.id, idx);
+    return {
+      id: UUID_RE.test(String(sheet.id ?? '')) ? sheet.id : null,
+      title: sheet.title ?? null,
+    };
+  });
+
+  const itemIndexById = new Map();
+  items.forEach((item, idx) => {
+    if (item.id != null) itemIndexById.set(item.id, idx);
+  });
+
+  const toNumberOrNull = (v) => (v === '' || v == null ? null : Number(v));
+
+  const payloadItems = items.map((item) => {
+    const sheetIndex = item.sheet_id == null ? 0 : sheetIndexById.get(item.sheet_id);
+    if (sheetIndex === undefined) {
+      throw new Error('明細の所属シートが見つかりません');
+    }
+    const linkedSheetIndex =
+      item.linked_sheet_id != null ? sheetIndexById.get(item.linked_sheet_id) : null;
+    const linkedItemIndex =
+      item.linked_category_item_id != null
+        ? itemIndexById.get(item.linked_category_item_id)
+        : null;
+
+    return {
+      sheet_index: sheetIndex,
+      linked_sheet_index: linkedSheetIndex ?? null,
+      linked_item_index: linkedItemIndex ?? null,
+      item_type: item.item_type,
+      category_symbol: item.category_symbol ?? null,
+      name: item.name ?? '',
+      spec: item.spec ?? null,
+      quantity: toNumberOrNull(item.quantity),
+      unit: item.unit ?? null,
+      unit_price: toNumberOrNull(item.unit_price),
+      amount: toNumberOrNull(item.amount),
+      note: item.note ?? null,
+    };
+  });
+
+  return { payloadSheets, payloadItems };
 };
 
 // ============================================================

@@ -105,6 +105,14 @@ export const ITEM_TYPE = {
     COMMENT: 'comment',
 };
 
+// === 見積明細センチネル ===
+// DBの item_type CHECK制約（category/item/subtotal/fixed）を変えずに行タイプを
+// 拡張するための値。item_type:'item' + category_symbol にこの値を入れて表現する
+export const ITEM_SENTINEL = {
+    COMMENT: '__comment__',
+    BLANK: '__blank__',
+};
+
 // === 在庫管理 種類 ===
 export const INVENTORY_CATEGORY_LIST = [
     '塗料',
