@@ -1,6 +1,6 @@
 # 見積WYSIWYGエディタ刷新 — 進捗・引き継ぎメモ
 
-最終更新: 2026-07-17（Phase 4 完了）
+最終更新: 2026-07-18（Phase 5 完了）
 作業場所: worktree `.claude/worktrees/ecstatic-cerf-0e582d` / branch `claude/quotation-editor-redesign-a3edb5`
 確定設計: [design.md](design.md)（§4 統一ルール / §5 データモデルが正）
 
@@ -12,7 +12,7 @@
 | 2 | データアクセス層（supabaseEstimates.js のv2対応） | ✅ 完了・コミット 9b47fcd |
 | 3 | エディタ骨格（`src/estimate-editor/` 新設：紙面スタック＋鑑インライン編集＋左ナビ＋右設定パネル） | ✅ 完了・コミット（8ファイル作成、`npm run build` 通過） |
 | 4 | 明細グリッド（セル編集・Tab/Enter/矢印・行操作・TSV貼り付け）→ 保存ラウンドトリップ検証 | ✅ 完了・コミット d7b17b6・`npm run build` 通過・保存ペイロード19アサート通過 |
-| 5 | 計算・リンクエンジン（シート末尾合計、リンク①②、循環参照チェック、総括表自動生成） | 未着手 |
+| 5 | 計算・リンクエンジン（シート末尾合計、リンク①②、循環参照チェック、総括表自動生成） | ✅ 完了・コミット 06cfb77・`npm run build` 通過・単体テスト14件通過 |
 | 6 | EstimatePDF.jsx のシートモデル対応（明細末尾=税抜合計、消費税・税込は鑑側、通しページ番号） | 未着手 |
 | 7 | 統合（AdminApp差し替え、Excel取込シート対応、旧RPC・旧EstimateForm一族の削除） | 未着手 |
 
@@ -110,3 +110,19 @@ SheetPaper を編集グリッド化し、EstimateEditor に item 操作ハンド
   - `<SheetPaper>` に8編集 props（isLocked/onUpdateItem/onAddRowAfter/onAddRowToSheet/onRemoveRow/onDuplicateRow/onMoveRow/onPasteTsv）を配線。
 - **保存ラウンドトリップ検証結果**（scratchpad `phase4_roundtrip.mjs`、esbuild で supabase を stub 化して buildSaveItemsPayload を bundle→eval、19/19 pass）: `_uid`/`_tempId`/`id` 除去、文字列数値（"1234"/"-500"）→ number 変換、空行センチネル `__blank__` 保持、リンク①(`linked_sheet_id`→sheet_index)・②(`linked_category_item_id`→item_index)をシート跨ぎで正しく解決。
 - **Phase 5 の次アクション**: 計算・リンクエンジン（シート末尾合計、リンク①②の実値反映、循環参照チェック、総括表自動生成）。design.md §5 が正。現状 SheetPaper のカテゴリ小計・シート合計・税抜合計は `buildSheetRows` 内で ITEM amount を単純合算しているのみで、リンク①②の値は保存はされるが計算エンジンによる自動反映は未実装。
+
+### Phase 5 完了メモ（コミット 06cfb77・次セッションへの引き継ぎ）
+
+計算・リンクエンジンを純関数 `estimateCalc.js` に新設し、エディタ全体を実効値ベースへ移行。`npm run build` 通過（既存 chunk-size 警告のみ）。scratchpad 単体テスト14件通過（link①/②・シート合計・循環検出・wouldCreateCycle ガード）。
+
+- **estimateCalc.js（新設・純関数）**:
+  - `computeEstimateCalc(sheets, items)` → `{ resolvedItems, sheetTotals: Map<sheetId,number>, catTotals: Map<refString,number>, cycleUids: Set<_uid> }`。カテゴリ小計→シート合計→リンク解決をトポロジカル順（メモ化DFS）に計算。
+  - リンク①（`linked_sheet_id`）: 別シート合計→自行 unit_price/amount、摘要 note に「明細書No.n」を自動表示。リンク②（`linked_category_item_id`）: カテゴリ小計→自行 unit_price/amount/name、quantity=1.0式。
+  - **カテゴリ参照キーは常に `String(cat.id ?? cat._tempId ?? cat._uid)`**（`catKeyByAnyRef`）。catTotals は id/_tempId/_uid の全3キーで引ける。保存前後で参照が壊れないよう UI・エンジン・保存層すべてこの規約で統一。
+  - 循環は検出してそのリンクを無効化（値0扱い）し、巻き込まれた行 _uid を `cycleUids` に集約。`wouldCreateCycle(sheets, items, row, kind, targetRef)` は到達可能性DFSでリンク作成前にガード（true ならリンク不可）。
+- **EstimateEditor.jsx**: `calc = useMemo(computeEstimateCalc(sheets, items))`。`linkTargets` useMemo（`{sheetTargets, categoryTargets}`、LinkPicker 用）。`handleGenerateSummary`（先頭に「総括表」シートを生成、各明細カテゴリを link②で参照、FIXED行を移動、冪等）。`setRowLink(uid, kind, targetRef)`（kind='sheet'→linked_sheet_id / 'category'→linked_category_item_id / null→解除、`wouldCreateCycle` でガード）。totals/itemsBySheet/sheetStartPages は `resolvedItems` を走査。
+- **SheetPaper.jsx**: シート末尾合計・カテゴリ小計をエンジン値へ。リンク行は摘要自動表示＋背景色（`COLORS.linkBg`、循環時 `cycleBg`）、ロックセルは解決値を静的描画。行ツールバーに `LinkPicker`（①他シート合計／②カテゴリ小計を選択・解除するポップオーバー）を追加。`renderRow` の第3引数（描画コンテキスト）に `cycleUids` を追加（module-scope 関数からプロップに触れないための配線）。`rowBase` は `overflow:'visible'`（ツールバー/ピッカーがはみ出すため。セルは `cellBase` で自己クリップ）。
+- **SettingsPanel.jsx**: 操作セクションに「総括表を生成」ボタン（`onGenerateSummary`、isLocked時非表示）。
+- **paperStyles.js**: `COLORS.linkBg='#eef6ff'` / `cycleBg='#fdecec'`。
+- **supabaseEstimates.js（buildSaveItemsPayload）**: link② 参照解決表 `itemIndexById` を id だけでなく `_uid`/`_tempId` でも引けるよう拡張（キーは `String()` 化）。総括表自動生成で作った**未保存**カテゴリへの link② を初回保存時に配列インデックスへ確定できる。参照先が payload 内に無ければリンクを外して保存（安全）。
+- **Phase 6 の次アクション**: `EstimatePDF.jsx` のシートモデル対応（明細末尾=税抜合計、消費税・税込は鑑側、通しページ番号）。現状 PDF プレビューは buildPreviewEstimate で全シートをフラット化して旧 EstimateDocument に渡す暫定実装のまま。resolvedItems（リンク解決済み）を PDF 側でも使えるよう計算エンジンを流用するのが筋。
