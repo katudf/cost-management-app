@@ -1,6 +1,6 @@
 # 見積WYSIWYGエディタ刷新 — 進捗・引き継ぎメモ
 
-最終更新: 2026-07-16（コンテキストクリア前の退避）
+最終更新: 2026-07-17（Phase 4 完了）
 作業場所: worktree `.claude/worktrees/ecstatic-cerf-0e582d` / branch `claude/quotation-editor-redesign-a3edb5`
 確定設計: [design.md](design.md)（§4 統一ルール / §5 データモデルが正）
 
@@ -11,7 +11,7 @@
 | 1 | DB基盤（estimate_sheets + save_estimate_items_v2 RPC） | ✅ 完了・コミット e0b4c7a・**本番適用済み** |
 | 2 | データアクセス層（supabaseEstimates.js のv2対応） | ✅ 完了・コミット 9b47fcd |
 | 3 | エディタ骨格（`src/estimate-editor/` 新設：紙面スタック＋鑑インライン編集＋左ナビ＋右設定パネル） | ✅ 完了・コミット（8ファイル作成、`npm run build` 通過） |
-| 4 | 明細グリッド（セル編集・Tab/Enter/矢印・行操作・TSV貼り付け）→ 保存ラウンドトリップ検証 | 未着手 |
+| 4 | 明細グリッド（セル編集・Tab/Enter/矢印・行操作・TSV貼り付け）→ 保存ラウンドトリップ検証 | ✅ 完了・コミット d7b17b6・`npm run build` 通過・保存ペイロード19アサート通過 |
 | 5 | 計算・リンクエンジン（シート末尾合計、リンク①②、循環参照チェック、総括表自動生成） | 未着手 |
 | 6 | EstimatePDF.jsx のシートモデル対応（明細末尾=税抜合計、消費税・税込は鑑側、通しページ番号） | 未着手 |
 | 7 | 統合（AdminApp差し替え、Excel取込シート対応、旧RPC・旧EstimateForm一族の削除） | 未着手 |
@@ -91,5 +91,22 @@ Phase 3 の全8ファイルを `src/estimate-editor/` に作成し `npm run buil
   - 保存: シート順に COMMENT エンコード＋（show_subtotals時）小計行注入 → `buildSaveItemsPayload(sheets, savingItems)` → `saveEstimateItemsV2` → 返却 sheet_ids を **length一致時のみ** index順に適用し sheets/items の sheet_id を再マップ。空行はフィルタせず全行保存。
   - 取込（handleImportGroups）はトップシートの nonFixed 末尾・FIXED手前へ追記。
   - PDFプレビューは buildPreviewEstimate で全シートをフラット化 → 旧 `EstimateDocument`（BlobProvider）。
-- **Phase 4 の次アクション**: SheetPaper を読み取り専用から編集グリッド化（セル編集・Tab/Enter/矢印移動・行操作・TSV貼り付け）し、EstimateEditor に `updateItem/addItem/removeRow/addCategory/addComment/setItems` 系の item 操作を配線。その後、保存ラウンドトリップ（作成→再読込→再保存で sheet_id と linked_* が保持されるか）を実機 or スクラッチパッドで検証する。
-- 注意: `SheetPaper.jsx` 内の空行センチネルは `BLANK_SENTINEL='__blank__'`。EstimateEditor はまだ明細セル編集UIを持たないため、新規シート追加時はカテゴリ＋空明細1組のみ生成する。
+- 注意: `SheetPaper.jsx` 内の空行センチネルは `BLANK_SENTINEL='__blank__'`。
+
+### Phase 4 完了メモ（コミット d7b17b6・次セッションへの引き継ぎ）
+
+SheetPaper を編集グリッド化し、EstimateEditor に item 操作ハンドラを配線した。`npm run build` 通過（exit 0、既存 chunk-size 警告のみ）。保存ラウンドトリップは純粋関数レベルでスクラッチパッド検証済み（19アサート・実DB未使用。RPC 自体は Phase 2 で検証済み）。
+
+- **SheetPaper.jsx の確定実装**:
+  - `renderRow(row, rowKey, opts, edit)` に第4引数 `edit`（編集ハンドラ束、null なら読み取り専用）を追加。item/category/comment 行を透明インライン input（`inputBase` スタイル、罫線・背景なしで紙面テキストと同一見た目）に置換。`isLocked` or `onUpdateItem` 未指定 → プレーンテキスト描画。
+  - 数値入力ヘルパ `formatNumberInput`（負数▲表記）/`parseNumberInput`（全角→半角・カンマ除去・先頭符号のみ許容）を EstimateItemTable.jsx から移植。`NumberCell` は focus 中は生値 draft、blur で整形表示。金額列は自動計算だが `__amount` col で手入力上書きも可（Tabナビ対象外）。
+  - Tab/Enter=次セル、Shift+Tab=前セル、矢印上下=同列前後行。ナビは `navCells`（uid,col の平坦リスト）上の index 移動。末尾セルの Tab/Enter で `onAddRowToSheet(sheet.id, ITEM)` → 追加行の name セルへ requestAnimationFrame フォーカス。IME 変換中（isComposing）は無視。
+  - `data-uid`/`data-col` 属性でセル特定。`onAddRowToSheet` は **`sheet.id` を直接使う**（items は `itemsBySheet.get(sheet.id)` でシート別に渡るため、空シートでも確実）。
+  - 行左ホバーツールバー（上下移動/追加/複製/削除、lucide アイコン）と末尾ページの［＋行を追加］ボタン。ホバー表示は `#paper-sheet-{idx} .sheet-edit-row:hover .sheet-row-toolbar` の inline `<style>`。
+  - セル TSV 貼り付け: `\t` or `\n` を含む場合のみ `onPasteTsv(uid, text)` へ横取り、単一値は既定動作。
+- **EstimateEditor.jsx の確定実装**（`_uid` で対象行を特定。理由: SheetPaper はシートローカル items しか持たずフラット index を知らないため）:
+  - module-level `newUid()`（`row_{ts}_{n}_{rand}`）、`newItemRow`/`newCommentRow`/`newCategoryRow` に `_uid` 付与。ロード時（fetchEstimateById 後）とドラフト復元時に全行へ `_uid` 補完。
+  - ハンドラ（全て `renumberSheet(flat, sheetId)` で当該シートのみ sort_order を 0..n 再採番）: `updateItem(uid,field,value)`（`withAutoAmount` で数量×単価が両方数値のときだけ amount 自動設定）/ `addRowAfter(uid,kind)` / `addRowToSheet(sheetId,kind)`（シートの先頭 FIXED 手前、無ければ末尾に挿入）/ `removeRow(uid)`（FIXED と各シート最後の非FIXED行は削除拒否）/ `duplicateRow(uid)`（id/_tempId を除去し新 _uid、CATEGORY なら新 _tempId）/ `moveRow(uid,dir)`（同シート隣接行と swap、FIXED 拒否）/ `pasteTsv(uid,tsv)`（COLS=name/spec/quantity/unit/unit_price/note、行を ITEM として挿入、amount 再計算）。
+  - `<SheetPaper>` に8編集 props（isLocked/onUpdateItem/onAddRowAfter/onAddRowToSheet/onRemoveRow/onDuplicateRow/onMoveRow/onPasteTsv）を配線。
+- **保存ラウンドトリップ検証結果**（scratchpad `phase4_roundtrip.mjs`、esbuild で supabase を stub 化して buildSaveItemsPayload を bundle→eval、19/19 pass）: `_uid`/`_tempId`/`id` 除去、文字列数値（"1234"/"-500"）→ number 変換、空行センチネル `__blank__` 保持、リンク①(`linked_sheet_id`→sheet_index)・②(`linked_category_item_id`→item_index)をシート跨ぎで正しく解決。
+- **Phase 5 の次アクション**: 計算・リンクエンジン（シート末尾合計、リンク①②の実値反映、循環参照チェック、総括表自動生成）。design.md §5 が正。現状 SheetPaper のカテゴリ小計・シート合計・税抜合計は `buildSheetRows` 内で ITEM amount を単純合算しているのみで、リンク①②の値は保存はされるが計算エンジンによる自動反映は未実装。
