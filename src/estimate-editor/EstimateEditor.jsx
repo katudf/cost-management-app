@@ -52,6 +52,7 @@ import PageNav from './PageNav';
 import CoverPaper from './CoverPaper';
 import SheetPaper, { calcSheetPageCount } from './SheetPaper';
 import SettingsPanel from './SettingsPanel';
+import { computeEstimateCalc, wouldCreateCycle } from './estimateCalc';
 
 // 今日の日付を YYMMDD 形式で返す
 const todayPrefix = () => {
@@ -461,6 +462,15 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   }, [persistStatus]);
 
   // ============================================================
+  // 編集ロック判定
+  // （handleGenerateSummary 等が isLocked を参照するため、シート操作より前で確定させる）
+  // ============================================================
+  const isLocked = !isNew && originalStatus !== ESTIMATE_STATUS.DRAFT;
+  // 担当者(staff_id)未設定の見積書は作成者チェック対象外とし、誰でも編集可能とする
+  const isCreator = !header.staff_id || String(header.staff_id) === String(currentStaff?.id);
+  const creatorStaff = officeStaff.find(s => String(s.id) === String(header.staff_id)) || null;
+
+  // ============================================================
   // シート操作
   // ============================================================
   const handleAddSheet = useCallback(() => {
@@ -531,6 +541,74 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
     });
     showToast('過去見積から明細を取込みました', 'success');
   }, [sheets, showToast]);
+
+  // ============================================================
+  // 総括表自動生成（design.md §4/§5・②水沢中 P2形式）
+  // 明細シートのカテゴリ一覧から、各カテゴリ小計を②リンクで引く「総括表」シートを
+  // トップシート（index 0）としてワンクリック生成する。リンクは各カテゴリの _uid で
+  // 張る（computeEstimateCalc / buildSaveItemsPayload が _uid 参照を解決する）。
+  // FIXED（法定福利費・安全費）は「トップシート末尾に配置」ルールに従い総括表へ移す。
+  // 既に総括表があれば作り直す（重複生成を防止）。
+  // ============================================================
+  const SUMMARY_TITLE = '総括表';
+
+  const handleGenerateSummary = useCallback(() => {
+    if (isLocked) return;
+    setSheets(prevSheets => {
+      // 既存の総括表シートは一旦除外し、明細シートだけを対象にする
+      const summaryIds = new Set(
+        prevSheets.filter(s => s.title === SUMMARY_TITLE).map(s => s.id)
+      );
+      const detailSheets = prevSheets.filter(s => !summaryIds.has(s.id));
+      if (detailSheets.length === 0) return prevSheets;
+
+      const summaryId = newSheetTempId();
+
+      setItems(prevItems => {
+        // 総括表以外（＝明細）の行だけ残す。旧総括表の行は破棄する。
+        const detailItems = prevItems.filter(it => !summaryIds.has(it.sheet_id));
+
+        // 明細シートに現れるカテゴリを表示順に収集（空カテゴリも1行として立てる）
+        const cats = [];
+        for (const s of detailSheets) {
+          detailItems
+            .filter(it => it.sheet_id === s.id && it.item_type === ITEM_TYPE.CATEGORY)
+            .forEach(cat => cats.push(cat));
+        }
+        if (cats.length === 0) return prevItems; // カテゴリが無ければ生成しない
+
+        // FIXED 行を明細から抜き出し（総括表へ移設する）、残りが明細本体
+        const movedFixed = detailItems.filter(it => it.item_type === ITEM_TYPE.FIXED);
+        const detailBody = detailItems.filter(it => it.item_type !== ITEM_TYPE.FIXED);
+
+        // 総括表の②リンク行: 各カテゴリ小計を数量1.0式・単価・名称で引く
+        let order = 0;
+        const summaryRows = cats.map(cat => ({
+          ...newItemRow(summaryId, order++),
+          name: cat.name || '',
+          quantity: 1,
+          unit: '式',
+          // リンク行の実値（単価・金額・名称）は computeEstimateCalc が上書きする
+          linked_category_item_id: cat._uid,
+        }));
+
+        // FIXED を総括表末尾へ（sort_order はシート内連番で再採番）
+        const summaryFixed = movedFixed.map(r => ({
+          ...r,
+          sheet_id: summaryId,
+          linked_sheet_id: null,
+          linked_category_item_id: null,
+          sort_order: order++,
+        }));
+
+        return [...summaryRows, ...summaryFixed, ...detailBody];
+      });
+
+      // 総括表を先頭（トップシート）に据える
+      return [{ id: summaryId, title: SUMMARY_TITLE }, ...detailSheets];
+    });
+    showToast('総括表を生成しました', 'success');
+  }, [isLocked, showToast]);
 
   // ============================================================
   // 明細セル編集・行操作（SheetPaper から _uid で対象行を指定）
@@ -714,12 +792,51 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
     });
   }, [renumberSheet]);
 
+  // 行にリンクを張る／外す（design.md §4）。
+  //   kind='sheet'    : ①別シート合計リンク（targetRef = シートid）
+  //   kind='category' : ②カテゴリ小計リンク（targetRef = カテゴリの id/_uid/_tempId）
+  //   kind=null       : リンク解除
+  // リンク作成前に wouldCreateCycle で到達可能性を検査し、循環になる場合は拒否する。
+  const setRowLink = useCallback((uid, kind, targetRef) => {
+    setItems(prev => {
+      const row = prev.find(it => it._uid === uid);
+      if (!row) return prev;
+      if (kind && targetRef != null && wouldCreateCycle(sheets, prev, row, kind, targetRef)) {
+        showToast('循環参照になるためリンクできません', 'error');
+        return prev;
+      }
+      return prev.map(it => {
+        if (it._uid !== uid) return it;
+        if (kind === 'sheet') {
+          return { ...it, linked_sheet_id: targetRef, linked_category_item_id: null };
+        }
+        if (kind === 'category') {
+          return { ...it, linked_category_item_id: targetRef, linked_sheet_id: null };
+        }
+        // 解除
+        return { ...it, linked_sheet_id: null, linked_category_item_id: null };
+      });
+    });
+  }, [sheets, showToast]);
+
+  // ============================================================
+  // 計算・リンクエンジン（Phase 5: design.md §4/§5）
+  // シートをまたぐリンク①②を解決し、実効値・各シート合計・カテゴリ小計を一括計算。
+  // 以降の totals（鑑）・itemsBySheet（描画）・ページ数計算はこの解決結果を基準にする。
+  // ============================================================
+  const calc = useMemo(
+    () => computeEstimateCalc(sheets, items),
+    [sheets, items]
+  );
+  const { resolvedItems, sheetTotals, catTotals, cycleUids } = calc;
+
   // ============================================================
   // 合計計算（トップシートの明細＋FIXEDを対象にする。鑑・トップシート表示用）
+  // リンク解決後の resolvedItems を基準にすることで、リンク①②の実値が鑑へ反映される。
   // ============================================================
   const totals = useMemo(() => {
     const topSheetId = sheets[0]?.id;
-    const topItems = items.filter(it => it.sheet_id === topSheetId);
+    const topItems = resolvedItems.filter(it => it.sheet_id === topSheetId);
     const visibleItems = topItems.filter(i =>
       i.item_type === ITEM_TYPE.ITEM ||
       (i.item_type === ITEM_TYPE.FIXED && header.show_fixed_fees)
@@ -729,16 +846,45 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
       perc: header.net_perc,
       manualAmount: header.net_amount,
     });
-  }, [items, sheets, header.show_fixed_fees, header.tax_rate, header.net_calc_type, header.net_perc, header.net_amount]);
+  }, [resolvedItems, sheets, header.show_fixed_fees, header.tax_rate, header.net_calc_type, header.net_perc, header.net_amount]);
 
-  // 各シートの明細を sheet_id で束ねる（描画・保存で共用）
+  // 各シートの明細を sheet_id で束ねる（描画・保存で共用）。
+  // 描画はリンク解決済みの resolvedItems を使う（編集・保存は生の items を使い続ける）。
   const itemsBySheet = useMemo(() => {
     const map = new Map(sheets.map(s => [s.id, []]));
-    items.forEach(it => {
+    resolvedItems.forEach(it => {
       if (map.has(it.sheet_id)) map.get(it.sheet_id).push(it);
     });
     return map;
-  }, [sheets, items]);
+  }, [sheets, resolvedItems]);
+
+  // リンク作成UI（SheetPaper の行リンクピッカー）が選択肢として提示する対象一覧。
+  //   sheetTargets    : ①別シート合計リンクの候補（各シートの解決済み合計）
+  //   categoryTargets : ②カテゴリ小計リンクの候補（各カテゴリの解決済み小計）
+  // ref は setRowLink / computeEstimateCalc が解決に使うキー（id ?? _tempId ?? _uid）と一致させる。
+  const catRef = (cat) => String(cat.id ?? cat._tempId ?? cat._uid);
+  const linkTargets = useMemo(() => {
+    const sheetTargets = sheets.map(s => ({
+      id: s.id,
+      title: s.title || '（無題シート）',
+      total: sheetTotals.get(s.id) ?? 0,
+    }));
+    const categoryTargets = [];
+    sheets.forEach(s => {
+      resolvedItems
+        .filter(it => it.sheet_id === s.id && it.item_type === ITEM_TYPE.CATEGORY)
+        .forEach(cat => {
+          const ref = catRef(cat);
+          categoryTargets.push({
+            ref,
+            label: `${cat.category_symbol ? cat.category_symbol + ' ' : ''}${cat.name || '（無題工種）'}`,
+            sheetTitle: s.title || '',
+            subtotal: catTotals.get(ref) ?? 0,
+          });
+        });
+    });
+    return { sheetTargets, categoryTargets };
+  }, [sheets, resolvedItems, sheetTotals, catTotals]);
 
   // 各シート先頭ページの通しページ番号（鑑 = No.1、以降シート順に加算）
   const sheetStartPages = useMemo(() => {
@@ -751,14 +897,6 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
     });
     return starts;
   }, [sheets, itemsBySheet, header, totals]);
-
-  // ============================================================
-  // 編集ロック判定
-  // ============================================================
-  const isLocked = !isNew && originalStatus !== ESTIMATE_STATUS.DRAFT;
-  // 担当者(staff_id)未設定の見積書は作成者チェック対象外とし、誰でも編集可能とする
-  const isCreator = !header.staff_id || String(header.staff_id) === String(currentStaff?.id);
-  const creatorStaff = officeStaff.find(s => String(s.id) === String(header.staff_id)) || null;
 
   const handleUnlock = async () => {
     if (!isCreator) return;
@@ -1176,6 +1314,9 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
                 header={header}
                 settings={settings}
                 totals={totals}
+                sheetTotal={sheetTotals.get(sheet.id)}
+                cycleUids={cycleUids}
+                linkTargets={linkTargets}
                 startPageNumber={sheetStartPages[idx]}
                 isLocked={isLocked}
                 onUpdateItem={updateItem}
@@ -1185,6 +1326,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
                 onDuplicateRow={duplicateRow}
                 onMoveRow={moveRow}
                 onPasteTsv={pasteTsv}
+                onSetRowLink={setRowLink}
               />
             ))}
 
@@ -1223,6 +1365,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
             numberError={numberError}
             onReissueNumber={handleReissueNumber}
             onImportGroups={handleImportGroups}
+            onGenerateSummary={handleGenerateSummary}
             currentEstimateId={estimateId}
             onOpenPreview={handleOpenPreview}
           />

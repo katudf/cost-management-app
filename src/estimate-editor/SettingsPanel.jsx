@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Save, Unlock, ChevronDown, ChevronUp, Lock, UserCheck, Send, Trophy, XCircle, RefreshCw, Download } from 'lucide-react';
+import { Save, Unlock, ChevronDown, ChevronUp, Lock, UserCheck, Send, Trophy, XCircle, RefreshCw, Download, LayoutList } from 'lucide-react';
 import { ESTIMATE_STATUS, ESTIMATE_STATUS_LABEL } from '../utils/constants';
 import { formatCurrency } from '../supabaseEstimates';
 import EstimateApprovalModal from '../components/estimate/EstimateApprovalModal';
@@ -62,6 +62,7 @@ const STATUS_BADGES = [
  *   - numberError: string   見積番号の重複・形式エラー文言
  *   - onReissueNumber: () => void  空き枝番の自動採番
  *   - onImportGroups: (groups) => void  過去見積グループの取込（EstimateEditor側でトップシートへ追記）
+ *   - onGenerateSummary: () => void  総括表シートの自動生成（各カテゴリ小計を②リンクで引く）
  *   - currentEstimateId: number|null  取込モーダルで自分自身を除外するため
  *   - onOpenPreview: () => void
  */
@@ -84,6 +85,7 @@ const SettingsPanel = ({
   numberError = '',
   onReissueNumber,
   onImportGroups,
+  onGenerateSummary,
   currentEstimateId = null,
   onOpenPreview,
 }) => {
@@ -339,6 +341,17 @@ const SettingsPanel = ({
             className="w-full flex items-center justify-center gap-1.5 border border-slate-300 text-slate-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 px-3 py-2 rounded-lg text-sm font-medium transition"
           >
             過去見積から取込
+          </button>
+        )}
+        {!isLocked && onGenerateSummary && (
+          <button
+            type="button"
+            onClick={onGenerateSummary}
+            title="各明細シートのカテゴリ小計を集計した総括表シートを先頭に自動生成します"
+            className="w-full flex items-center justify-center gap-1.5 border border-slate-300 text-slate-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 px-3 py-2 rounded-lg text-sm font-medium transition"
+          >
+            <LayoutList size={14} />
+            総括表を生成
           </button>
         )}
       </div>

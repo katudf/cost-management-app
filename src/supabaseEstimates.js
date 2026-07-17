@@ -327,9 +327,14 @@ export const buildSaveItemsPayload = (sheets, items) => {
     };
   });
 
+  // ②カテゴリ合計リンクの参照解決表。保存済み行は id、未保存のクライアント行は
+  // _uid / _tempId でも引けるようにする（総括表自動生成で作った未保存カテゴリへの
+  // リンクを初回保存時に配列インデックスへ確定できるようにするため）。
   const itemIndexById = new Map();
   items.forEach((item, idx) => {
-    if (item.id != null) itemIndexById.set(item.id, idx);
+    if (item.id != null) itemIndexById.set(String(item.id), idx);
+    if (item._uid != null) itemIndexById.set(String(item._uid), idx);
+    if (item._tempId != null) itemIndexById.set(String(item._tempId), idx);
   });
 
   const toNumberOrNull = (v) => (v === '' || v == null ? null : Number(v));
@@ -343,7 +348,7 @@ export const buildSaveItemsPayload = (sheets, items) => {
       item.linked_sheet_id != null ? sheetIndexById.get(item.linked_sheet_id) : null;
     const linkedItemIndex =
       item.linked_category_item_id != null
-        ? itemIndexById.get(item.linked_category_item_id)
+        ? itemIndexById.get(String(item.linked_category_item_id))
         : null;
 
     return {

@@ -19,7 +19,7 @@
 // クライアント安定キー `_uid` で指定する（SheetPaper はシートローカルな items しか
 // 持たず、フラット配列内の絶対 index を知らないため）。
 import React, { useRef, useCallback, useState } from 'react';
-import { Plus, Trash2, Copy, ChevronUp, ChevronDown } from 'lucide-react';
+import { Plus, Trash2, Copy, ChevronUp, ChevronDown, Link2, Link2Off } from 'lucide-react';
 import { ITEM_TYPE } from '../utils/constants';
 import {
   pt, PAPER_WIDTH, PAPER_HEIGHT, ROWS_PER_PAGE, COLORS, page, table, fmt,
@@ -38,6 +38,11 @@ const COMMENT_COL_KEYS = ['name'];
 const colKeysFor = (item) => {
   if (item.item_type === ITEM_TYPE.CATEGORY) return CATEGORY_COL_KEYS;
   if (item.item_type === ITEM_TYPE.COMMENT) return COMMENT_COL_KEYS;
+  // リンク行（Phase 5）はリンク制御列を input で出さないため Tab ナビからも除外する。
+  // ② カテゴリ小計リンク: 名称・数量・単位・単価がリンク制御 → 仕様のみ編集可。
+  // ① 別シート合計リンク: 単価・摘要がリンク制御 → 名称・仕様・数量・単位が編集可。
+  if (item.linked_category_item_id != null) return ['spec'];
+  if (item.linked_sheet_id != null) return ['name', 'spec', 'quantity', 'unit'];
   return ITEM_COL_KEYS;
 };
 
@@ -82,7 +87,7 @@ const parseNumberInput = (raw) => {
 // フッター行が必ず最終ページ末尾に収まるようにする。
 // 返り値は行記述子 {kind, item?, itemNo?, catTotal?, label?, amount?} の配列で、
 // 長さは必ず ROWS_PER_PAGE の倍数になる。
-export const buildSheetRows = (items, header, isTopSheet, totals) => {
+export const buildSheetRows = (items, header, isTopSheet, totals, sheetTotal) => {
   const nonFixed = items.filter(i => i.item_type !== ITEM_TYPE.FIXED);
   const fixedItems = items.filter(i => i.item_type === ITEM_TYPE.FIXED);
 
@@ -149,10 +154,14 @@ export const buildSheetRows = (items, header, isTopSheet, totals) => {
       rows.push({ kind: 'net', amount: totals.net });
     }
   } else {
-    const sheetTotal = items.reduce(
-      (sum, i) => sum + (i.item_type === ITEM_TYPE.ITEM ? (Number(i.amount) || 0) : 0), 0
-    );
-    rows.push({ kind: 'sheet-total', amount: sheetTotal });
+    // 計算エンジン（Phase 5）がリンク解決済みのシート合計を渡す場合はそれを優先。
+    // 渡されない場合（呼び出し元未対応・ページ数計算のみ等）は ITEM 金額を単純合算。
+    const resolvedTotal = sheetTotal != null
+      ? sheetTotal
+      : items.reduce(
+          (sum, i) => sum + (i.item_type === ITEM_TYPE.ITEM ? (Number(i.amount) || 0) : 0), 0
+        );
+    rows.push({ kind: 'sheet-total', amount: resolvedTotal });
   }
 
   return rows;
@@ -202,7 +211,10 @@ const rowBase = {
   borderBottom: dashedBottom,
   borderLeft: `${pt(1)}px solid ${COLORS.ink}`,
   borderRight: `${pt(1)}px solid ${COLORS.ink}`,
-  overflow: 'hidden',
+  // 各セルが自前で overflow:hidden するため行では clip 不要。
+  // 行を clip すると行ツールバー（左外）とリンクピッカー（下方向・最大300px）が
+  // 切れてしまうため visible にする。
+  overflow: 'visible',
   position: 'relative',
 };
 
@@ -270,8 +282,87 @@ const NumberCell = ({ uid, col, value, onChange, onPaste, onKeyDown }) => {
   );
 };
 
-// 行左端にホバーで出す行操作ツールバー（上下移動/追加/複製/削除）
-const RowToolbar = ({ item, onAddRowAfter, onDuplicateRow, onRemoveRow, onMoveRow }) => {
+// 行にリンクを張る／外すためのポップオーバー。
+// ①別シート合計リンク（このシート以外の各シート合計）／②カテゴリ小計リンク（全カテゴリ小計）
+// を一覧から選ぶ。現在リンク中なら解除ボタンを出す。
+const LinkPicker = ({ item, currentSheetId, linkTargets, onSetRowLink, onClose }) => {
+  const { sheetTargets = [], categoryTargets = [] } = linkTargets || {};
+  // ①は自シート以外の合計のみ（自シート合計を自シート行へ引くのは無意味）
+  const sheetOpts = sheetTargets.filter(s => s.id !== currentSheetId);
+  const isLinked = item.linked_sheet_id != null || item.linked_category_item_id != null;
+
+  const optStyle = {
+    display: 'block', width: '100%', textAlign: 'left',
+    padding: '4px 8px', border: 'none', background: 'transparent',
+    cursor: 'pointer', fontSize: 12, color: COLORS.ink, borderRadius: 4,
+    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+  };
+  const headStyle = {
+    fontSize: 11, fontWeight: 'bold', color: COLORS.muted,
+    padding: '4px 8px 2px', textTransform: 'none',
+  };
+  return (
+    <div
+      role="dialog"
+      aria-label="行リンク設定"
+      onMouseDown={(e) => e.stopPropagation()}
+      style={{
+        position: 'absolute',
+        top: '100%',
+        left: pt(-58),
+        marginTop: 2,
+        width: 260,
+        maxHeight: 300,
+        overflowY: 'auto',
+        background: '#fff',
+        border: `1px solid ${COLORS.dashed}`,
+        borderRadius: 6,
+        boxShadow: '0 4px 12px rgba(0,0,0,0.18)',
+        zIndex: 20,
+        padding: 4,
+      }}
+    >
+      {isLinked && (
+        <button type="button" style={{ ...optStyle, color: '#dc2626', display: 'flex', alignItems: 'center', gap: 4 }}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => { onSetRowLink(item._uid, null, null); onClose(); }}>
+          <Link2Off size={12} /> リンクを解除
+        </button>
+      )}
+      <div style={headStyle}>① 別シート合計を引く</div>
+      {sheetOpts.length === 0 && <div style={{ ...optStyle, color: COLORS.muted }}>他のシートがありません</div>}
+      {sheetOpts.map(s => (
+        <button key={`s-${s.id}`} type="button" style={{
+          ...optStyle,
+          ...(String(item.linked_sheet_id) === String(s.id) ? { background: COLORS.linkBg, fontWeight: 'bold' } : {}),
+        }}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => { onSetRowLink(item._uid, 'sheet', s.id); onClose(); }}>
+          {s.title}　<span style={{ color: COLORS.muted }}>{fmt(s.total)}</span>
+        </button>
+      ))}
+      <div style={headStyle}>② カテゴリ小計を引く</div>
+      {categoryTargets.length === 0 && <div style={{ ...optStyle, color: COLORS.muted }}>工種がありません</div>}
+      {categoryTargets.map(c => (
+        <button key={`c-${c.ref}`} type="button" style={{
+          ...optStyle,
+          ...(String(item.linked_category_item_id) === String(c.ref) ? { background: COLORS.linkBg, fontWeight: 'bold' } : {}),
+        }}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => { onSetRowLink(item._uid, 'category', c.ref); onClose(); }}>
+          {c.label}　<span style={{ color: COLORS.muted }}>{fmt(c.subtotal)}</span>
+          {c.sheetTitle ? <span style={{ color: COLORS.muted, fontSize: 10 }}>（{c.sheetTitle}）</span> : ''}
+        </button>
+      ))}
+    </div>
+  );
+};
+
+// 行左端にホバーで出す行操作ツールバー（上下移動/追加/複製/削除/リンク）
+const RowToolbar = ({ item, onAddRowAfter, onDuplicateRow, onRemoveRow, onMoveRow, onSetRowLink, currentSheetId, linkTargets }) => {
+  const [linkOpen, setLinkOpen] = useState(false);
+  const canLink = typeof onSetRowLink === 'function' && item.item_type === ITEM_TYPE.ITEM;
+  const isLinked = item.linked_sheet_id != null || item.linked_category_item_id != null;
   const btn = {
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     width: 16, height: 16, border: 'none', background: 'transparent',
@@ -311,9 +402,26 @@ const RowToolbar = ({ item, onAddRowAfter, onDuplicateRow, onRemoveRow, onMoveRo
       <button type="button" style={{ ...btn, color: '#2563eb' }} title="行を複製" aria-label="行を複製"
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => onDuplicateRow(item._uid)}><Copy size={12} /></button>
+      {canLink && (
+        <button type="button"
+          style={{ ...btn, color: isLinked ? '#2563eb' : COLORS.muted }}
+          title="他シート合計／カテゴリ小計をこの行に引く"
+          aria-label="行にリンクを設定"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => setLinkOpen(o => !o)}><Link2 size={12} /></button>
+      )}
       <button type="button" style={{ ...btn, color: '#dc2626' }} title="行を削除" aria-label="行を削除"
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => onRemoveRow(item._uid)}><Trash2 size={12} /></button>
+      {canLink && linkOpen && (
+        <LinkPicker
+          item={item}
+          currentSheetId={currentSheetId}
+          linkTargets={linkTargets}
+          onSetRowLink={onSetRowLink}
+          onClose={() => setLinkOpen(false)}
+        />
+      )}
     </div>
   );
 };
@@ -322,7 +430,7 @@ const RowToolbar = ({ item, onAddRowAfter, onDuplicateRow, onRemoveRow, onMoveRo
 // 行レンダリング
 // ============================================================
 // edit = 編集ハンドラ束（null なら読み取り専用）
-const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom }, edit) => {
+const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom, cycleUids }, edit) => {
   const rowStyle = {
     ...rowBase,
     ...(isSolidBottom || isLastRowOfPage ? { borderBottom: solidBottom } : {}),
@@ -337,6 +445,9 @@ const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom }, edit) => {
       onDuplicateRow={edit.onDuplicateRow}
       onRemoveRow={edit.onRemoveRow}
       onMoveRow={edit.onMoveRow}
+      onSetRowLink={edit.onSetRowLink}
+      currentSheetId={edit.currentSheetId}
+      linkTargets={edit.linkTargets}
     />
   ) : null;
 
@@ -426,32 +537,60 @@ const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom }, edit) => {
       }
       const chg = (col, val) => edit.onUpdateItem(uid, col, val);
       const paste = (e) => edit.onCellPaste(e, uid);
+      // リンク行判定: ①別シート合計リンク / ②カテゴリ小計リンク。
+      // リンクが制御する列（名称・数量・単位・単価・金額・摘要）はエンジンが毎描画で
+      // 上書きするため、編集可能モードでも input を出さず解決値を静的表示する。
+      const isLink1 = item.linked_sheet_id != null;
+      const isLink2 = item.linked_category_item_id != null;
+      const isCycle = cycleUids && cycleUids.has(uid);
+      const linkRowStyle = (isLink1 || isLink2)
+        ? { ...rowStyle, background: isCycle ? COLORS.cycleBg : COLORS.linkBg }
+        : rowStyle;
+      // ② はカテゴリ小計そのものなので名称・数量・単位・単価・金額すべてリンク制御。
+      // ① はシート合計→単価なので単価・金額・摘要をリンク制御（名称・数量は手入力可）。
+      const lockName = isLink2;
+      const lockQty  = isLink2;
+      const lockUnit = isLink2;
+      const lockPrice = isLink1 || isLink2;
+      const lockNote = isLink1;
       return (
-        <div key={rowKey} className="sheet-edit-row" style={rowStyle}>
+        <div key={rowKey} className="sheet-edit-row" style={linkRowStyle} title={isCycle ? '循環参照のためリンクを無効化しています' : undefined}>
           {toolbar}
           <div style={CELLS.no}>{itemNo ?? ''}</div>
           <div style={CELLS.name}>
-            <TextCell uid={uid} col="name" value={item.name} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />
+            {lockName
+              ? item.name
+              : <TextCell uid={uid} col="name" value={item.name} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />}
           </div>
           <div style={CELLS.spec}>
             <TextCell uid={uid} col="spec" value={item.spec} color={COLORS.subInk} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />
           </div>
           <div style={CELLS.qty}>
-            <NumberCell uid={uid} col="quantity" value={item.quantity} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />
+            {lockQty
+              ? (item.quantity != null && item.quantity !== '' ? Number(item.quantity).toLocaleString('ja-JP') : '')
+              : <NumberCell uid={uid} col="quantity" value={item.quantity} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />}
           </div>
           <div style={CELLS.unit}>
-            <TextCell uid={uid} col="unit" value={item.unit} align="center" onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />
+            {lockUnit
+              ? (item.unit || '')
+              : <TextCell uid={uid} col="unit" value={item.unit} align="center" onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />}
           </div>
           <div style={CELLS.price}>
-            <NumberCell uid={uid} col="unit_price" value={item.unit_price} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />
+            {lockPrice
+              ? (item.unit_price != null && item.unit_price !== '' ? fmt(item.unit_price) : '')
+              : <NumberCell uid={uid} col="unit_price" value={item.unit_price} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />}
           </div>
-          {/* 金額は自動計算（数量×単価）だが手入力での上書きも許容。Tabナビ対象外 */}
+          {/* 金額は自動計算（数量×単価）だが非リンク行は手入力での上書きも許容。Tabナビ対象外 */}
           <div style={CELLS.amount}>
-            <NumberCell uid={uid} col="__amount" value={item.amount}
-              onChange={(_c, v) => edit.onUpdateItem(uid, 'amount', v)} onPaste={paste} onKeyDown={edit.onKeyDown} />
+            {(lockPrice)
+              ? (item.amount != null && item.amount !== '' ? fmt(item.amount) : '')
+              : <NumberCell uid={uid} col="__amount" value={item.amount}
+                  onChange={(_c, v) => edit.onUpdateItem(uid, 'amount', v)} onPaste={paste} onKeyDown={edit.onKeyDown} />}
           </div>
           <div style={CELLS.note}>
-            <TextCell uid={uid} col="note" value={item.note} color={COLORS.noteInk} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />
+            {lockNote
+              ? <span style={{ color: COLORS.noteInk }}>{item.note || ''}</span>
+              : <TextCell uid={uid} col="note" value={item.note} color={COLORS.noteInk} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />}
           </div>
         </div>
       );
@@ -575,6 +714,9 @@ const SheetPaper = ({
   header,            // estimate_number / show_fixed_fees / show_net を参照
   settings,          // フッターの会社名表示用
   totals,            // calcTotals の結果（トップシートの税抜合計・NETに使用）
+  sheetTotal,        // Phase 5: 計算エンジンが解決したこのシートの合計（サブシート合計に使用）
+  cycleUids,         // Phase 5: 循環参照で無効化された行の _uid 集合（警告表示用）
+  linkTargets,       // Phase 5: 行リンクピッカーの候補 { sheetTargets, categoryTargets }
   startPageNumber,   // このシート先頭ページの通し番号（鑑が No.1）
   // ── Phase 4: セル編集（すべて任意。未指定 or isLocked なら読み取り専用） ──
   isLocked,
@@ -585,9 +727,10 @@ const SheetPaper = ({
   onDuplicateRow,
   onMoveRow,
   onPasteTsv,
+  onSetRowLink,      // Phase 5: 行にリンク①②を張る／外す
 }) => {
   const isTopSheet = sheetIndex === 0;
-  const rows = buildSheetRows(items, header, isTopSheet, totals);
+  const rows = buildSheetRows(items, header, isTopSheet, totals, sheetTotal);
   const estimateNumber = `${header.estimate_number_date}-${header.estimate_number_seq}-${header.estimate_number_branch}`;
 
   const editable = !isLocked && typeof onUpdateItem === 'function';
@@ -689,6 +832,9 @@ const SheetPaper = ({
     onMoveRow,
     onKeyDown: handleKeyDown,
     onCellPaste: handleCellPaste,
+    onSetRowLink,
+    currentSheetId: sheet.id,
+    linkTargets,
   } : null;
 
   // 19行ずつページに分割
@@ -745,6 +891,7 @@ const SheetPaper = ({
           {pageRows.map((row, rowIdx) => renderRow(row, rowIdx, {
             isLastRowOfPage: rowIdx === ROWS_PER_PAGE - 1,
             isSolidBottom: false,
+            cycleUids,
           }, edit))}
 
           {/* 末尾ページに［＋行を追加］（編集時のみ） */}
