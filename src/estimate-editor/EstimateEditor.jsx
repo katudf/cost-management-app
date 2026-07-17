@@ -78,8 +78,16 @@ const toInputDate = (val) => {
 // RPC が新規発行 → 戻り値 sheet_ids を index順に本IDへ再マップする）
 const newSheetTempId = () => `sheet_tmp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
+// 明細行のクライアント側安定キー。SheetPaper のセル編集ハンドラは配列 index ではなく
+// この _uid で対象行を特定する（描画上のシート内 index と state のフラット index が
+// ずれても正しい行を更新できるようにするため）。保存時は buildSaveItemsPayload/
+// buildPreviewEstimate が _tempId と共に取り除く（DBには送らない）。
+let _uidCounter = 0;
+const newUid = () => `row_${Date.now()}_${_uidCounter++}_${Math.random().toString(36).slice(2, 7)}`;
+
 // 空の明細行テンプレート（sheet_id は呼び出し側で付与）
 const newItemRow = (sheetId, sortOrder) => ({
+  _uid: newUid(),
   sheet_id: sheetId,
   sort_order: sortOrder,
   item_type: ITEM_TYPE.ITEM,
@@ -93,7 +101,23 @@ const newItemRow = (sheetId, sortOrder) => ({
   note: '',
 });
 
+const newCommentRow = (sheetId, sortOrder) => ({
+  _uid: newUid(),
+  sheet_id: sheetId,
+  item_type: ITEM_TYPE.COMMENT,
+  category_symbol: null,
+  name: '',
+  spec: null,
+  quantity: null,
+  unit: null,
+  unit_price: null,
+  amount: null,
+  note: null,
+  sort_order: sortOrder,
+});
+
 const newCategoryRow = (sheetId, sortOrder) => ({
+  _uid: newUid(),
   sheet_id: sheetId,
   item_type: ITEM_TYPE.CATEGORY,
   category_symbol: '',
@@ -270,12 +294,14 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
           // fetchEstimateById がシート未生成時は仮トップシートを合成、
           // sheet_id NULL 明細はトップシートへ帰属済み
           setSheets((est.sheets || []).map(s => ({ id: s.id, title: s.title ?? null })));
-          // DBで '__comment__' としてエンコードされたコメント行を復元
-          const loadedItems = (est.items || []).map(item =>
-            item.item_type === ITEM_TYPE.ITEM && item.category_symbol === '__comment__'
+          // DBで '__comment__' としてエンコードされたコメント行を復元。
+          // 併せて全行にクライアント側安定キー _uid を付与する（セル編集の対象特定用）。
+          const loadedItems = (est.items || []).map(item => {
+            const base = item.item_type === ITEM_TYPE.ITEM && item.category_symbol === '__comment__'
               ? { ...item, item_type: ITEM_TYPE.COMMENT, category_symbol: null }
-              : item
-          );
+              : { ...item };
+            return { ...base, _uid: newUid() };
+          });
           setItems(loadedItems);
           setOriginalStatus(est.status || ESTIMATE_STATUS.DRAFT);
         }
@@ -505,6 +531,188 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
     });
     showToast('過去見積から明細を取込みました', 'success');
   }, [sheets, showToast]);
+
+  // ============================================================
+  // 明細セル編集・行操作（SheetPaper から _uid で対象行を指定）
+  // ============================================================
+
+  // 指定シートの明細だけを sort_order 昇順で連番に振り直すユーティリティ。
+  // フラット配列内で該当シートの行順序を正規化しつつ、他シートの行はそのまま維持する。
+  const renumberSheet = useCallback((flat, sheetId) => {
+    let n = 0;
+    return flat.map(it =>
+      it.sheet_id === sheetId ? { ...it, sort_order: n++ } : it
+    );
+  }, []);
+
+  // 金額の自動計算（数量×単価。どちらか空なら amount は据え置き＝手入力を尊重）
+  const withAutoAmount = useCallback((row, field, value) => {
+    if (field !== 'quantity' && field !== 'unit_price') return { ...row, [field]: value };
+    const next = { ...row, [field]: value };
+    const q = Number(next.quantity);
+    const p = Number(next.unit_price);
+    if (next.quantity !== '' && next.quantity != null && next.unit_price !== '' && next.unit_price != null
+        && !Number.isNaN(q) && !Number.isNaN(p)) {
+      next.amount = q * p;
+    }
+    return next;
+  }, []);
+
+  // セル値の更新（1フィールド）
+  const updateItem = useCallback((uid, field, value) => {
+    setItems(prev => prev.map(it =>
+      it._uid === uid ? withAutoAmount(it, field, value) : it
+    ));
+  }, [withAutoAmount]);
+
+  // 指定行の直後に新しい明細行を挿入して返す（同一シート内）
+  const addRowAfter = useCallback((uid, kind = ITEM_TYPE.ITEM) => {
+    setItems(prev => {
+      const idx = prev.findIndex(it => it._uid === uid);
+      if (idx < 0) return prev;
+      const anchor = prev[idx];
+      const sheetId = anchor.sheet_id;
+      const factory =
+        kind === ITEM_TYPE.CATEGORY ? newCategoryRow
+        : kind === ITEM_TYPE.COMMENT ? newCommentRow
+        : newItemRow;
+      const row = factory(sheetId, 0);
+      const next = [...prev.slice(0, idx + 1), row, ...prev.slice(idx + 1)];
+      return renumberSheet(next, sheetId);
+    });
+  }, [renumberSheet]);
+
+  // 指定シート末尾（FIXED行の手前）へ新規行を追加
+  const addRowToSheet = useCallback((sheetId, kind = ITEM_TYPE.ITEM) => {
+    setItems(prev => {
+      const factory =
+        kind === ITEM_TYPE.CATEGORY ? newCategoryRow
+        : kind === ITEM_TYPE.COMMENT ? newCommentRow
+        : newItemRow;
+      const row = factory(sheetId, 0);
+      // シート内の FIXED 行の手前に差し込む（トップシートの法定福利費等を末尾に保つ）
+      const sheetIdxs = prev
+        .map((it, i) => ({ it, i }))
+        .filter(x => x.it.sheet_id === sheetId);
+      const firstFixed = sheetIdxs.find(x => x.it.item_type === ITEM_TYPE.FIXED);
+      let next;
+      if (firstFixed) {
+        next = [...prev.slice(0, firstFixed.i), row, ...prev.slice(firstFixed.i)];
+      } else {
+        const lastOfSheet = sheetIdxs.length ? sheetIdxs[sheetIdxs.length - 1].i : prev.length - 1;
+        next = [...prev.slice(0, lastOfSheet + 1), row, ...prev.slice(lastOfSheet + 1)];
+      }
+      return renumberSheet(next, sheetId);
+    });
+  }, [renumberSheet]);
+
+  // 行削除（FIXED行は削除不可。シート内の最後の非FIXED行も削除しない＝空シート化を防ぐ）
+  const removeRow = useCallback((uid) => {
+    setItems(prev => {
+      const target = prev.find(it => it._uid === uid);
+      if (!target || target.item_type === ITEM_TYPE.FIXED) return prev;
+      const sheetId = target.sheet_id;
+      const nonFixedInSheet = prev.filter(
+        it => it.sheet_id === sheetId && it.item_type !== ITEM_TYPE.FIXED
+      );
+      if (nonFixedInSheet.length <= 1) return prev; // 最後の1行は残す
+      const next = prev.filter(it => it._uid !== uid);
+      return renumberSheet(next, sheetId);
+    });
+  }, [renumberSheet]);
+
+  // 行の複製（直後に同内容の行を挿入。_uid/_tempId/id は新規採番）
+  const duplicateRow = useCallback((uid) => {
+    setItems(prev => {
+      const idx = prev.findIndex(it => it._uid === uid);
+      if (idx < 0) return prev;
+      const src = prev[idx];
+      const { id, _tempId, ...rest } = src;
+      const copy = {
+        ...rest,
+        _uid: newUid(),
+        ...(src.item_type === ITEM_TYPE.CATEGORY ? { _tempId: `cat_${Date.now()}_${Math.random()}` } : {}),
+      };
+      const next = [...prev.slice(0, idx + 1), copy, ...prev.slice(idx + 1)];
+      return renumberSheet(next, src.sheet_id);
+    });
+  }, [renumberSheet]);
+
+  // 行の上下移動（同一シート内でのみ入れ替え）
+  const moveRow = useCallback((uid, dir) => {
+    setItems(prev => {
+      const idx = prev.findIndex(it => it._uid === uid);
+      if (idx < 0) return prev;
+      const sheetId = prev[idx].sheet_id;
+      // 同一シート内の隣接行を探して入れ替える
+      const step = dir === 'up' ? -1 : 1;
+      let j = idx + step;
+      while (j >= 0 && j < prev.length && prev[j].sheet_id !== sheetId) j += step;
+      if (j < 0 || j >= prev.length || prev[j].sheet_id !== sheetId) return prev;
+      // FIXED行との入れ替えは不可（末尾固定を維持）
+      if (prev[idx].item_type === ITEM_TYPE.FIXED || prev[j].item_type === ITEM_TYPE.FIXED) return prev;
+      const next = [...prev];
+      [next[idx], next[j]] = [next[j], next[idx]];
+      return renumberSheet(next, sheetId);
+    });
+  }, [renumberSheet]);
+
+  // TSV貼り付け（Excelからの複数セル貼り付け）。基準行 uid から、行×列で
+  // name/spec/quantity/unit/unit_price/note を流し込み、行が足りなければ追加する。
+  const pasteTsv = useCallback((uid, tsv) => {
+    const COLS = ['name', 'spec', 'quantity', 'unit', 'unit_price', 'note'];
+    const rows = tsv
+      .replace(/\r\n?/g, '\n')
+      .replace(/\n$/, '')
+      .split('\n')
+      .map(line => line.split('\t'));
+    if (rows.length === 0) return;
+
+    setItems(prev => {
+      const anchorIdx = prev.findIndex(it => it._uid === uid);
+      if (anchorIdx < 0) return prev;
+      const sheetId = prev[anchorIdx].sheet_id;
+
+      // 貼り付け対象となる連続した ITEM 行（アンカー以降・同一シート・FIXED手前）を収集
+      const applyToRow = (row, cells) => {
+        let next = { ...row };
+        COLS.forEach((col, ci) => {
+          if (ci >= cells.length) return;
+          let v = cells[ci];
+          if (col === 'quantity' || col === 'unit_price') {
+            const num = String(v).replace(/,/g, '').trim();
+            v = num === '' ? '' : (Number.isNaN(Number(num)) ? v : Number(num));
+          }
+          next[col] = v;
+        });
+        // 数量×単価を再計算
+        const q = Number(next.quantity);
+        const p = Number(next.unit_price);
+        if (next.quantity !== '' && next.quantity != null && next.unit_price !== '' && next.unit_price != null
+            && !Number.isNaN(q) && !Number.isNaN(p)) {
+          next.amount = q * p;
+        }
+        return next;
+      };
+
+      const result = [...prev];
+      let cursor = anchorIdx;
+      for (let r = 0; r < rows.length; r++) {
+        // 現在のカーソル位置が同一シートの編集可能行(ITEM)でなければ、新規行を挿入する
+        if (
+          cursor >= result.length ||
+          result[cursor].sheet_id !== sheetId ||
+          result[cursor].item_type !== ITEM_TYPE.ITEM
+        ) {
+          const inserted = newItemRow(sheetId, 0);
+          result.splice(cursor, 0, inserted);
+        }
+        result[cursor] = applyToRow(result[cursor], rows[r]);
+        cursor += 1;
+      }
+      return renumberSheet(result, sheetId);
+    });
+  }, [renumberSheet]);
 
   // ============================================================
   // 合計計算（トップシートの明細＋FIXEDを対象にする。鑑・トップシート表示用）
@@ -857,7 +1065,8 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
     if (pendingDraft) {
       setHeader(pendingDraft.header);
       setSheets(pendingDraft.sheets);
-      setItems(pendingDraft.items);
+      // 旧スキーマの退避データには _uid が無い場合があるため補完する
+      setItems((pendingDraft.items || []).map(it => it._uid ? it : { ...it, _uid: newUid() }));
       isDirty.current = true;
     }
     setPendingDraft(null);
@@ -968,6 +1177,14 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
                 settings={settings}
                 totals={totals}
                 startPageNumber={sheetStartPages[idx]}
+                isLocked={isLocked}
+                onUpdateItem={updateItem}
+                onAddRowAfter={addRowAfter}
+                onAddRowToSheet={addRowToSheet}
+                onRemoveRow={removeRow}
+                onDuplicateRow={duplicateRow}
+                onMoveRow={moveRow}
+                onPasteTsv={pasteTsv}
               />
             ))}
 

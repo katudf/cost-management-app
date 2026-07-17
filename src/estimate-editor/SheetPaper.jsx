@@ -10,8 +10,16 @@
 //   - サブシート: 「合　計」1行のみ（シート内 ITEM 金額の合計）。
 // Phase 6 で EstimatePDF.jsx をこの構成に追従させる。
 //
-// Phase 3 では読み取り専用（セル編集は Phase 4 で実装）。
-import React from 'react';
+// Phase 4: セル編集グリッド化。item/category/comment 行を紙面上の透明インライン
+// input で直接編集できる。Tab/Enter で次セルへ、矢印上下で同列の前後行へ移動し、
+// 行左のホバーツールバーで行操作（上下移動/追加/複製/削除）、セルへの TSV 貼り付けに
+// 対応する。isLocked 時（または編集ハンドラ未指定時）はプレーンテキスト描画。
+//
+// 編集ハンドラは EstimateEditor から props で受け取り、対象行は配列 index ではなく
+// クライアント安定キー `_uid` で指定する（SheetPaper はシートローカルな items しか
+// 持たず、フラット配列内の絶対 index を知らないため）。
+import React, { useRef, useCallback, useState } from 'react';
+import { Plus, Trash2, Copy, ChevronUp, ChevronDown } from 'lucide-react';
 import { ITEM_TYPE } from '../utils/constants';
 import {
   pt, PAPER_WIDTH, PAPER_HEIGHT, ROWS_PER_PAGE, COLORS, page, table, fmt,
@@ -20,10 +28,51 @@ import {
 // 空行センチネル（design.md §4: 空行は保持し、category_symbol で識別する）
 const BLANK_SENTINEL = '__blank__';
 
+// item 行の編集可能列（Tab順。金額列は自動計算のためナビ対象外）
+const ITEM_COL_KEYS = ['name', 'spec', 'quantity', 'unit', 'unit_price', 'note'];
+// category 行は記号＋名称の2列
+const CATEGORY_COL_KEYS = ['category_symbol', 'name'];
+// comment 行は本文1列
+const COMMENT_COL_KEYS = ['name'];
+
+const colKeysFor = (item) => {
+  if (item.item_type === ITEM_TYPE.CATEGORY) return CATEGORY_COL_KEYS;
+  if (item.item_type === ITEM_TYPE.COMMENT) return COMMENT_COL_KEYS;
+  return ITEM_COL_KEYS;
+};
+
 const isBlankRow = (item) =>
   item.category_symbol === BLANK_SENTINEL &&
   !item.name && !item.spec &&
   item.quantity == null && item.unit_price == null;
+
+const isNavigable = (type) =>
+  type === ITEM_TYPE.ITEM || type === ITEM_TYPE.CATEGORY || type === ITEM_TYPE.COMMENT;
+
+// ============================================================
+// 数値入力ヘルパ（EstimateItemTable.jsx より移植）
+// ============================================================
+// 負数は "▲" 表記にする（例: -1234 → ▲1,234）
+const formatNumberInput = (value) => {
+  if (value === null || value === undefined || value === '') return '';
+  const num = Number(value);
+  if (Number.isNaN(num)) return '';
+  const formatted = Math.abs(num).toLocaleString('ja-JP', { maximumFractionDigits: 10 });
+  return num < 0 ? `▲${formatted}` : formatted;
+};
+
+// 全角数字・カンマ・▲/全角マイナスを除去して数値文字列に戻す
+// （末尾の小数点は入力途中として許容）
+const parseNumberInput = (raw) => {
+  const leadingSignMatch = raw.match(/^\s*([▲－-])/);
+  const isNegative = !!leadingSignMatch;
+  const rest = isNegative ? raw.slice(leadingSignMatch[0].length) : raw;
+  const halfWidth = rest.replace(/[０-９．]/g, (c) =>
+    c === '．' ? '.' : String.fromCharCode(c.charCodeAt(0) - 0xfee0)
+  );
+  const digits = halfWidth.replace(/,/g, '');
+  return isNegative && digits !== '' ? `-${digits}` : digits;
+};
 
 // ============================================================
 // 行リスト構築（データ行＋ダミー行＋フッター行）
@@ -79,8 +128,8 @@ export const buildSheetRows = (items, header, isTopSheet, totals) => {
     } else if (item.item_type === ITEM_TYPE.SUBTOTAL) {
       rows.push({ kind: 'subtotal', item });
     } else if (isBlankRow(item)) {
-      // 空行はNo.を振らず空欄のまま印字する
-      rows.push({ kind: 'blank', item });
+      // 空行はNo.を振らず空欄のまま印字する（編集時はセル入力できる）
+      rows.push({ kind: 'item', item, itemNo: null });
     } else {
       itemNo += 1;
       rows.push({ kind: 'item', item, itemNo });
@@ -154,25 +203,180 @@ const rowBase = {
   borderLeft: `${pt(1)}px solid ${COLORS.ink}`,
   borderRight: `${pt(1)}px solid ${COLORS.ink}`,
   overflow: 'hidden',
+  position: 'relative',
+};
+
+// セル内に敷く透明インライン input の共通スタイル。
+// 罫線・背景を持たず、セルのテキストとまったく同じ見た目になるようにする。
+const inputBase = {
+  width: '100%',
+  height: '100%',
+  border: 'none',
+  outline: 'none',
+  background: 'transparent',
+  padding: 0,
+  margin: 0,
+  fontSize: table.cellFontSize,
+  fontFamily: 'inherit',
+  color: 'inherit',
+  boxSizing: 'border-box',
+};
+
+// ============================================================
+// 編集用インライン input
+// ============================================================
+// テキスト列（名称・仕様・単位・摘要・工種名・記号・コメント）用
+const TextCell = ({ uid, col, value, align, color, bold, italic, placeholder, onChange, onPaste, onKeyDown }) => (
+  <input
+    type="text"
+    data-uid={uid}
+    data-col={col}
+    value={value || ''}
+    placeholder={placeholder}
+    onChange={(e) => onChange(col, e.target.value)}
+    onPaste={onPaste}
+    onKeyDown={onKeyDown}
+    style={{
+      ...inputBase,
+      textAlign: align || 'left',
+      ...(color ? { color } : {}),
+      ...(bold ? { fontWeight: 'bold' } : {}),
+      ...(italic ? { fontStyle: 'italic' } : {}),
+    }}
+  />
+);
+
+// カンマ区切りの数値入力欄（フォーカス中は生値、blur で整形表示）
+const NumberCell = ({ uid, col, value, onChange, onPaste, onKeyDown }) => {
+  const [draft, setDraft] = useState(null);
+  const displayValue = draft !== null ? draft : formatNumberInput(value);
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      data-uid={uid}
+      data-col={col}
+      value={displayValue}
+      onFocus={() => setDraft(String(value ?? ''))}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        onChange(col, parseNumberInput(e.target.value));
+      }}
+      onBlur={() => setDraft(null)}
+      onPaste={onPaste}
+      onKeyDown={onKeyDown}
+      style={{ ...inputBase, textAlign: 'right' }}
+    />
+  );
+};
+
+// 行左端にホバーで出す行操作ツールバー（上下移動/追加/複製/削除）
+const RowToolbar = ({ item, onAddRowAfter, onDuplicateRow, onRemoveRow, onMoveRow }) => {
+  const btn = {
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    width: 16, height: 16, border: 'none', background: 'transparent',
+    cursor: 'pointer', color: COLORS.muted, padding: 0,
+  };
+  return (
+    <div
+      className="sheet-row-toolbar"
+      style={{
+        position: 'absolute',
+        top: '50%',
+        left: pt(-58),
+        transform: 'translateY(-50%)',
+        display: 'flex',
+        gap: 2,
+        alignItems: 'center',
+        background: '#fff',
+        border: `1px solid ${COLORS.dashed}`,
+        borderRadius: 4,
+        padding: '1px 3px',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+        opacity: 0,
+        pointerEvents: 'none',
+        transition: 'opacity 0.1s',
+        zIndex: 5,
+      }}
+    >
+      <button type="button" style={btn} title="上へ移動" aria-label="上へ移動"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => onMoveRow(item._uid, 'up')}><ChevronUp size={12} /></button>
+      <button type="button" style={btn} title="下へ移動" aria-label="下へ移動"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => onMoveRow(item._uid, 'down')}><ChevronDown size={12} /></button>
+      <button type="button" style={btn} title="下に行を追加" aria-label="下に行を追加"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => onAddRowAfter(item._uid, ITEM_TYPE.ITEM)}><Plus size={12} /></button>
+      <button type="button" style={{ ...btn, color: '#2563eb' }} title="行を複製" aria-label="行を複製"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => onDuplicateRow(item._uid)}><Copy size={12} /></button>
+      <button type="button" style={{ ...btn, color: '#dc2626' }} title="行を削除" aria-label="行を削除"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => onRemoveRow(item._uid)}><Trash2 size={12} /></button>
+    </div>
+  );
 };
 
 // ============================================================
 // 行レンダリング
 // ============================================================
-const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom }) => {
+// edit = 編集ハンドラ束（null なら読み取り専用）
+const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom }, edit) => {
   const rowStyle = {
     ...rowBase,
     ...(isSolidBottom || isLastRowOfPage ? { borderBottom: solidBottom } : {}),
   };
 
+  const editable = !!edit;
+  // 編集可能行（item/category/comment）にホバーツールバーを載せる
+  const toolbar = editable && row.item ? (
+    <RowToolbar
+      item={row.item}
+      onAddRowAfter={edit.onAddRowAfter}
+      onDuplicateRow={edit.onDuplicateRow}
+      onRemoveRow={edit.onRemoveRow}
+      onMoveRow={edit.onMoveRow}
+    />
+  ) : null;
+
   switch (row.kind) {
     case 'category': {
       const { item, catTotal } = row;
+      const uid = item._uid;
       return (
-        <div key={rowKey} style={{ ...rowStyle, background: COLORS.categoryBg }}>
-          <div style={{ ...CELLS.no, borderRight: 'none' }} />
+        <div key={rowKey} className={editable ? 'sheet-edit-row' : undefined}
+          style={{ ...rowStyle, background: COLORS.categoryBg }}>
+          {toolbar}
+          <div style={{ ...CELLS.no, borderRight: 'none' }}>
+            {editable ? (
+              <input
+                type="text"
+                data-uid={uid}
+                data-col="category_symbol"
+                value={item.category_symbol || ''}
+                placeholder="A"
+                onChange={(e) => edit.onUpdateItem(uid, 'category_symbol', e.target.value)}
+                onKeyDown={edit.onKeyDown}
+                style={{ ...inputBase, textAlign: 'center', fontWeight: 'bold' }}
+              />
+            ) : (item.category_symbol || '')}
+          </div>
           <div style={{ ...CELLS.name, flex: 7, borderRight: 'none', fontWeight: 'bold' }}>
-            {item.category_symbol ? `${item.category_symbol}　` : ''}{item.name}
+            {editable ? (
+              <input
+                type="text"
+                data-uid={uid}
+                data-col="name"
+                value={item.name || ''}
+                placeholder="工種名"
+                onChange={(e) => edit.onUpdateItem(uid, 'name', e.target.value)}
+                onKeyDown={edit.onKeyDown}
+                style={{ ...inputBase, fontWeight: 'bold' }}
+              />
+            ) : (
+              <>{item.category_symbol ? `${item.category_symbol}　` : ''}{item.name}</>
+            )}
           </div>
           <div style={{ ...CELLS.amount, borderRight: 'none', fontWeight: 'bold' }}>
             {catTotal > 0 ? fmt(catTotal) : ''}
@@ -182,10 +386,19 @@ const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom }) => {
       );
     }
     case 'comment': {
+      const { item } = row;
+      const uid = item._uid;
       return (
-        <div key={rowKey} style={rowStyle}>
+        <div key={rowKey} className={editable ? 'sheet-edit-row' : undefined} style={rowStyle}>
+          {toolbar}
           <div style={CELLS.no} />
-          <div style={{ ...CELLS.name, flex: 5 }}>{row.item.name}</div>
+          <div style={{ ...CELLS.name, flex: 5 }}>
+            {editable ? (
+              <TextCell uid={uid} col="name" value={item.name} italic color={COLORS.noteInk}
+                placeholder="コメント" onChange={(c, v) => edit.onUpdateItem(uid, c, v)}
+                onKeyDown={edit.onKeyDown} />
+            ) : (item.name)}
+          </div>
           <div style={CELLS.qty} />
           <div style={CELLS.unit} />
           <div style={CELLS.price} />
@@ -196,16 +409,50 @@ const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom }) => {
     }
     case 'item': {
       const { item, itemNo } = row;
+      const uid = item._uid;
+      if (!editable) {
+        return (
+          <div key={rowKey} style={rowStyle}>
+            <div style={CELLS.no}>{itemNo ?? ''}</div>
+            <div style={CELLS.name}>{item.name}</div>
+            <div style={CELLS.spec}>{item.spec || ''}</div>
+            <div style={CELLS.qty}>{item.quantity != null && item.quantity !== '' ? Number(item.quantity).toLocaleString('ja-JP') : ''}</div>
+            <div style={CELLS.unit}>{item.unit || ''}</div>
+            <div style={CELLS.price}>{item.unit_price != null && item.unit_price !== '' ? fmt(item.unit_price) : ''}</div>
+            <div style={CELLS.amount}>{item.amount != null && item.amount !== '' ? fmt(item.amount) : ''}</div>
+            <div style={CELLS.note}>{item.note || ''}</div>
+          </div>
+        );
+      }
+      const chg = (col, val) => edit.onUpdateItem(uid, col, val);
+      const paste = (e) => edit.onCellPaste(e, uid);
       return (
-        <div key={rowKey} style={rowStyle}>
-          <div style={CELLS.no}>{itemNo}</div>
-          <div style={CELLS.name}>{item.name}</div>
-          <div style={CELLS.spec}>{item.spec || ''}</div>
-          <div style={CELLS.qty}>{item.quantity != null ? Number(item.quantity).toLocaleString('ja-JP') : ''}</div>
-          <div style={CELLS.unit}>{item.unit || ''}</div>
-          <div style={CELLS.price}>{item.unit_price != null ? fmt(item.unit_price) : ''}</div>
-          <div style={CELLS.amount}>{item.amount != null ? fmt(item.amount) : ''}</div>
-          <div style={CELLS.note}>{item.note || ''}</div>
+        <div key={rowKey} className="sheet-edit-row" style={rowStyle}>
+          {toolbar}
+          <div style={CELLS.no}>{itemNo ?? ''}</div>
+          <div style={CELLS.name}>
+            <TextCell uid={uid} col="name" value={item.name} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />
+          </div>
+          <div style={CELLS.spec}>
+            <TextCell uid={uid} col="spec" value={item.spec} color={COLORS.subInk} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />
+          </div>
+          <div style={CELLS.qty}>
+            <NumberCell uid={uid} col="quantity" value={item.quantity} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />
+          </div>
+          <div style={CELLS.unit}>
+            <TextCell uid={uid} col="unit" value={item.unit} align="center" onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />
+          </div>
+          <div style={CELLS.price}>
+            <NumberCell uid={uid} col="unit_price" value={item.unit_price} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />
+          </div>
+          {/* 金額は自動計算（数量×単価）だが手入力での上書きも許容。Tabナビ対象外 */}
+          <div style={CELLS.amount}>
+            <NumberCell uid={uid} col="__amount" value={item.amount}
+              onChange={(_c, v) => edit.onUpdateItem(uid, 'amount', v)} onPaste={paste} onKeyDown={edit.onKeyDown} />
+          </div>
+          <div style={CELLS.note}>
+            <TextCell uid={uid} col="note" value={item.note} color={COLORS.noteInk} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />
+          </div>
         </div>
       );
     }
@@ -259,7 +506,6 @@ const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom }) => {
         <div key={rowKey} style={{
           ...rowStyle,
           borderBottom: solidBottom,
-          position: 'relative',
           alignItems: 'center',
           justifyContent: 'center',
         }}>
@@ -325,15 +571,125 @@ const HeaderRow = () => {
 const SheetPaper = ({
   sheet,             // { id, title }
   sheetIndex,        // 0 = トップシート（総括表）
-  items,             // このシートに属する明細（表示順）
+  items,             // このシートに属する明細（表示順。全 sheet_id === sheet.id）
   header,            // estimate_number / show_fixed_fees / show_net を参照
   settings,          // フッターの会社名表示用
   totals,            // calcTotals の結果（トップシートの税抜合計・NETに使用）
   startPageNumber,   // このシート先頭ページの通し番号（鑑が No.1）
+  // ── Phase 4: セル編集（すべて任意。未指定 or isLocked なら読み取り専用） ──
+  isLocked,
+  onUpdateItem,
+  onAddRowAfter,
+  onAddRowToSheet,
+  onRemoveRow,
+  onDuplicateRow,
+  onMoveRow,
+  onPasteTsv,
 }) => {
   const isTopSheet = sheetIndex === 0;
   const rows = buildSheetRows(items, header, isTopSheet, totals);
   const estimateNumber = `${header.estimate_number_date}-${header.estimate_number_seq}-${header.estimate_number_branch}`;
+
+  const editable = !isLocked && typeof onUpdateItem === 'function';
+  const sheetRef = useRef(null);
+  // 追加行へフォーカスを移すため、末尾セル数を保持（追加後に navCells が伸びる）
+  const prevNavCountRef = useRef(0);
+
+  // このシート内の編集可能セルを (uid, col) の平坦な順序で列挙する。
+  // Tab/Enter/矢印ナビはこのリスト上のインデックス移動として扱う。
+  const navCells = [];
+  if (editable) {
+    items.forEach((item) => {
+      if (!isNavigable(item.item_type)) return;
+      colKeysFor(item).forEach((col) => navCells.push({ uid: item._uid, col }));
+    });
+  }
+
+  const focusCell = useCallback((uid, col) => {
+    // 描画反映後にフォーカスを移す（新規行追加直後などに対応）
+    requestAnimationFrame(() => {
+      sheetRef.current
+        ?.querySelector(`[data-uid="${uid}"][data-col="${col}"]`)
+        ?.focus();
+    });
+  }, []);
+
+  // 末尾から次シート行追加 → 追加後の描画で最後の name セルへフォーカス
+  const addRowAndFocus = useCallback(() => {
+    prevNavCountRef.current = navCells.length;
+    onAddRowToSheet(sheet.id, ITEM_TYPE.ITEM);
+    // 追加された ITEM 行の name セルは navCells 末尾に来る。次フレームで取得。
+    requestAnimationFrame(() => {
+      const inputs = sheetRef.current?.querySelectorAll('input[data-col="name"]');
+      const last = inputs && inputs.length ? inputs[inputs.length - 1] : null;
+      last?.focus();
+    });
+  }, [navCells.length, onAddRowToSheet, sheet.id]);
+
+  // Tab/Enter=次セル、Shift+Tab=前セル、矢印上下=同列の前後行セルへ。
+  // 末尾セルで Tab/Enter を押したら新規 ITEM 行を追加してその name へ。
+  const handleKeyDown = useCallback((e) => {
+    if (!editable) return;
+    // IME変換中は無視
+    if (e.isComposing || e.nativeEvent?.isComposing) return;
+    const uid = e.target.dataset?.uid;
+    const col = e.target.dataset?.col;
+    if (!uid || !col) return;
+
+    const idx = navCells.findIndex((c) => c.uid === uid && c.col === col);
+    if (idx < 0) return;
+
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const nextIdx = e.shiftKey ? idx - 1 : idx + 1;
+      if (nextIdx < 0) return;
+      if (nextIdx >= navCells.length) {
+        addRowAndFocus();
+        return;
+      }
+      const t = navCells[nextIdx];
+      focusCell(t.uid, t.col);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const nextIdx = idx + 1;
+      if (nextIdx >= navCells.length) {
+        addRowAndFocus();
+        return;
+      }
+      const t = navCells[nextIdx];
+      focusCell(t.uid, t.col);
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      // 同じ列(col)を持つ前後の行のセルへ移動
+      const dir = e.key === 'ArrowUp' ? -1 : 1;
+      for (let j = idx + dir; j >= 0 && j < navCells.length; j += dir) {
+        if (navCells[j].col === col) {
+          e.preventDefault();
+          focusCell(navCells[j].uid, navCells[j].col);
+          return;
+        }
+      }
+    }
+  }, [editable, navCells, focusCell, addRowAndFocus]);
+
+  // セルへの TSV 貼り付け（複数行 or タブ区切りを含む場合のみ横取り）。
+  // 単一値の貼り付けはブラウザ既定（当該セルへの通常貼付）に任せる。
+  const handleCellPaste = useCallback((e, uid) => {
+    if (!editable) return;
+    const text = e.clipboardData?.getData('text/plain') ?? '';
+    if (!text.includes('\t') && !text.includes('\n')) return;
+    e.preventDefault();
+    onPasteTsv(uid, text);
+  }, [editable, onPasteTsv]);
+
+  const edit = editable ? {
+    onUpdateItem,
+    onAddRowAfter,
+    onDuplicateRow,
+    onRemoveRow,
+    onMoveRow,
+    onKeyDown: handleKeyDown,
+    onCellPaste: handleCellPaste,
+  } : null;
 
   // 19行ずつページに分割
   const pages = [];
@@ -342,7 +698,15 @@ const SheetPaper = ({
   }
 
   return (
-    <div id={`paper-sheet-${sheetIndex}`} style={{ display: 'flex', flexDirection: 'column', gap: pt(18), alignItems: 'center' }}>
+    <div
+      ref={sheetRef}
+      id={`paper-sheet-${sheetIndex}`}
+      style={{ display: 'flex', flexDirection: 'column', gap: pt(18), alignItems: 'center' }}
+    >
+      {/* ホバー時に行ツールバーを表示するためのスタイル */}
+      <style>{`
+        #paper-sheet-${sheetIndex} .sheet-edit-row:hover .sheet-row-toolbar { opacity: 1 !important; pointer-events: auto !important; }
+      `}</style>
       {pages.map((pageRows, pageIdx) => (
         <div
           key={pageIdx}
@@ -381,7 +745,25 @@ const SheetPaper = ({
           {pageRows.map((row, rowIdx) => renderRow(row, rowIdx, {
             isLastRowOfPage: rowIdx === ROWS_PER_PAGE - 1,
             isSolidBottom: false,
-          }))}
+          }, edit))}
+
+          {/* 末尾ページに［＋行を追加］（編集時のみ） */}
+          {editable && pageIdx === pages.length - 1 && (
+            <button
+              type="button"
+              onClick={addRowAndFocus}
+              style={{
+                position: 'absolute',
+                bottom: pt(30),
+                left: page.paddingX,
+                display: 'flex', alignItems: 'center', gap: 4,
+                fontSize: pt(9), color: '#2563eb',
+                background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
+              }}
+            >
+              <Plus size={12} /> 行を追加
+            </button>
+          )}
 
           {/* ページフッター（会社名・通しページ番号） */}
           <div style={{
