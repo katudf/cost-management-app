@@ -929,16 +929,18 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   };
 
   // ============================================================
-  // PDFプレビュー用データ構築（Phase 3 暫定: 全シートの明細をフラット化して
-  // 旧 EstimateDocument へ渡す。show_subtotals の小計行はシート単位で注入する）
+  // PDFプレビュー用データ構築（Phase 6: シートモデル対応）
+  // 各シートを {id, title, items, sheetTotal} としてそのまま EstimateDocument へ渡す。
+  // EstimatePDF 側がシートごとに末尾合計（トップ=税抜合計/サブ=合　計）を描画し、
+  // 消費税・税込合計は鑑側にのみ出す。リンク解決済み resolvedItems（itemsBySheet）を使う。
   // ============================================================
   const buildPreviewEstimate = useCallback(() => {
     const customer = customers.find(c => String(c.id) === String(header.customer_id)) || null;
     const staff    = officeStaff.find(s => String(s.id) === String(header.staff_id))  || null;
 
-    // シート順に明細を連結（COMMENTエンコード・SUBTOTAL除去）
-    let pdfItems = [];
-    sheets.forEach((sheet) => {
+    // 1シート分の明細を PDF 用に整形（COMMENTエンコード・SUBTOTAL除去・_tempId除去、
+    // show_subtotals ON なら工種ごとの小計行を注入）
+    const buildSheetItems = (sheet) => {
       const sheetItems = (itemsBySheet.get(sheet.id) || [])
         .filter(i => i.item_type !== ITEM_TYPE.SUBTOTAL)
         .map(({ _tempId, ...item }) => {
@@ -948,43 +950,47 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
           return item;
         });
 
-      // show_subtotals ON の場合は工種ごとの小計行を動的生成（シート内で完結）
-      if (header.show_subtotals) {
-        const withSubtotals = [];
-        let currentCatKey = null;
-        let catAmount = 0;
-        sheetItems.forEach((item, idx) => {
-          if (item.item_type === ITEM_TYPE.CATEGORY) {
-            if (currentCatKey !== null) {
-              withSubtotals.push({ item_type: ITEM_TYPE.SUBTOTAL, name: '合　計', amount: catAmount, sort_order: withSubtotals.length });
-            }
-            currentCatKey = item.id || idx;
-            catAmount = 0;
-          } else if (item.item_type === ITEM_TYPE.ITEM) {
-            catAmount += Number(item.amount) || 0;
+      if (!header.show_subtotals) return sheetItems;
+
+      const withSubtotals = [];
+      let currentCatKey = null;
+      let catAmount = 0;
+      sheetItems.forEach((item, idx) => {
+        if (item.item_type === ITEM_TYPE.CATEGORY) {
+          if (currentCatKey !== null) {
+            withSubtotals.push({ item_type: ITEM_TYPE.SUBTOTAL, name: '合　計', amount: catAmount, sort_order: withSubtotals.length });
           }
-          withSubtotals.push(item);
-        });
-        if (currentCatKey !== null) {
-          withSubtotals.push({ item_type: ITEM_TYPE.SUBTOTAL, name: '合　計', amount: catAmount, sort_order: withSubtotals.length });
+          currentCatKey = item.id || idx;
+          catAmount = 0;
+        } else if (item.item_type === ITEM_TYPE.ITEM) {
+          catAmount += Number(item.amount) || 0;
         }
-        pdfItems = pdfItems.concat(withSubtotals);
-      } else {
-        pdfItems = pdfItems.concat(sheetItems);
+        withSubtotals.push(item);
+      });
+      if (currentCatKey !== null) {
+        withSubtotals.push({ item_type: ITEM_TYPE.SUBTOTAL, name: '合　計', amount: catAmount, sort_order: withSubtotals.length });
       }
-    });
+      return withSubtotals;
+    };
+
+    const pdfSheets = sheets.map((sheet) => ({
+      id: sheet.id,
+      title: sheet.title || '',
+      items: buildSheetItems(sheet),
+      sheetTotal: sheetTotals.get(sheet.id) ?? null,
+    }));
 
     return {
       ...header,
       estimate_number: estimateNumber,
       customer,
       staff,
-      items: pdfItems,
+      sheets: pdfSheets,
       tax_rate:   Number(header.tax_rate),
       net_perc:   Number(header.net_perc),
       net_amount: header.net_amount !== '' ? Number(header.net_amount) : null,
     };
-  }, [header, sheets, itemsBySheet, customers, officeStaff, estimateNumber]);
+  }, [header, sheets, itemsBySheet, sheetTotals, customers, officeStaff, estimateNumber]);
 
   const handleOpenPreview = useCallback(() => {
     setPreviewSnapshot(buildPreviewEstimate());
