@@ -1,6 +1,6 @@
 # 見積WYSIWYGエディタ刷新 — 進捗・引き継ぎメモ
 
-最終更新: 2026-07-18（Phase 5 完了）
+最終更新: 2026-07-18（Phase 6 完了）
 作業場所: worktree `.claude/worktrees/ecstatic-cerf-0e582d` / branch `claude/quotation-editor-redesign-a3edb5`
 確定設計: [design.md](design.md)（§4 統一ルール / §5 データモデルが正）
 
@@ -13,7 +13,7 @@
 | 3 | エディタ骨格（`src/estimate-editor/` 新設：紙面スタック＋鑑インライン編集＋左ナビ＋右設定パネル） | ✅ 完了・コミット（8ファイル作成、`npm run build` 通過） |
 | 4 | 明細グリッド（セル編集・Tab/Enter/矢印・行操作・TSV貼り付け）→ 保存ラウンドトリップ検証 | ✅ 完了・コミット d7b17b6・`npm run build` 通過・保存ペイロード19アサート通過 |
 | 5 | 計算・リンクエンジン（シート末尾合計、リンク①②、循環参照チェック、総括表自動生成） | ✅ 完了・コミット 06cfb77・`npm run build` 通過・単体テスト14件通過 |
-| 6 | EstimatePDF.jsx のシートモデル対応（明細末尾=税抜合計、消費税・税込は鑑側、通しページ番号） | 未着手 |
+| 6 | EstimatePDF.jsx のシートモデル対応（明細末尾=税抜合計、消費税・税込は鑑側、通しページ番号） | ✅ 完了・コミット 1088fff・`npm run build` 通過・単体テスト19件通過 |
 | 7 | 統合（AdminApp差し替え、Excel取込シート対応、旧RPC・旧EstimateForm一族の削除） | 未着手 |
 
 作業ツリーは 9b47fcd 時点でクリーン（この progress.md 追加を除く）。`npm run build` は通過確認済み（既存の chunk-size 警告のみ）。
@@ -126,3 +126,15 @@ SheetPaper を編集グリッド化し、EstimateEditor に item 操作ハンド
 - **paperStyles.js**: `COLORS.linkBg='#eef6ff'` / `cycleBg='#fdecec'`。
 - **supabaseEstimates.js（buildSaveItemsPayload）**: link② 参照解決表 `itemIndexById` を id だけでなく `_uid`/`_tempId` でも引けるよう拡張（キーは `String()` 化）。総括表自動生成で作った**未保存**カテゴリへの link② を初回保存時に配列インデックスへ確定できる。参照先が payload 内に無ければリンクを外して保存（安全）。
 - **Phase 6 の次アクション**: `EstimatePDF.jsx` のシートモデル対応（明細末尾=税抜合計、消費税・税込は鑑側、通しページ番号）。現状 PDF プレビューは buildPreviewEstimate で全シートをフラット化して旧 EstimateDocument に渡す暫定実装のまま。resolvedItems（リンク解決済み）を PDF 側でも使えるよう計算エンジンを流用するのが筋。
+
+### Phase 6 完了メモ（コミット 1088fff・次セッションへの引き継ぎ）
+
+`EstimatePDF.jsx` をシート単位描画へ刷新。各明細シートが自前の末尾合計で閉じる。`npm run build` 通過（既存 chunk-size 警告のみ）。scratchpad 単体テスト19件通過（`pdfRowsTest.mjs`: 行数が常に19の倍数／トップ末尾=税抜合計＋FIXED＋NET／サブ末尾=合計／通しページ番号 [2,3,5] 算出）。
+
+- **EstimatePDF.jsx**:
+  - **`buildSheetRowsPDF(items, header, isTopSheet, totals, sheetTotal)`** を新設。`SheetPaper.jsx` の `buildSheetRows` と**同一アルゴリズム**（`footerRows = isTopSheet ? fixedFeeRows + 1 + netRowCount : 1`、ダミー行パディング分岐、行記述子 `{kind, item, ...}` 配列を返す。長さは常に19の倍数）。`SheetPaper.jsx` は lucide/paperStyles を import するため直接流用せず、アルゴリズムのみ複製（PDF 側は @react-pdf primitives で描画）。
+  - **`renderPdfRow(row, idx, pageBottomBorderStyle, shouldBreak)`** で行種別を分岐描画（category/comment/item/subtotal/fixed/total-ex-tax/sheet-total/net/dummy）。`total-ex-tax`=「税抜合計」、`sheet-total`=「合　計」。消費税・税込合計の描画は DetailPage から**削除**（鑑=CoverPage のみ）。
+  - **`DetailPage`** は 1シート = 1 `<Page>` グループ。`sheet`（`{id,title,items,sheetTotal,header}`）/`isTopSheet`/`totals`/`startPageNumber` を受け、`buildSheetRowsPDF` の結果を19行ごとに強制改ページ。ページ番号は `render={({pageNumber})=>\`No.${startPageNumber + pageNumber - 1}\`}`（**鑑=No.1**の通し番号）。
+  - **`EstimateDocument`** は `estimate.sheets` 配列を反復し各シートに `DetailPage` を描画。鑑の totals はトップシート（`sheets[0].items`）から `calcTotals` で算出。各シート先頭の `startPageNumber` を `buildSheetRowsPDF(...).length/19` で連番算出（running=2 開始）。**後方互換**: `sheets` 未指定なら旧フラット `items` を単一トップシートへ畳み込む。
+- **EstimateEditor.jsx（buildPreviewEstimate）**: 全シートフラット化の暫定実装を**廃止**。`sheets: [{id, title, items, sheetTotal}]` を渡す形へ変更（`itemsBySheet` の resolvedItems を使い、COMMENTエンコード・SUBTOTAL除去・`_tempId`除去・show_subtotals小計注入はシート単位で適用。`sheetTotal` は `sheetTotals.get(sheet.id)`）。deps に `sheetTotals` 追加。旧 `items` フィールドは snapshot から削除。
+- **Phase 7 の次アクション**: `AdminApp.jsx`（マウント ~1045-1063行）で EstimateForm→EstimateEditor を差し替え（`{estimateId, onBack, onSaved, onStatusChanged}` 維持）。旧RPC `save_estimate_items` と旧 EstimateForm 一族＋EstimateList.jsx の Excel 取込シート対応を削除。
