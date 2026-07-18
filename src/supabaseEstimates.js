@@ -264,26 +264,6 @@ export const duplicateEstimate = async (id) => {
 };
 
 // ============================================================
-// 明細の一括保存（削除＋再挿入を単一トランザクションで実行）
-// ============================================================
-export const saveEstimateItems = async (estimateId, items) => {
-  // save_estimate_items RPC が delete + insert を1トランザクションで実行するため、
-  // 途中で失敗しても明細が全損しない（従来のクライアント側2段階処理を置き換え）。
-  // sort_order はサーバー側で配列順に振り直されるため、渡す順序が保存順になる。
-  const payloadItems = items.map((item) => {
-    const { id: _id, created_at: _ca, estimate_id: _eid, sort_order: _so, ...rest } = item;
-    return rest;
-  });
-
-  const { error } = await supabase.rpc('save_estimate_items', {
-    p_estimate_id: estimateId,
-    p_items: payloadItems,
-  });
-
-  if (error) throw error;
-};
-
-// ============================================================
 // シート＋明細の一括保存 v2（WYSIWYGエディタ用）
 // ------------------------------------------------------------
 // save_estimate_items_v2 RPC は行IDが保存ごとに振り直される問題への対策として、

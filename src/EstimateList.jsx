@@ -1,28 +1,20 @@
 // src/EstimateList.jsx
 // 見積書一覧画面
 
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Plus, FileText, Copy, Trash2, Edit, Download, ChevronDown, ChevronRight, Upload, Loader2, RotateCcw, X } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Plus, FileText, Copy, Trash2, Edit, Download, ChevronDown, ChevronRight, RotateCcw, X } from 'lucide-react';
 import {
   fetchEstimates,
   deleteEstimate,
   duplicateEstimate,
   fetchEstimateById,
   formatCurrency,
-  createEstimate,
-  createCustomer,
-  saveEstimateItems,
-  getNextEstimateSeq,
-  fetchCustomers,
-  findAvailableBranchNumber,
   fetchSystemSettings,
   fetchDeletedEstimates,
   restoreEstimate,
   ESTIMATE_TRASH_RETENTION_DAYS,
 } from './supabaseEstimates';
-import CustomerResolveModal from './components/estimate/CustomerResolveModal';
 import { downloadEstimatePDF } from './EstimatePDF';
-import { parseExcelForEstimate } from './utils/excelImportUtils';
 import { useToast } from './components/Toast';
 import { ESTIMATE_STATUS, ESTIMATE_STATUS_LABEL } from './utils/constants';
 
@@ -155,13 +147,10 @@ const EstimateList = ({ onEdit }) => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [searchText, setSearchText] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(null); // 削除確認対象のID
-  const [importing, setImporting] = useState(false);
-  const [pendingImport, setPendingImport] = useState(null); // 顧客未確定のExcel取込データ
   const [expandedGroups, setExpandedGroups] = useState(() => new Set());
   const [showTrash, setShowTrash] = useState(false);
   const [deletedEstimates, setDeletedEstimates] = useState([]);
   const [loadingTrash, setLoadingTrash] = useState(false);
-  const fileInputRef = useRef(null);
 
   const toggleGroup = (key) => {
     setExpandedGroups(prev => {
@@ -274,139 +263,6 @@ const EstimateList = ({ onEdit }) => {
     }
   };
 
-  // Excelインポート処理
-  const handleExcelImport = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    if (fileInputRef.current) fileInputRef.current.value = '';
-
-    setImporting(true);
-    setError(null);
-    try {
-      // Excelパース
-      const result = await parseExcelForEstimate(file);
-      if (!result.items || result.items.length === 0) {
-        setError('取り込めるデータが見つかりませんでした。');
-        setImporting(false);
-        return;
-      }
-
-      // 見積番号の自動採番（重複回避付き）
-      const d = new Date();
-      const yy = String(d.getFullYear()).slice(2);
-      const mm = String(d.getMonth() + 1).padStart(2, '0');
-      const dd = String(d.getDate()).padStart(2, '0');
-      const prefix = `${yy}${mm}${dd}`;
-      const seq = await getNextEstimateSeq(prefix);
-
-      // 枝番001から開始し、重複があれば空き番号まで繰り上げる
-      const estimateNumber = await findAvailableBranchNumber(prefix, seq, 1);
-
-      // 顧客の検索。完全一致すればそのまま続行、無ければ確認モーダルで
-      // 「新規登録／既存に紐づけ」を選んでもらう。
-      if (result.customerName) {
-        const customers = await fetchCustomers();
-        const found = customers.find(c => c.name === result.customerName);
-        if (found) {
-          await continueExcelImport({ file, result, estimateNumber, customerId: found.id });
-        } else {
-          setPendingImport({ file, result, estimateNumber, customers, customerName: result.customerName });
-          setImporting(false);
-        }
-      } else {
-        await continueExcelImport({ file, result, estimateNumber, customerId: null });
-      }
-    } catch (err) {
-      console.error('Excel取込エラー:', err);
-      setError('Excelの取り込みに失敗しました: ' + err.message);
-      setImporting(false);
-    }
-  };
-
-  // 顧客が確定した後の取込続行処理（新規見積の作成～明細保存～遷移）
-  const continueExcelImport = async ({ file, result, estimateNumber, customerId }) => {
-    setImporting(true);
-    setError(null);
-    try {
-      // 見積書ヘッダーを作成
-      const payload = {
-        estimate_number: estimateNumber,
-        customer_id: customerId,
-        customer_honorific: '御中',
-        title: result.projectName || file.name.replace(/\.[^/.]+$/, ''),
-        site_location: null,
-        work_period: null,
-        issue_date: new Date().toISOString().split('T')[0],
-        valid_until: null,
-        payment_terms: '従来通り',
-        notes: result.notes || null,
-        tax_rate: 0.10,
-        status: ESTIMATE_STATUS.DRAFT,
-        show_fixed_fees: false,
-        show_net: true,
-        show_subtotals: false,
-        stamp_header: 'company',
-        show_approver: false,
-        staff_id: null,
-        net_calc_type: 'perc',
-        net_perc: 95,
-        net_amount: null,
-        total_with_tax: 0,
-      };
-
-      const created = await createEstimate(payload);
-
-      // 明細保存
-      const saveableItems = result.items
-        .filter(i => i.name?.trim())
-        .map((item, idx) => ({
-          ...item,
-          estimate_id: created.id,
-          sort_order: idx,
-          quantity: item.quantity != null ? Number(item.quantity) : null,
-          unit_price: item.unit_price !== '' && item.unit_price != null ? Number(item.unit_price) : null,
-          amount: item.amount !== '' && item.amount != null ? Number(item.amount) : null,
-        }));
-      await saveEstimateItems(created.id, saveableItems);
-
-      // 作成した見積書の編集画面に遷移
-      onEdit(created.id);
-    } catch (err) {
-      console.error('Excel取込エラー:', err);
-      setError('Excelの取り込みに失敗しました: ' + err.message);
-    } finally {
-      setImporting(false);
-    }
-  };
-
-  // 顧客確認モーダル: 新規登録を選択
-  const handleResolveAsNewCustomer = async () => {
-    const pending = pendingImport;
-    if (!pending) return;
-    setPendingImport(null);
-    try {
-      setImporting(true);
-      const newCust = await createCustomer(pending.customerName);
-      await continueExcelImport({ ...pending, customerId: newCust.id });
-    } catch (err) {
-      console.error('顧客登録エラー:', err);
-      setError('顧客の登録に失敗しました: ' + err.message);
-      setImporting(false);
-    }
-  };
-
-  // 顧客確認モーダル: 既存顧客に紐づけを選択
-  const handleResolveAsExistingCustomer = async (customerId) => {
-    const pending = pendingImport;
-    if (!pending) return;
-    setPendingImport(null);
-    await continueExcelImport({ ...pending, customerId });
-  };
-
-  // 顧客確認モーダル: キャンセル（取込を中断）
-  const handleCancelPendingImport = () => {
-    setPendingImport(null);
-  };
 
   // ============================================================
   // レンダリング
@@ -421,21 +277,6 @@ const EstimateList = ({ onEdit }) => {
           見積書管理
         </h2>
         <div className="flex items-center gap-2">
-          <input
-            type="file"
-            accept=".xlsx, .xls"
-            onChange={handleExcelImport}
-            ref={fileInputRef}
-            className="hidden"
-            id="estimate-excel-upload"
-          />
-          <label
-            htmlFor="estimate-excel-upload"
-            className={`flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-bold transition cursor-pointer ${importing ? 'opacity-60 pointer-events-none' : ''}`}
-          >
-            {importing ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />}
-            {importing ? '取込中...' : 'Excelから取込'}
-          </label>
           <button
             onClick={() => onEdit(null)}
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold transition"
@@ -617,17 +458,6 @@ const EstimateList = ({ onEdit }) => {
             </div>
           </div>
         </div>
-      )}
-
-      {/* Excel取込: 顧客未一致の確認モーダル */}
-      {pendingImport && (
-        <CustomerResolveModal
-          customerName={pendingImport.customerName}
-          customers={pendingImport.customers}
-          onRegisterNew={handleResolveAsNewCustomer}
-          onLinkExisting={handleResolveAsExistingCustomer}
-          onCancel={handleCancelPendingImport}
-        />
       )}
 
       {/* ゴミ箱（削除済み見積書一覧） */}
