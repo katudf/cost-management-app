@@ -325,8 +325,10 @@ ALTER TABLE office_staff ADD CONSTRAINT office_staff_role_check
 
 ### 5.4 ドキュメント修正
 
-- CLAUDE.md の主要テーブル一覧にある `PurchaseLedgers` は実在しない（実体は `PurchaseRecords`）。修正する。
-- 本仕様書確定後、`docs/architecture.md` に認証・認可の節を追記する。
+- ✅ 完了（2026-07-30）CLAUDE.md / `docs/design.md` の主要テーブル一覧にあった `PurchaseLedgers` を実体の `PurchaseRecords` に修正した。
+  （`PurchaseLedgerTab.jsx` はコンポーネント名であり、テーブル名ではない）
+- ✅ 完了（2026-07-30）認証・認可の節は [`docs/design.md`](../design.md) §7「セキュリティ」に記載した。
+  （`docs/architecture.md` は design.md へ統合して廃止）
 
 ---
 

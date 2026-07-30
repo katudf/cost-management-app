@@ -3,19 +3,23 @@
 ## プロジェクト概要
 
 建設業向けの工事原価管理Webアプリ。Supabase (PostgreSQL) をバックエンドに、React + Vite で構築したSPA。
-- **管理者画面** (`AdminApp.jsx`): 原価・見積・作業員・工程管理
-- **作業員画面** (`WorkerApp.jsx`): 日報入力（スマホ対応）
-- **工程表閲覧** (`ScheduleViewApp.jsx`): 読み取り専用
-- URL クエリパラメータ `?mode=worker|schedule` で画面切替（`App.jsx`）
+- **管理者画面** (`AdminApp.jsx`): 原価・見積・作業員・工程管理（認証必須）
+- **作業員画面** (`WorkerApp.jsx`): 日報入力（スマホ対応、認証必須）
+- **工程表閲覧** (`ScheduleViewApp.jsx`): 読み取り専用（認証なし）
+- **在庫管理** (`InventoryApp.jsx`): 資材の在庫・入出庫（認証なし）
+- URL クエリパラメータ `?mode=worker|schedule|inventory` で画面切替（`App.jsx`）
+- PWA用に `worker.html` / `inventory.html` の専用エントリーポイントあり（パスでもモード判定）
 
-詳細: [`docs/design.md`](docs/design.md) / [`docs/architecture.md`](docs/architecture.md)
+詳細: [`docs/design.md`](docs/design.md)（設計・アーキテクチャ全般） / [`docs/README.md`](docs/README.md)（ドキュメント一覧）
 
 ## 開発コマンド
 
 ```bash
-npm run dev      # 開発サーバー（localhost:5173）
-npm run build    # 本番ビルド
-npm run preview  # ビルドプレビュー
+npm run dev       # 開発サーバー（localhost:5173）
+npm run build     # 本番ビルド
+npm run preview   # ビルドプレビュー
+npm test          # ユニットテスト（Vitest）
+npm run test:e2e  # E2Eテスト（Playwright）
 ```
 
 ## 環境変数
@@ -33,19 +37,31 @@ React 18 / Vite 5 / TailwindCSS 3 / Supabase / @react-pdf/renderer / xlsx-js-sty
 
 ```
 src/
-├── App.jsx                    # ルート（画面切替）
+├── App.jsx                    # ルート（画面切替 / ErrorBoundary / AuthProvider）
 ├── AdminApp.jsx               # 管理者アプリ本体
 ├── WorkerApp.jsx              # 作業員アプリ本体
-├── components/tabs/           # 各タブコンポーネント
+├── ScheduleViewApp.jsx        # 工程表閲覧
+├── InventoryApp.jsx           # 在庫管理
+├── components/
+│   ├── tabs/                  # AdminApp の各タブ（+ tabs/settings/）
+│   ├── auth/                  # LoginScreen, ResetPasswordScreen
+│   ├── estimate/              # 見積フォームの分割コンポーネント
+│   ├── dashboard/             # ダッシュボードの表示切替
+│   ├── assignment/            # 配置表の行・ポップアップ
+│   └── ConfirmProvider.jsx    # useConfirm()（confirm/prompt）
 ├── hooks/
 │   ├── useSupabaseData.js     # マスタデータ一括取得（中心的なフック）
+│   ├── useAuth.jsx            # 認証セッション・ロール判定
 │   ├── useProjects.js         # プロジェクトCRUD
-│   └── useWorkers.js          # 作業員CRUD
+│   ├── useWorkers.js          # 作業員CRUD
+│   └── useInventory.js        # 在庫・入出庫
 ├── utils/
-│   ├── constants.js           # 定数（PROJECT_STATUS, ITEM_TYPE等）
-│   ├── workTimeUtils.js       # 人工・労働時間計算
+│   ├── constants.js           # 定数（PROJECT_STATUS, ESTIMATE_STATUS, ITEM_TYPE等）
+│   ├── workTimeUtils.ts       # 人工・労働時間計算
 │   └── projectUtils.js        # 原価集計
-├── EstimateForm.jsx           # 見積書作成（大きなファイル: ~950行）
+├── types/index.ts             # 共通型定義（TypeScript段階移行中）
+├── EstimateForm.jsx           # 見積書作成（大きなファイル）
+├── supabaseEstimates.js       # 見積DB操作（ソフト削除・復元含む）
 └── lib/supabase.js            # Supabaseクライアント
 ```
 
@@ -56,9 +72,10 @@ src/
 - 必ず `src/hooks/` のカスタムフック、または `supabaseEstimates.js` を経由する
 
 ### 削除確認
-- `window.confirm()` は使用禁止
-- `src/components/ConfirmModal.jsx` を使うこと
-- ConfirmModal は必ずルート要素の**内側**に配置（JSX兄弟要素エラー防止）
+- `window.confirm()` / `window.prompt()` は使用禁止
+- `useConfirm()` フック（`src/components/ConfirmProvider.jsx`）の `confirm()` / `prompt()` を使う
+  - `const ok = await confirm({ title, message }); if (!ok) return;`
+- `ConfirmModal` を直接使う場合は必ずルート要素の**内側**に配置（JSX兄弟要素エラー防止）
 
 ### マジック文字列
 - プロジェクトステータス等は `src/utils/constants.js` の定数を使用
@@ -88,7 +105,9 @@ src/
 | `Customers` | 顧客情報 |
 | `office_staff` | 担当者（事務・営業） |
 | `system_settings` | システム設定（id=1 固定行） |
-| `PurchaseLedgers` | 購買台帳 |
+| `PurchaseRecords` | 購買台帳・仕入帳 |
+| `InventoryItems` / `Warehouses` | 資材在庫・保管場所 |
+| `workers_directory` | 作業員名簿ビュー（在庫アプリ等の参照用） |
 
 ## 注意点
 

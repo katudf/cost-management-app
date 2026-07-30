@@ -40,10 +40,13 @@ flowchart TD
   - 差し戻し時は理由入力を必須にする（モーダルで入力）
   - 将来的にはステータス変更履歴テーブル（`estimate_status_logs`）で監査証跡を残す
 
-#### 2-2. 明細保存が「全削除→再挿入」でトランザクション無し
-- **現状**: `saveEstimateItems()`（supabaseEstimates.js:162）は既存明細を DELETE した後に INSERT する2段階処理。
-- **問題**: DELETE 成功後に INSERT が失敗（ネットワーク断・制約違反）すると**明細が全損**する。
-- **提案**: Postgres 関数（RPC）化して1トランザクションで delete + insert を実行する。`get_next_estimate_seq` と同様に RPC を追加すればよい。
+#### 2-2. 明細保存が「全削除→再挿入」でトランザクション無し ✅ 対応済（2026-07）
+- **当時の問題**: `saveEstimateItems()` は既存明細を DELETE した後に INSERT する2段階処理で、
+  DELETE 成功後に INSERT が失敗すると明細が全損するリスクがあった。
+- **対応**: `save_estimate_items` RPC を追加し、delete + insert を1トランザクションで実行するよう変更。
+  - マイグレーション: `supabase/migrations/20260707000000_create_save_estimate_items_rpc.sql`
+  - 呼び出し箇所: `src/supabaseEstimates.js`（`supabase.rpc('save_estimate_items', ...)`）
+- **注意**: この実装を個別の DELETE / INSERT に戻すと全損リスクが再発する。
 
 #### 2-3. 長時間の明細入力中にデータを失うリスク
 - **現状**: 未保存変更は `beforeunload` の警告のみ。自動保存・下書き退避が無い。
@@ -99,7 +102,7 @@ flowchart TD
 
 | 順 | 項目 | 理由 |
 |----|------|------|
-| 1 | 2-2 明細保存のトランザクション化 | データ全損リスクの解消。RPC追加のみで影響範囲が小さい |
+| ~~1~~ | ~~2-2 明細保存のトランザクション化~~ | ✅ 2026-07 対応済（`save_estimate_items` RPC） |
 | 2 | 2-4 連携失敗の通知＋hooks移動 | 修正が容易で、設計ルール違反の解消も兼ねる |
 | 3 | 2-3 入力内容の自動退避 | 入力工数が大きい画面のため損失時の被害が大きい |
 | 4 | 2-1 承認証跡（承認者・日時・差し戻し理由） | カラム追加＋UI小改修で監査性が大きく向上 |

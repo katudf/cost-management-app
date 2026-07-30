@@ -13,9 +13,10 @@
 | **マスタ管理** | 工事種別・目標工数・金額のマスタデータ管理 |
 | **作業員管理** | 作業員プロフィール・資格情報・CPDS番号の管理 |
 | **配置表** | ガントチャート形式の作業員アサイン表示 |
-| **見積書** | 見積書作成・PDF出力・Excel取込 |
+| **見積書** | 見積書作成・PDF出力・Excel取込・ゴミ箱（30日以内は復元可） |
 | **購買台帳** | 購入・外注費用の台帳管理 |
-| **システム設定** | 人工単価・Gemini APIキー・自社情報・顧客情報・担当者設定 |
+| **在庫管理** | 資材（塗料・工具等）の在庫・入出庫管理 |
+| **システム設定** | 人工単価・自社情報・顧客情報・担当者設定 |
 
 ---
 
@@ -72,26 +73,36 @@ cp .env.example .env
 # Supabase接続情報（必須）
 VITE_SUPABASE_URL=https://xxxxxxxxxxxx.supabase.co
 VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-
-# Gemini AI（任意 - Excel読込時の項目名最適化機能に使用）
-# 注意: VITE_プレフィックスのためブラウザから参照可能。本番利用時は制限を設けること
-VITE_GEMINI_API_KEY=AIza...
 ```
 
 > **Supabase接続情報の取得場所**  
 > Supabaseダッシュボード → プロジェクト → Settings → API → `Project URL` と `anon public` キー
 
+> **Gemini APIキーは `.env` に置きません。**  
+> Excel読込時の項目名最適化は Supabase Edge Function `gemini-optimize` 経由で呼び出します。
+> キーは Supabase の Edge Function Secrets に `GEMINI_API_KEY` として設定してください。
+> （旧 `VITE_GEMINI_API_KEY` はブラウザに露出するため廃止済み）
+
+```bash
+npx supabase secrets set GEMINI_API_KEY=AIza...
+```
+
 ### 4. データベースの初期設定
 
-Supabaseダッシュボードの SQL Editor で、`supabase/migrations/` 内のSQLファイルを順に実行してください。
+Supabaseダッシュボードの SQL Editor で、`supabase/migrations/` 内のSQLファイルを**ファイル名の昇順**に実行してください。
+（Supabase CLI を使う場合は `npx supabase db push`）
 
-```
-supabase/migrations/
-├── 20260323051912_remote_schema.sql    # テーブル定義
-└── 20260327143000_create_purchase_records.sql  # 購買台帳テーブル
+マイグレーションは追加され続けるため、README では個別ファイルを列挙しません。
+`supabase/migrations/` の中身が正です。
+
+### 5. Edge Functions のデプロイ
+
+```bash
+npx supabase functions deploy gemini-optimize
+npx supabase functions deploy invite-staff
 ```
 
-### 5. 開発サーバーの起動
+### 6. 開発サーバーの起動
 
 ```bash
 npm run dev
@@ -101,24 +112,29 @@ npm run dev
 
 ---
 
-## URL パラメータによる画面切替
+## URL による画面切替
 
-同一URLパラメータで3つのアプリを切り替えます。
+同一デプロイで4つのアプリを切り替えます。
 
-| URL | 表示画面 |
-|-----|----------|
-| `http://localhost:5173/` | 管理者画面（AdminApp） |
-| `http://localhost:5173/?mode=worker` | 現場作業員画面（WorkerApp） |
-| `http://localhost:5173/?mode=schedule` | 工程表閲覧画面（ScheduleViewApp） |
+| URL | 表示画面 | 認証 |
+|-----|----------|------|
+| `http://localhost:5173/` | 管理者画面（AdminApp） | 要 |
+| `http://localhost:5173/?mode=worker` | 現場作業員画面（WorkerApp） | 要 |
+| `http://localhost:5173/worker.html` | 同上（PWAインストール用） | 要 |
+| `http://localhost:5173/?mode=schedule` | 工程表閲覧画面（ScheduleViewApp） | 不要 |
+| `http://localhost:5173/?mode=inventory` | 在庫管理画面（InventoryApp） | 不要 |
+| `http://localhost:5173/inventory.html` | 同上（PWAインストール用） | 不要 |
 
 ---
 
 ## 開発コマンド
 
 ```bash
-npm run dev      # 開発サーバー起動（ホットリロード有効）
-npm run build    # 本番ビルド（dist/ に出力）
-npm run preview  # ビルド結果のプレビュー
+npm run dev       # 開発サーバー起動（ホットリロード有効）
+npm run build     # 本番ビルド（dist/ に出力）
+npm run preview   # ビルド結果のプレビュー
+npm test          # ユニットテスト（Vitest）
+npm run test:e2e  # E2Eテスト（Playwright）
 ```
 
 ---
@@ -137,37 +153,51 @@ cost-management-app/
 │   ├── AdminApp.jsx            # 管理者向けアプリ
 │   ├── WorkerApp.jsx           # 現場作業員向けアプリ
 │   ├── ScheduleViewApp.jsx     # 工程表閲覧アプリ
+│   ├── InventoryApp.jsx        # 在庫管理アプリ
 │   ├── EstimateList.jsx        # 見積一覧
 │   ├── EstimateForm.jsx        # 見積書作成・編集フォーム
 │   ├── EstimatePDF.jsx         # 見積書PDF定義
 │   ├── supabaseEstimates.js    # 見積DB操作
-│   ├── components/             # 共通UIコンポーネント
-│   │   ├── ConfirmModal.jsx
+│   ├── components/             # UIコンポーネント
+│   │   ├── ConfirmProvider.jsx # useConfirm()（confirm/prompt）
 │   │   ├── Toast.jsx
-│   │   ├── ImportModal.jsx
-│   │   ├── HolidayCalendar.jsx
-│   │   └── tabs/               # 各タブコンポーネント
+│   │   ├── ErrorBoundary.jsx
+│   │   ├── auth/               # ログイン・パスワード再設定
+│   │   ├── tabs/               # AdminApp の各タブ
+│   │   ├── estimate/           # 見積フォームの分割コンポーネント
+│   │   ├── dashboard/          # ダッシュボード表示切替
+│   │   └── assignment/         # 配置表の行・ポップアップ
 │   ├── hooks/                  # Supabase通信・状態管理フック
 │   │   ├── useSupabaseData.js
+│   │   ├── useAuth.jsx
 │   │   ├── useProjects.js
 │   │   ├── useWorkers.js
+│   │   ├── useInventory.js
 │   │   └── useDashboardStats.js
+│   ├── types/                  # TypeScript型定義
 │   ├── lib/
 │   │   └── supabase.js         # Supabaseクライアント初期化
 │   └── utils/                  # ビジネスロジック・ユーティリティ
 │       ├── constants.js
-│       ├── dateUtils.js
-│       ├── workTimeUtils.js
+│       ├── dateUtils.ts
+│       ├── workTimeUtils.ts
 │       ├── projectUtils.js
 │       ├── excelImportUtils.js
 │       ├── excelExportUtils.js
 │       ├── pdfExportUtils.js
 │       └── aiOptimizeUtils.js
 ├── supabase/
-│   └── migrations/             # DBマイグレーションSQL
-├── docs/                       # 設計書・実装メモ
-│   ├── design.md               # システム設計書（本ドキュメント）
-│   └── architecture.md         # アーキテクチャ概要
+│   ├── migrations/             # DBマイグレーションSQL
+│   └── functions/              # Edge Functions
+│       ├── gemini-optimize/    # Gemini APIプロキシ
+│       └── invite-staff/       # 担当者招待
+├── docs/                       # ドキュメント（docs/README.md が入口）
+│   ├── design.md               # システム設計書
+│   ├── specs/                  # 機能別詳細仕様
+│   ├── manuals/                # 操作マニュアル
+│   └── archive/                # 過去の実装作業ログ
+├── worker.html                 # 作業員アプリ用エントリ（PWA）
+├── inventory.html              # 在庫アプリ用エントリ（PWA）
 ├── .env.example                # 環境変数テンプレート
 ├── vite.config.js
 ├── tailwind.config.js
@@ -187,6 +217,20 @@ cost-management-app/
 
 ## 注意事項
 
-- **Gemini APIキー**は `VITE_` プレフィックスのため、ビルド後のJSバンドルに含まれます。  
-  不特定多数へ公開するサービスでは、Supabase Edge Functions 経由でのプロキシ利用を推奨します。
-- Supabase の **Row Level Security (RLS)** 設定状況を本番環境前に必ず確認してください。
+- **`VITE_SUPABASE_ANON_KEY` は秘密情報ではありません。** ビルド後のJSバンドルに含まれる前提のキーです。
+  アクセス制御は必ず Supabase の **Row Level Security (RLS)** で実装してください。
+  ポリシー設計は [`docs/specs/security-permissions.md`](docs/specs/security-permissions.md) を参照。
+- **Gemini APIキー**は Edge Function Secrets で管理します。`.env` や `VITE_` 変数には置かないでください。
+- `public/fonts/` の NotoSansJP はPDF生成時にフェッチして埋め込むため、
+  devサーバー起動中でないとPDFプレビューが崩れる場合があります。
+
+---
+
+## ドキュメント
+
+| 目的 | 参照先 |
+|------|--------|
+| ドキュメント全体の地図 | [`docs/README.md`](docs/README.md) |
+| 設計・アーキテクチャ・コーディング規約 | [`docs/design.md`](docs/design.md) |
+| 認証・権限・RLS | [`docs/specs/security-permissions.md`](docs/specs/security-permissions.md) |
+| 操作マニュアル | [`docs/manuals/`](docs/manuals/) |
