@@ -34,7 +34,7 @@ import SystemSettingsTab from './components/tabs/SystemSettingsTab';
 import PurchaseLedgerTab from './components/tabs/PurchaseLedgerTab';
 import AssignmentChartTab from './components/tabs/AssignmentChartTab';
 import EstimateList from './EstimateList';
-import EstimateForm from './EstimateForm';
+import EstimateEditor from './estimate-editor/EstimateEditor';
 import { fetchEstimates } from './supabaseEstimates';
 
 const App = () => {
@@ -1050,7 +1050,7 @@ const App = () => {
                             />
                         ) : (
                             // 新規作成 or 編集画面
-                            <EstimateForm
+                            <EstimateEditor
                                 estimateId={estimateEditId}  // null=新規, number=編集
                                 onBack={() => setEstimateEditId(undefined)}
                                 onSaved={() => {

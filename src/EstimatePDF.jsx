@@ -551,81 +551,252 @@ const CoverPage = ({ estimate, settings, totals }) => {
 };
 
 // ============================================================
-// 内訳明細書コンポーネント
+// 明細シートの行モデル構築（SheetPaper.jsx の buildSheetRows と同一アルゴリズム）
 // ============================================================
-const DetailPage = ({ estimate, totals, settings }) => {
-  const { net, subtotal, tax, total } = totals;
-  const items = estimate.items || [];
+// 1シート分の items を「データ行＋ダミー行＋フッター行」の行記述子配列へ変換する。
+// 返り値の長さは必ず ROWS_PER_PAGE の倍数になり、19行ごとにページへ切り分ければ
+// フッター行（税抜合計 / 合計 / NET）が常に最終ページ末尾へ収まる。
+//   - トップシート: FIXED行(show_fixed_fees時)＋税抜合計＋NET行(show_net時)。
+//     消費税・税込合計は鑑(CoverPage)側にのみ表示する。
+//   - サブシート : 「合　計」1行のみ（リンク解決済みのシート合計 sheetTotal）。
+const PDF_ROWS_PER_PAGE = 19;
+
+const buildSheetRowsPDF = (items, header, isTopSheet, totals, sheetTotal) => {
   const nonFixed = items.filter(i => i.item_type !== ITEM_TYPE.FIXED);
   const fixedItems = items.filter(i => i.item_type === ITEM_TYPE.FIXED);
 
-  // ダミー行の追加（ページ内で行枠を固定するため）
-  const ROWS_PER_PAGE = 19; // 1ページのデータ行数（ヘッダー行含めず）
-
-  // 最後のページに必要な合計行のスペースを計算
-  // 工事費 + 消費税 + 税込合計 = 3行、NET表示 = 1行、固定費行数
-  const fixedFeeRows = estimate.show_fixed_fees ? fixedItems.length : 0;
-  const netRow = estimate.show_net ? 1 : 0;
-  const footerRows = 3 + netRow + fixedFeeRows; // 合計行 + NET行 + 固定費行
+  const showFixed = isTopSheet && header.show_fixed_fees;
+  const fixedFeeRows = showFixed ? fixedItems.length : 0;
+  const netRowCount = isTopSheet && header.show_net ? 1 : 0;
+  const footerRows = isTopSheet ? fixedFeeRows + 1 + netRowCount : 1;
 
   const totalDataRows = nonFixed.length;
-  const remainder = totalDataRows % ROWS_PER_PAGE;
-  // 最終ページで何行のデータ行があるか
-  const lastPageDataRows = remainder === 0 ? ROWS_PER_PAGE : remainder;
-  // 最終ページの空き行数（合計行のスペースを引いた残り）
-  const availableForDummy = ROWS_PER_PAGE - lastPageDataRows - footerRows;
-
+  const remainder = totalDataRows % PDF_ROWS_PER_PAGE;
   let paddingCount;
   if (totalDataRows === 0) {
-    // データが0件の場合はROWS_PER_PAGE行からfooterRows分を引く
-    paddingCount = ROWS_PER_PAGE - footerRows;
-  } else if (availableForDummy >= 0) {
-    // 最終ページに合計行もダミー行も収まる
-    paddingCount = availableForDummy;
+    paddingCount = PDF_ROWS_PER_PAGE - footerRows;
   } else {
-    // 合計行が収まらないので次ページに送る → 現在のページをダミーで埋めて、
-    // 次ページで合計行のみ表示（次ページの行数からfooterRows分を引く）
-    const fillCurrent = remainder === 0 ? 0 : ROWS_PER_PAGE - remainder;
-    paddingCount = fillCurrent + (ROWS_PER_PAGE - footerRows);
+    const lastPageDataRows = remainder === 0 ? PDF_ROWS_PER_PAGE : remainder;
+    const availableForDummy = PDF_ROWS_PER_PAGE - lastPageDataRows - footerRows;
+    paddingCount = availableForDummy >= 0
+      ? availableForDummy
+      : (remainder === 0 ? 0 : PDF_ROWS_PER_PAGE - remainder) + (PDF_ROWS_PER_PAGE - footerRows);
   }
 
-  const dummyRows = Array(Math.max(0, paddingCount)).fill({
-    item_type: 'dummy',
-    name: '',
-    spec: '',
-    quantity: null,
-    unit: '',
-    unit_price: null,
-    amount: null,
-    note: ''
-  });
-  const dummyCount = dummyRows.length;
-  const displayItems = [...nonFixed, ...dummyRows];
-
-  // No連番カウンター
-  let itemNo = 0;
-
-  // 工種ごとの小計（オブジェクト参照キーのMapで管理）
+  // 工種見出しごとの小計（見出し行の金額セルに表示）
   const catSubtotalMap = new Map();
   let currentCat = null;
-  items.forEach(item => {
+  nonFixed.forEach(item => {
     if (item.item_type === ITEM_TYPE.CATEGORY) {
       currentCat = item;
       catSubtotalMap.set(item, 0);
     } else if (item.item_type === ITEM_TYPE.ITEM && currentCat) {
-      catSubtotalMap.set(currentCat, (catSubtotalMap.get(currentCat) || 0) + (Number(item.amount) || 0));
+      catSubtotalMap.set(currentCat, catSubtotalMap.get(currentCat) + (Number(item.amount) || 0));
     }
   });
 
+  const rows = [];
+  let itemNo = 0;
+  nonFixed.forEach(item => {
+    if (item.item_type === ITEM_TYPE.CATEGORY) {
+      rows.push({ kind: 'category', item, catTotal: catSubtotalMap.get(item) || 0 });
+    } else if (item.item_type === ITEM_TYPE.COMMENT) {
+      rows.push({ kind: 'comment', item });
+    } else if (item.item_type === ITEM_TYPE.SUBTOTAL) {
+      rows.push({ kind: 'subtotal', item });
+    } else {
+      // 空行（No.を振らない）判定は itemNo を進めるかどうかだけの差
+      const blank = !item.name && !item.spec &&
+        (item.quantity == null || item.quantity === '') &&
+        (item.unit_price == null || item.unit_price === '');
+      if (blank) {
+        rows.push({ kind: 'item', item, itemNo: null });
+      } else {
+        itemNo += 1;
+        rows.push({ kind: 'item', item, itemNo });
+      }
+    }
+  });
 
+  for (let i = 0; i < Math.max(0, paddingCount); i++) {
+    rows.push({ kind: 'dummy' });
+  }
+
+  if (isTopSheet) {
+    if (showFixed) {
+      fixedItems.forEach(item => rows.push({ kind: 'fixed', item }));
+    }
+    rows.push({ kind: 'total-ex-tax', amount: totals.subtotal });
+    if (header.show_net) {
+      rows.push({ kind: 'net', amount: totals.net });
+    }
+  } else {
+    const resolvedTotal = sheetTotal != null
+      ? sheetTotal
+      : items.reduce(
+          (sum, i) => sum + (i.item_type === ITEM_TYPE.ITEM ? (Number(i.amount) || 0) : 0), 0
+        );
+    rows.push({ kind: 'sheet-total', amount: resolvedTotal });
+  }
+
+  return rows;
+};
+
+// ============================================================
+// 明細行1件の描画（行記述子 → @react-pdf View）
+// ============================================================
+const renderPdfRow = (row, idx, pageBottomBorderStyle, shouldBreak) => {
+  switch (row.kind) {
+    case 'category': {
+      const { item, catTotal } = row;
+      return (
+        <View key={idx} style={[S.categoryRow, pageBottomBorderStyle]} wrap={false} break={shouldBreak}>
+          <Text style={[S.cellNo, { borderRight: 'none' }]}></Text>
+          <Text style={[S.cellName, { fontWeight: 'bold', flex: 7, borderRight: 'none' }]}>
+            {item.category_symbol ? `${item.category_symbol}　` : ''}{wrapText(item.name)}
+          </Text>
+          <Text style={[S.cellAmount, { fontWeight: 'bold', borderRight: 'none' }]}>
+            {catTotal > 0 ? fmt(catTotal) : ''}
+          </Text>
+          <Text style={S.cellNote}></Text>
+        </View>
+      );
+    }
+    case 'comment': {
+      const { item } = row;
+      return (
+        <View key={idx} style={[S.tableRow, pageBottomBorderStyle]} wrap={false} break={shouldBreak}>
+          <Text style={S.cellNo}></Text>
+          <Text style={[S.cellName, { flex: 5 }]}>{wrapText(item.name)}</Text>
+          <Text style={S.cellQty}></Text>
+          <Text style={S.cellUnit}></Text>
+          <Text style={S.cellPrice}></Text>
+          <Text style={S.cellAmount}></Text>
+          <Text style={S.cellNote}></Text>
+        </View>
+      );
+    }
+    case 'item': {
+      const { item, itemNo } = row;
+      return (
+        <View key={idx} style={[S.tableRow, pageBottomBorderStyle]} wrap={false} break={shouldBreak}>
+          <Text style={S.cellNo}>{itemNo ?? ''}</Text>
+          <Text style={S.cellName}>{wrapText(item.name)}</Text>
+          <Text style={S.cellSpec}>{wrapText(item.spec || '')}</Text>
+          <Text style={S.cellQty}>
+            {item.quantity != null && item.quantity !== '' ? Number(item.quantity).toLocaleString('ja-JP') : ''}
+          </Text>
+          <Text style={S.cellUnit}>{item.unit || ''}</Text>
+          <Text style={S.cellPrice}>
+            {item.unit_price != null && item.unit_price !== '' ? fmt(item.unit_price) : ''}
+          </Text>
+          <Text style={S.cellAmount}>
+            {item.amount != null && item.amount !== '' ? fmt(item.amount) : ''}
+          </Text>
+          <Text style={S.cellNote}>{wrapText(item.note || '')}</Text>
+        </View>
+      );
+    }
+    case 'subtotal': {
+      return (
+        <View key={idx} style={[S.subtotalRow, pageBottomBorderStyle]} wrap={false} break={shouldBreak}>
+          <Text style={S.cellNo}></Text>
+          <Text style={[S.cellName, { flex: 5, textAlign: 'right', fontWeight: 'bold', paddingRight: 8 }]}>
+            合　計
+          </Text>
+          <Text style={[S.cellAmount, { fontWeight: 'bold' }]}>
+            {fmt(row.item.amount)}
+          </Text>
+          <Text style={S.cellNote}></Text>
+        </View>
+      );
+    }
+    case 'fixed': {
+      const { item } = row;
+      return (
+        <View key={idx} style={[S.fixedRow, pageBottomBorderStyle]} wrap={false} break={shouldBreak}>
+          <Text style={[S.cellNo, { borderRight: 'none' }]}></Text>
+          <Text style={[S.cellName, { borderRight: 'none' }]}>{item.name}</Text>
+          <Text style={[S.cellSpec, { borderRight: 'none' }]}></Text>
+          <Text style={S.cellQty}>1.0</Text>
+          <Text style={S.cellUnit}>式</Text>
+          <Text style={S.cellPrice}></Text>
+          <Text style={S.cellAmount}>{fmt(item.amount)}</Text>
+          <Text style={S.cellNote}></Text>
+        </View>
+      );
+    }
+    // トップシート末尾の「税抜合計」／サブシート末尾の「合　計」
+    case 'total-ex-tax':
+    case 'sheet-total': {
+      const label = row.kind === 'total-ex-tax' ? '税抜合計' : '合　計';
+      return (
+        <View key={idx} style={[S.subtotalRow, pageBottomBorderStyle]} wrap={false} break={shouldBreak}>
+          <Text style={[S.cellNo, { borderRight: 'none' }]}></Text>
+          <Text style={[S.cellName, { borderRight: 'none' }]}></Text>
+          <Text style={[S.cellSpec, { borderRight: 'none' }]}></Text>
+          <Text style={[S.cellQty, { borderRight: 'none' }]}></Text>
+          <Text style={[S.cellUnit, { borderRight: 'none' }]}></Text>
+          <Text style={[S.cellPrice, { textAlign: 'right', fontWeight: 'bold' }]}>{label}</Text>
+          <Text style={[S.cellAmount, { fontWeight: 'bold' }]}>{fmt(row.amount)}</Text>
+          <Text style={S.cellNote}></Text>
+        </View>
+      );
+    }
+    case 'net': {
+      return (
+        <View key={idx} style={[S.netRow, pageBottomBorderStyle]} wrap={false} break={shouldBreak}>
+          <Text style={[S.cellNo, { borderRight: 'none' }]}></Text>
+          <Text style={[S.cellName, { borderRight: 'none' }]}></Text>
+          <Text style={[S.cellSpec, { borderRight: 'none' }]}></Text>
+          <Text style={[S.cellQty, { borderRight: 'none' }]}></Text>
+          <Text style={[S.cellUnit, { borderRight: 'none' }]}></Text>
+          <Text style={[S.cellPrice, { borderRight: 'none' }]}></Text>
+          <Text style={[S.cellAmount, { borderRight: 'none' }]}></Text>
+          <Text style={[S.cellNote, { borderRight: 'none' }]}></Text>
+          <View style={{ position: 'absolute', width: '100%', alignItems: 'center' }}>
+            <Text style={S.netText}>【　NET金額　¥{fmt(row.amount)}-　】</Text>
+          </View>
+        </View>
+      );
+    }
+    case 'dummy':
+    default: {
+      return (
+        <View key={idx} style={[S.tableRow, pageBottomBorderStyle]} wrap={false} break={shouldBreak}>
+          <Text style={S.cellNo}></Text>
+          <Text style={S.cellName}></Text>
+          <Text style={S.cellSpec}></Text>
+          <Text style={S.cellQty}></Text>
+          <Text style={S.cellUnit}></Text>
+          <Text style={S.cellPrice}></Text>
+          <Text style={S.cellAmount}></Text>
+          <Text style={S.cellNote}></Text>
+        </View>
+      );
+    }
+  }
+};
+
+// ============================================================
+// 内訳明細書コンポーネント（1シート = 1 <Page> グループ）
+// ============================================================
+// シートモデル（design.md §4）: 各明細シートが自前の末尾合計で閉じる。
+//   - トップシート: 末尾＝税抜合計（＋FIXED＋NET）。消費税・税込合計は鑑側。
+//   - サブシート : 末尾＝合　計（リンク解決済みシート合計 sheetTotal）。
+// ページ番号は鑑を No.1 とする通し番号（startPageNumber からの連番）。
+const DetailPage = ({ sheet, items, isTopSheet, totals, sheetTotal, settings, startPageNumber }) => {
+  const rows = buildSheetRowsPDF(items, sheet.header, isTopSheet, totals, sheetTotal);
+  const sheetTitle = sheet.title || '見積内訳明細書';
+  const estimateNumber = sheet.header.estimate_number;
 
   return (
     <Page size="A4" orientation="landscape" style={S.page} wrap>
 
       {/* ページヘッダー */}
       <View fixed style={{ position: 'relative', marginBottom: 10 }}>
-        <Text style={S.sheetNo}>（{estimate.estimate_number}）</Text>
-        <Text style={S.sheetTitle}>見積内訳明細書</Text>
+        <Text style={S.sheetNo}>（{estimateNumber}）</Text>
+        <Text style={S.sheetTitle}>{sheetTitle}</Text>
       </View>
 
       {/* 列ヘッダー（固定・各ページ繰り返し） */}
@@ -640,180 +811,20 @@ const DetailPage = ({ estimate, totals, settings }) => {
         <Text style={S.hCellNote}>摘　要</Text>
       </View>
 
-      {/* 明細行 */}
-      {displayItems.map((item, idx) => {
-        // 19行ごとに強制改ページ（@react-pdfの自動分割とのズレ防止）
-        const shouldBreak = idx > 0 && idx % ROWS_PER_PAGE === 0;
-        // ページの最終行は外枠として下線を実線にする
-        const isLastRowOfPage = (idx + 1) % ROWS_PER_PAGE === 0;
+      {/* 明細行（19行ごとに強制改ページ） */}
+      {rows.map((row, idx) => {
+        const shouldBreak = idx > 0 && idx % PDF_ROWS_PER_PAGE === 0;
+        const isLastRowOfPage = (idx + 1) % PDF_ROWS_PER_PAGE === 0;
         const pageBottomBorderStyle = isLastRowOfPage ? { borderBottom: '1pt solid #1a1a1a' } : {};
-
-        if (item.item_type === ITEM_TYPE.CATEGORY) {
-          const catTotal = catSubtotalMap.get(item) || 0;
-          return (
-            <React.Fragment key={idx}>
-              {/* 工種見出し行：列罫線なし、金額列に工種小計を表示 */}
-              <View style={[S.categoryRow, pageBottomBorderStyle]} wrap={false} break={shouldBreak}>
-                <Text style={[S.cellNo, { borderRight: 'none' }]}></Text>
-                <Text style={[S.cellName, { fontWeight: 'bold', flex: 7, borderRight: 'none' }]}>
-                  {item.category_symbol ? `${item.category_symbol}　` : ''}{wrapText(item.name)}
-                </Text>
-                <Text style={[S.cellAmount, { fontWeight: 'bold', borderRight: 'none' }]}>
-                  {catTotal > 0 ? fmt(catTotal) : ''}
-                </Text>
-                <Text style={S.cellNote}></Text>
-              </View>
-            </React.Fragment>
-          );
-        }
-
-        if (item.item_type === ITEM_TYPE.COMMENT) {
-          return (
-            <View key={idx} style={[S.tableRow, pageBottomBorderStyle]} wrap={false} break={shouldBreak}>
-              <Text style={S.cellNo}></Text>
-              <Text style={[S.cellName, { flex: 5 }]}>{wrapText(item.name)}</Text>
-              <Text style={S.cellQty}></Text>
-              <Text style={S.cellUnit}></Text>
-              <Text style={S.cellPrice}></Text>
-              <Text style={S.cellAmount}></Text>
-              <Text style={S.cellNote}></Text>
-            </View>
-          );
-        }
-
-        if (item.item_type === ITEM_TYPE.ITEM) {
-          itemNo++;
-          return (
-            <View key={idx} style={[S.tableRow, pageBottomBorderStyle]} wrap={false} break={shouldBreak}>
-              <Text style={S.cellNo}>{itemNo}</Text>
-              <Text style={S.cellName}>{wrapText(item.name)}</Text>
-              <Text style={S.cellSpec}>{wrapText(item.spec || '')}</Text>
-              <Text style={S.cellQty}>
-                {item.quantity != null ? Number(item.quantity).toLocaleString('ja-JP') : ''}
-              </Text>
-              <Text style={S.cellUnit}>{item.unit || ''}</Text>
-              <Text style={S.cellPrice}>
-                {item.unit_price != null ? fmt(item.unit_price) : ''}
-              </Text>
-              <Text style={S.cellAmount}>
-                {item.amount != null ? fmt(item.amount) : ''}
-              </Text>
-              <Text style={S.cellNote}>{wrapText(item.note || '')}</Text>
-            </View>
-          );
-        }
-
-        // subtotal行（show_subtotals=true 時）
-        if (item.item_type === ITEM_TYPE.SUBTOTAL) {
-          return (
-            <View key={idx} style={[S.subtotalRow, pageBottomBorderStyle]} wrap={false} break={shouldBreak}>
-              <Text style={S.cellNo}></Text>
-              <Text style={[S.cellName, { flex: 5, textAlign: 'right', fontWeight: 'bold', paddingRight: 8 }]}>
-                合　計
-              </Text>
-              <Text style={[S.cellAmount, { fontWeight: 'bold' }]}>
-                {fmt(item.amount)}
-              </Text>
-              <Text style={S.cellNote}></Text>
-            </View>
-          );
-        }
-
-        // ダミー行（固定枠用）
-        if (item.item_type === 'dummy') {
-          return (
-            <View key={`dummy_${idx}`} style={[S.tableRow, pageBottomBorderStyle]} wrap={false} break={shouldBreak}>
-              <Text style={S.cellNo}></Text>
-              <Text style={S.cellName}></Text>
-              <Text style={S.cellSpec}></Text>
-              <Text style={S.cellQty}></Text>
-              <Text style={S.cellUnit}></Text>
-              <Text style={S.cellPrice}></Text>
-              <Text style={S.cellAmount}></Text>
-              <Text style={S.cellNote}></Text>
-            </View>
-          );
-        }
-
-        return null;
+        return renderPdfRow(row, idx, pageBottomBorderStyle, shouldBreak);
       })}
-
-      {/* show_subtotals が ON の場合、最後の工種にも合計行を出す処理は
-          EstimateForm保存時に subtotal行をitemsに含める実装で対応 */}
-
-      {/* 固定費行（法定福利費・安全費） */}
-      {estimate.show_fixed_fees && fixedItems.map((item, idx) => (
-        <View key={`fixed_${idx}`} style={S.fixedRow} wrap={false}>
-          <Text style={[S.cellNo, { borderRight: 'none' }]}></Text>
-          <Text style={[S.cellName, { borderRight: 'none' }]}>{item.name}</Text>
-          <Text style={[S.cellSpec, { borderRight: 'none' }]}></Text>
-          <Text style={S.cellQty}>1.0</Text>
-          <Text style={S.cellUnit}>式</Text>
-          <Text style={S.cellPrice}></Text>
-          <Text style={S.cellAmount}>{fmt(item.amount)}</Text>
-          <Text style={S.cellNote}></Text>
-        </View>
-      ))}
-
-      {/* 工事費（税抜合計） */}
-      <View style={S.subtotalRow} wrap={false}>
-        <Text style={[S.cellNo, { borderRight: 'none' }]}></Text>
-        <Text style={[S.cellName, { borderRight: 'none' }]}></Text>
-        <Text style={[S.cellSpec, { borderRight: 'none' }]}></Text>
-        <Text style={[S.cellQty, { borderRight: 'none' }]}></Text>
-        <Text style={[S.cellUnit, { borderRight: 'none' }]}></Text>
-        <Text style={[S.cellPrice, { textAlign: 'right', fontWeight: 'bold' }]}>工　事　費</Text>
-        <Text style={[S.cellAmount, { fontWeight: 'bold' }]}>{fmt(subtotal)}</Text>
-        <Text style={S.cellNote}></Text>
-      </View>
-
-      {/* 消費税 */}
-      <View style={S.subtotalRow} wrap={false}>
-        <Text style={[S.cellNo, { borderRight: 'none' }]}></Text>
-        <Text style={[S.cellName, { borderRight: 'none' }]}></Text>
-        <Text style={[S.cellSpec, { borderRight: 'none' }]}></Text>
-        <Text style={[S.cellQty, { borderRight: 'none' }]}></Text>
-        <Text style={[S.cellUnit, { borderRight: 'none' }]}></Text>
-        <Text style={[S.cellPrice, { textAlign: 'right' }]}>消　費　税</Text>
-        <Text style={[S.cellAmount]}>{fmt(tax)}</Text>
-        <Text style={S.cellNote}></Text>
-      </View>
-
-      {/* 税込合計 */}
-      <View style={S.subtotalRow} wrap={false}>
-        <Text style={[S.cellNo, { borderRight: 'none' }]}></Text>
-        <Text style={[S.cellName, { borderRight: 'none' }]}></Text>
-        <Text style={[S.cellSpec, { borderRight: 'none' }]}></Text>
-        <Text style={[S.cellQty, { borderRight: 'none' }]}></Text>
-        <Text style={[S.cellUnit, { borderRight: 'none' }]}></Text>
-        <Text style={[S.cellPrice, { textAlign: 'right', fontWeight: 'bold' }]}>税込合計</Text>
-        <Text style={[S.cellAmount, { fontWeight: 'bold' }]}>{fmt(total)}</Text>
-        <Text style={S.cellNote}></Text>
-      </View>
-
-      {/* NET表示（税込合計の下に配置） */}
-      {estimate.show_net && (
-        <View style={S.netRow} wrap={false}>
-          <Text style={[S.cellNo, { borderRight: 'none' }]}></Text>
-          <Text style={[S.cellName, { borderRight: 'none' }]}></Text>
-          <Text style={[S.cellSpec, { borderRight: 'none' }]}></Text>
-          <Text style={[S.cellQty, { borderRight: 'none' }]}></Text>
-          <Text style={[S.cellUnit, { borderRight: 'none' }]}></Text>
-          <Text style={[S.cellPrice, { borderRight: 'none' }]}></Text>
-          <Text style={[S.cellAmount, { borderRight: 'none' }]}></Text>
-          <Text style={[S.cellNote, { borderRight: 'none' }]}></Text>
-          <View style={{ position: 'absolute', width: '100%', alignItems: 'center' }}>
-            <Text style={S.netText}>【　NET金額　¥{fmt(net)}-　】</Text>
-          </View>
-        </View>
-      )}
 
       <Text style={S.footerCompany} fixed>{settings?.company_name || ''}</Text>
 
-      {/* ページ番号 */}
+      {/* 通しページ番号（鑑 = No.1。このシートは startPageNumber から始まる） */}
       <Text
         style={S.pageNumber}
-        render={({ pageNumber }) => `No.${pageNumber}`}
+        render={({ pageNumber }) => `No.${startPageNumber + pageNumber - 1}`}
         fixed
       />
     </Page>
@@ -823,22 +834,58 @@ const DetailPage = ({ estimate, totals, settings }) => {
 // ============================================================
 // ドキュメントルート
 // ============================================================
+// estimate.sheets: [{ id, title, items }] のシート配列（Phase 6）。
+// 後方互換: sheets 未指定なら従来のフラット items を単一トップシートとして扱う。
 const EstimateDocument = ({ estimate, settings }) => {
-  const items = estimate.items || [];
-  const visibleItems = items.filter(i =>
+  const header = {
+    estimate_number: estimate.estimate_number,
+    show_fixed_fees: estimate.show_fixed_fees,
+    show_net: estimate.show_net,
+  };
+
+  // シート配列を正規化。旧形式（フラット items）も1シートへ畳み込む。
+  const sheets = Array.isArray(estimate.sheets) && estimate.sheets.length > 0
+    ? estimate.sheets
+    : [{ id: '__single__', title: '見積内訳明細書', items: estimate.items || [] }];
+
+  // 鑑の合計はトップシートの明細から算出（リンク解決済みの値が渡る想定）。
+  const topItems = sheets[0]?.items || [];
+  const visibleTopItems = topItems.filter(i =>
     i.item_type === ITEM_TYPE.ITEM ||
     (i.item_type === ITEM_TYPE.FIXED && estimate.show_fixed_fees)
   );
-  const totals = calcTotals(visibleItems, Number(estimate.tax_rate || 0.1), {
+  const totals = calcTotals(visibleTopItems, Number(estimate.tax_rate || 0.1), {
     type: estimate.net_calc_type,
     perc: estimate.net_perc,
     manualAmount: estimate.net_amount
   });
 
+  // 各シート先頭ページの通しページ番号（鑑 = No.1）
+  let running = 2;
+  const sheetStartPages = sheets.map((sheet, idx) => {
+    const start = running;
+    const rows = buildSheetRowsPDF(
+      sheet.items || [], header, idx === 0, totals, sheet.sheetTotal
+    );
+    running += rows.length / PDF_ROWS_PER_PAGE;
+    return start;
+  });
+
   return (
     <Document>
       <CoverPage estimate={estimate} settings={settings} totals={totals} />
-      <DetailPage estimate={estimate} totals={totals} settings={settings} />
+      {sheets.map((sheet, idx) => (
+        <DetailPage
+          key={sheet.id ?? idx}
+          sheet={{ ...sheet, header }}
+          items={sheet.items || []}
+          isTopSheet={idx === 0}
+          totals={totals}
+          sheetTotal={sheet.sheetTotal}
+          settings={settings}
+          startPageNumber={sheetStartPages[idx]}
+        />
+      ))}
     </Document>
   );
 };
