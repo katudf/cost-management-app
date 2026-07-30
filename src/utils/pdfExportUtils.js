@@ -24,6 +24,7 @@ const COMMON_CSS_STYLE = `
     .report-wrapper {
         width: 100%;
         page-break-inside: avoid;
+        margin-top: 24px;
     }
 
     /* ===== ヘッダー ===== */
@@ -32,6 +33,9 @@ const COMMON_CSS_STYLE = `
         justify-content: space-between;
         align-items: baseline;
         margin-bottom: 2px;
+        width: 1040px;
+        margin-left: auto;
+        margin-right: auto;
     }
     .report-header h1 {
         font-size: 20px;
@@ -50,9 +54,10 @@ const COMMON_CSS_STYLE = `
     table {
         border-collapse: collapse;
         table-layout: fixed;
+        margin: 0 auto;
     }
     th, td {
-        border: 1px solid #000;
+        border: 2px solid #000;
         padding: 1px 2px;
         text-align: center;
         vertical-align: middle;
@@ -153,7 +158,7 @@ const COMMON_CSS_STYLE = `
         font-size: 10px;
         text-align: left;
         padding-left: 3px;
-        height: 91px;
+        height: 55px;
         overflow: hidden;
         white-space: pre-line;
     }
@@ -166,8 +171,12 @@ const COMMON_CSS_STYLE = `
         line-height: 1.4;
         text-align: left;
         padding: 1px 3px;
-        border: 1px solid #000;
+        border: 2px solid #000;
         border-top: none;
+        width: 1040px;
+        margin-left: auto;
+        margin-right: auto;
+        box-sizing: border-box;
     }
 
     @media print {
@@ -415,13 +424,13 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
                     <col style="width: 36px;"> <!-- 項目名（左） -->
                     <col style="width: 33px;"> <!-- 項目名（右：人数・数量） -->
                     <!-- 7日間 × 2列（内容・数値） -->
-                    <col style="width: 135px;"><col style="width: 33px;">
-                    <col style="width: 135px;"><col style="width: 33px;">
-                    <col style="width: 135px;"><col style="width: 33px;">
-                    <col style="width: 135px;"><col style="width: 33px;">
-                    <col style="width: 135px;"><col style="width: 33px;">
-                    <col style="width: 135px;"><col style="width: 33px;">
-                    <col style="width: 135px;"><col style="width: 33px;">
+                    <col style="width: 102px;"><col style="width: 33px;">
+                    <col style="width: 102px;"><col style="width: 33px;">
+                    <col style="width: 102px;"><col style="width: 33px;">
+                    <col style="width: 102px;"><col style="width: 33px;">
+                    <col style="width: 102px;"><col style="width: 33px;">
+                    <col style="width: 102px;"><col style="width: 33px;">
+                    <col style="width: 102px;"><col style="width: 33px;">
                 </colgroup>
                 <thead>
                     <tr>
