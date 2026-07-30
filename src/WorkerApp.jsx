@@ -25,7 +25,7 @@ const formatDateLocal = (date) => {
 const WorkerApp = () => {
     const { showToast } = useToast();
     const { confirm, prompt } = useConfirm();
-    const { isAuthenticated, isLoading: isAuthLoading, isPasswordRecovery } = useAuth();
+    const { isAuthenticated, isLoading: isAuthLoading, isPasswordRecovery, signOut } = useAuth();
     const [workers, setWorkers] = useState([]);
     const [loggedInWorker, setLoggedInWorker] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -307,11 +307,11 @@ const WorkerApp = () => {
 
     const handleLogin = (worker) => { setLoggedInWorker(worker); localStorage.setItem('cost-app-worker', JSON.stringify(worker)); };
     const handleLogout = async () => {
-        const message = hasUnsavedChanges ? "未送信の入力データがあります。破棄してログアウトしますか？" : "ログアウトしますか？";
+        const message = hasUnsavedChanges ? "未送信の入力データがあります。破棄して選択画面に戻りますか？" : "選択画面に戻りますか？";
         const ok = await confirm({
-            title: 'ログアウト',
+            title: '選択画面に戻る',
             message,
-            confirmText: 'ログアウト',
+            confirmText: '戻る',
             variant: hasUnsavedChanges ? 'danger' : 'primary',
         });
         if (ok) {
@@ -900,9 +900,30 @@ const WorkerApp = () => {
 
     // ========== 作業員選択画面 ==========
     if (!loggedInWorker) {
+        const handleSystemLogout = async () => {
+            const ok = await confirm({
+                title: 'ログアウト',
+                message: 'システムからログアウトしますか？',
+                confirmText: 'ログアウト',
+                variant: 'danger',
+            });
+            if (ok) {
+                await signOut();
+            }
+        };
         return (
             <div className="min-h-screen bg-slate-100 flex flex-col items-center p-4">
                 <div className="w-full max-w-sm mt-10">
+                    <div className="flex justify-end mb-2">
+                        <button
+                            onClick={handleSystemLogout}
+                            aria-label="ログアウト"
+                            title="ログアウト"
+                            className="flex items-center gap-1 bg-white border border-slate-200 hover:bg-slate-50 text-slate-500 hover:text-red-600 px-3 py-1.5 rounded-lg text-sm font-bold transition shadow-sm"
+                        >
+                            <LogOut size={16} /> ログアウト
+                        </button>
+                    </div>
                     <div className="bg-white rounded-2xl shadow-lg p-6 text-center border-t-4 border-blue-600">
                         <HardHat className="w-16 h-16 text-blue-600 mx-auto mb-4" />
                         <h1 className="text-2xl font-black text-slate-800 mb-2">作業日報システム</h1>
@@ -992,7 +1013,7 @@ const WorkerApp = () => {
                             <AlertCircle size={14} /> {notifiableDraftQueue.length}
                         </div>
                     )}
-                    <button onClick={handleLogout} aria-label="終了" title="終了" className="flex items-center gap-1 bg-blue-700 hover:bg-blue-800 px-3 py-1.5 rounded-lg text-sm font-bold transition"><LogOut size={16} /> 終了</button>
+                    <button onClick={handleLogout} aria-label="選択画面に戻る" title="選択画面に戻る" className="flex items-center gap-1 bg-blue-700 hover:bg-blue-800 px-3 py-1.5 rounded-lg text-sm font-bold transition"><LogOut size={16} /> 戻る</button>
                 </div>
             </header>
 
