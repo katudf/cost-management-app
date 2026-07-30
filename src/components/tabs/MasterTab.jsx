@@ -428,6 +428,7 @@ const MasterTab = ({
                         saveProgressDB={saveProgressDB}
                         handleExportToExcel={handleExportToExcel}
                         isLoading={isLoading}
+                        setActiveTab={setSubActiveTab}
                     />
                 )}
 

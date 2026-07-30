@@ -43,7 +43,7 @@ const DashboardTab = ({
                 <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800"><Layout className="text-blue-500 w-5 h-5" /> 項目別詳細予測</h2>
                 <div className="flex items-center gap-2">
                     <button
-                        onClick={() => setActiveTab && setActiveTab('master')}
+                        onClick={() => setActiveTab && setActiveTab('settings')}
                         className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition hover:bg-blue-700 shadow-sm border border-blue-700"
                     >
                         <Settings size={16} /> 工事設定へ
