@@ -616,9 +616,14 @@ const App = () => {
         return <div className="min-h-screen flex items-center justify-center bg-slate-50"><Loader2 className="w-8 h-8 animate-spin text-blue-500" /></div>;
     }
 
+    // 見積エディタ表示中は <main> の overflow-hidden を外す必要がある:
+    // overflow が visible 以外の祖先は position:sticky の基準になってしまい、
+    // スクロールしない <main> が基準になると左ナビ（PageNav）の sticky が効かなくなるため。
+    const isEstimateEditorOpen = activeTab === 'estimate' && estimateEditId !== undefined;
+
     return (
         <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-900">
-            <div className={`${activeTab === 'assignment' || activeTab === 'dashboard' ? 'max-w-none px-4 xl:px-8' : 'max-w-6xl'} mx-auto`}>
+            <div className={`${activeTab === 'assignment' || activeTab === 'dashboard' || isEstimateEditorOpen ? 'max-w-none px-4 xl:px-8' : 'max-w-6xl'} mx-auto`}>
                 <header className="mb-6">
                     <div className="flex flex-col gap-4">
                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -713,7 +718,7 @@ const App = () => {
                     </div>
                 </header>
 
-                <main className="bg-white rounded-xl shadow-md border border-slate-200 overflow-hidden min-h-[500px]">
+                <main className={`bg-white rounded-xl shadow-md border border-slate-200 min-h-[500px] ${isEstimateEditorOpen ? '' : 'overflow-hidden'}`}>
                     {isLoading && <div className="h-1 bg-blue-100 overflow-hidden"><div className="w-1/2 h-full bg-blue-500 animate-pulse"></div></div>}
 
                     {activeTab === 'dashboard' && (

@@ -6,6 +6,7 @@ import EstimateApprovalModal from '../components/estimate/EstimateApprovalModal'
 import EstimateLostReasonModal from '../components/estimate/EstimateLostReasonModal';
 import EstimateSubmitModal from '../components/estimate/EstimateSubmitModal';
 import ImportItemsModal from '../components/estimate/ImportItemsModal';
+import ConfirmModal from '../components/ConfirmModal';
 
 // "2026-07-08T01:23:45.000Z" -> "2026/07/08 10:23"
 const formatDateTime = (val) => {
@@ -94,6 +95,9 @@ const SettingsPanel = ({
   const [lostModalOpen, setLostModalOpen] = useState(false);
   const [submitModalOpen, setSubmitModalOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
+  // 「提出済にする」「受注」は一度押すとステータスが進み、保存とは別に確定してしまうため、
+  // 誤操作防止のワンクッションとして確認モーダルを挟む（'submit-to-customer' | 'order' | null）
+  const [pendingStatusAction, setPendingStatusAction] = useState(null);
 
   const approverStaff = officeStaff.find(s => s.id === header.approver_staff_id);
   // 申請中で承認者が未指名の場合は誰も承認できない。指名済みなら本人のみ承認・差し戻し可能。
@@ -143,10 +147,35 @@ const SettingsPanel = ({
     setImportModalOpen(false);
   };
 
+  const STATUS_ACTION_CONFIG = {
+    'submit-to-customer': {
+      title: '提出済にしますか？',
+      message: 'ステータスを「提出済」に進めます。これは見積データの保存とは別の操作で、この時点で明細の保存が済んでいない変更は反映されません。事前に「保存」ボタンで内容を確定してから進めてください。',
+      confirmText: '提出済にする',
+      run: () => onSubmitToCustomer?.(),
+    },
+    order: {
+      title: '受注にしますか？',
+      message: 'ステータスを「受注」に進めます。これは見積データの保存とは別の操作です。この操作の後は失注への切り替えができないため、内容に間違いがないか確認してから進めてください。',
+      confirmText: '受注にする',
+      run: () => onOrder?.(),
+    },
+  };
+
+  const handleStatusActionConfirm = () => {
+    const action = STATUS_ACTION_CONFIG[pendingStatusAction];
+    action?.run();
+    setPendingStatusAction(null);
+  };
+
   return (
-    <div className="space-y-3">
-      {/* ===== スティッキーパネル ===== */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 sticky top-4 space-y-4">
+    // パネル全体を1つの sticky コンテナにする: 個別セクションごとに sticky を付けると
+    // 各セクションが別々の位置に張り付こうとして重なり合い、コンテナの下端が画面上端を
+    // 追い越した時点でまとめて流れてしまう。単一の sticky top-4 で全セクションを一体化させ、
+    // 中身が画面高を超える場合のみパネル自身をスクロール可能にする。
+    <div className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto space-y-3">
+      {/* ===== 金額集計・ステータス・保存 ===== */}
+      <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-4">
 
         {/* 金額集計 */}
         <div>
@@ -245,7 +274,7 @@ const SettingsPanel = ({
           {header.status === ESTIMATE_STATUS.APPROVED && (
             <button
               type="button"
-              onClick={onSubmitToCustomer}
+              onClick={() => setPendingStatusAction('submit-to-customer')}
               className="mt-3 w-full flex items-center justify-center gap-1.5 border border-blue-300 text-blue-700 hover:bg-blue-50 px-2.5 py-1.5 rounded-lg text-xs font-bold transition"
             >
               <Send size={13} />
@@ -256,7 +285,7 @@ const SettingsPanel = ({
             <div className="mt-3 flex gap-1.5">
               <button
                 type="button"
-                onClick={onOrder}
+                onClick={() => setPendingStatusAction('order')}
                 className="flex-1 flex items-center justify-center gap-1.5 border border-green-300 text-green-700 hover:bg-green-50 px-2.5 py-1.5 rounded-lg text-xs font-bold transition"
               >
                 <Trophy size={13} />
@@ -508,6 +537,16 @@ const SettingsPanel = ({
           onClose={() => setImportModalOpen(false)}
         />
       )}
+
+      <ConfirmModal
+        isOpen={pendingStatusAction !== null}
+        onClose={() => setPendingStatusAction(null)}
+        onConfirm={handleStatusActionConfirm}
+        title={pendingStatusAction ? STATUS_ACTION_CONFIG[pendingStatusAction].title : ''}
+        message={pendingStatusAction ? STATUS_ACTION_CONFIG[pendingStatusAction].message : ''}
+        confirmText={pendingStatusAction ? STATUS_ACTION_CONFIG[pendingStatusAction].confirmText : ''}
+        variant="primary"
+      />
     </div>
   );
 };

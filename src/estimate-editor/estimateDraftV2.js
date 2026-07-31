@@ -81,3 +81,67 @@ export const formatDraftAge = (savedAt) => {
   const diffDay = Math.floor(diffHour / 24);
   return `${diffDay}日前`;
 };
+
+// ------------------------------------------------------------------
+// 「直前の保存内容」スナップショット（保存後の誤上書き・誤削除からの救済用）
+//
+// 上の自動退避（draft）はDB保存が成功すると即座に破棄される（clearEstimateDraft）ため、
+// 「保存はしたが、その後に明細を誤って上書き・削除した」場合に戻す先が無い。
+// これを補うため、DB保存成功のたびに直近1世代分だけ header/sheets/items を
+// 別キーに退避しておき、エディタ側から手動で復元できるようにする。
+// あくまでこのブラウザ・この端末内の簡易な救済であり、正式な変更履歴（サーバー側）ではない。
+// ------------------------------------------------------------------
+
+const LAST_SAVED_KEY_PREFIX = 'estimate-last-saved:';
+const LAST_SAVED_SCHEMA_VERSION = 1;
+
+// 直前の保存内容を保持する期間（これを過ぎたら復元候補にしない）
+const LAST_SAVED_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000; // 3日
+
+const lastSavedKey = (estimateId) => `${LAST_SAVED_KEY_PREFIX}${estimateId ?? 'new'}`;
+
+// DB保存が成功した直後に呼ぶ。保存に使った内容をそのまま退避する。
+export const saveLastSavedSnapshot = (estimateId, { header, sheets, items }) => {
+  try {
+    const payload = {
+      version: LAST_SAVED_SCHEMA_VERSION,
+      savedAt: Date.now(),
+      header,
+      sheets,
+      items,
+    };
+    localStorage.setItem(lastSavedKey(estimateId), JSON.stringify(payload));
+  } catch {
+    // ベストエフォート。失敗しても保存フロー自体は成功扱いのまま進める。
+  }
+};
+
+// 直前の保存内容を読み込む。無い／壊れている／期限切れならnull。
+export const loadLastSavedSnapshot = (estimateId) => {
+  try {
+    const raw = localStorage.getItem(lastSavedKey(estimateId));
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.version !== LAST_SAVED_SCHEMA_VERSION) return null;
+    if (typeof parsed.savedAt !== 'number') return null;
+    if (Date.now() - parsed.savedAt > LAST_SAVED_MAX_AGE_MS) {
+      clearLastSavedSnapshot(estimateId);
+      return null;
+    }
+    if (!parsed.header || !Array.isArray(parsed.sheets) || !Array.isArray(parsed.items)) return null;
+
+    return { header: parsed.header, sheets: parsed.sheets, items: parsed.items, savedAt: parsed.savedAt };
+  } catch {
+    return null;
+  }
+};
+
+// 保存済みIDが確定した直後（新規作成時など）にキーを付け替えるためのヘルパー
+export const clearLastSavedSnapshot = (estimateId) => {
+  try {
+    localStorage.removeItem(lastSavedKey(estimateId));
+  } catch {
+    // 無視
+  }
+};

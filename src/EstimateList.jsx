@@ -1,8 +1,8 @@
 // src/EstimateList.jsx
 // 見積書一覧画面
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Plus, FileText, Copy, Trash2, Edit, Download, ChevronDown, ChevronRight, RotateCcw, X } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Plus, FileText, Copy, Trash2, Edit, Download, ChevronDown, ChevronRight, RotateCcw, X, Upload, Loader2 } from 'lucide-react';
 import {
   fetchEstimates,
   deleteEstimate,
@@ -13,10 +13,19 @@ import {
   fetchDeletedEstimates,
   restoreEstimate,
   ESTIMATE_TRASH_RETENTION_DAYS,
+  createEstimate,
+  createCustomer,
+  getNextEstimateSeq,
+  fetchCustomers,
+  findAvailableBranchNumber,
+  buildSaveItemsPayload,
+  saveEstimateItemsV2,
 } from './supabaseEstimates';
 import { downloadEstimatePDF } from './EstimatePDF';
 import { useToast } from './components/Toast';
 import { ESTIMATE_STATUS, ESTIMATE_STATUS_LABEL } from './utils/constants';
+import CustomerResolveModal from './components/estimate/CustomerResolveModal';
+import { parseExcelForEstimate } from './utils/excelImportUtils';
 
 // ステータス表示設定（ラベルは constants の定数を参照）
 const STATUS_CONFIG = {
@@ -151,6 +160,9 @@ const EstimateList = ({ onEdit }) => {
   const [showTrash, setShowTrash] = useState(false);
   const [deletedEstimates, setDeletedEstimates] = useState([]);
   const [loadingTrash, setLoadingTrash] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [pendingImport, setPendingImport] = useState(null); // 顧客未確定のExcel取込データ
+  const fileInputRef = useRef(null);
 
   const toggleGroup = (key) => {
     setExpandedGroups(prev => {
@@ -263,6 +275,112 @@ const EstimateList = ({ onEdit }) => {
     }
   };
 
+  // Excel取込
+  const handleExcelImport = async (e) => {
+    const file = e.target.files[0];
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (!file) return;
+    setImporting(true);
+    try {
+      const result = await parseExcelForEstimate(file);
+      if (!result.items || result.items.length === 0) {
+        throw new Error('取り込めるデータが見つかりませんでした');
+      }
+      const now = new Date();
+      const prefix = `${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+      const seq = await getNextEstimateSeq(prefix);
+      const estimateNumber = await findAvailableBranchNumber(prefix, seq, 1);
+      if (result.customerName) {
+        const customers = await fetchCustomers();
+        const found = customers.find(c => c.name === result.customerName);
+        if (found) {
+          await continueExcelImport({ file, result, estimateNumber, customerId: found.id });
+        } else {
+          setPendingImport({ file, result, estimateNumber, customers, customerName: result.customerName });
+          setImporting(false);
+        }
+      } else {
+        await continueExcelImport({ file, result, estimateNumber, customerId: null });
+      }
+    } catch (err) {
+      showToast('Excelの取り込みに失敗しました: ' + err.message, 'error');
+      setImporting(false);
+    }
+  };
+
+  const continueExcelImport = async ({ file, result, estimateNumber, customerId }) => {
+    try {
+      const payload = {
+        estimate_number: estimateNumber,
+        customer_id: customerId,
+        customer_honorific: '御中',
+        title: result.projectName || file.name.replace(/\.[^/.]+$/, ''),
+        site_location: null,
+        work_period: null,
+        issue_date: new Date().toISOString().split('T')[0],
+        valid_until: null,
+        payment_terms: '従来通り',
+        notes: result.notes || null,
+        tax_rate: 0.10,
+        status: ESTIMATE_STATUS.DRAFT,
+        show_fixed_fees: false,
+        show_net: true,
+        show_subtotals: false,
+        stamp_header: 'company',
+        show_approver: false,
+        staff_id: null,
+        net_calc_type: 'perc',
+        net_perc: 95,
+        net_amount: null,
+        total_with_tax: 0,
+      };
+      const created = await createEstimate(payload);
+      const saveableItems = result.items
+        .filter(i => i.name?.trim())
+        .map((item, idx) => ({
+          ...item,
+          sheet_id: null,
+          sort_order: idx,
+          quantity: item.quantity != null ? Number(item.quantity) : null,
+          unit_price: item.unit_price !== '' && item.unit_price != null ? Number(item.unit_price) : null,
+          amount: item.amount !== '' && item.amount != null ? Number(item.amount) : null,
+        }));
+      const { payloadSheets, payloadItems } = buildSaveItemsPayload(
+        [{ id: null, title: null }],
+        saveableItems
+      );
+      await saveEstimateItemsV2(created.id, payloadSheets, payloadItems);
+      onEdit(created.id);
+    } catch (err) {
+      showToast('Excelの取り込みに失敗しました: ' + err.message, 'error');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleResolveAsNewCustomer = async () => {
+    const pending = pendingImport;
+    setPendingImport(null);
+    setImporting(true);
+    try {
+      const newCust = await createCustomer(pending.customerName);
+      await continueExcelImport({ ...pending, customerId: newCust.id });
+    } catch (err) {
+      showToast('顧客の登録に失敗しました: ' + err.message, 'error');
+      setImporting(false);
+    }
+  };
+
+  const handleResolveAsExistingCustomer = async (customerId) => {
+    const pending = pendingImport;
+    setPendingImport(null);
+    setImporting(true);
+    await continueExcelImport({ ...pending, customerId });
+  };
+
+  const handleCancelPendingImport = () => {
+    setPendingImport(null);
+  };
 
   // ============================================================
   // レンダリング
@@ -271,28 +389,51 @@ const EstimateList = ({ onEdit }) => {
     <div className="p-4 md:p-6">
 
       {/* ヘッダー */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-5">
-        <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+      <div className="flex flex-col md:flex-row md:items-start justify-between gap-3 mb-5">
+        <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2 md:pt-2">
           <FileText size={22} className="text-blue-600" />
           見積書管理
         </h2>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => onEdit(null)}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold transition"
-          >
-            <Plus size={18} />
-            新規作成
-          </button>
-          <button
-            onClick={handleOpenTrash}
-            aria-label="ゴミ箱（削除済み見積書）"
-            title="ゴミ箱（削除済み見積書）"
-            className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-600 px-4 py-2 rounded-lg font-bold transition"
-          >
-            <Trash2 size={18} />
-            ゴミ箱
-          </button>
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => onEdit(null)}
+              title="まったく新しい見積書を白紙から作成します"
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold transition"
+            >
+              <Plus size={18} />
+              新規作成
+            </button>
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              ref={fileInputRef}
+              onChange={handleExcelImport}
+              className="hidden"
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={importing}
+              aria-label="Excelから取込"
+              title="Excelから取込"
+              className={`flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-bold transition ${importing ? 'opacity-60 pointer-events-none' : ''}`}
+            >
+              {importing ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />}
+              {importing ? '取込中...' : 'Excelから取込'}
+            </button>
+            <button
+              onClick={handleOpenTrash}
+              aria-label="ゴミ箱（削除済み見積書）"
+              title="ゴミ箱（削除済み見積書）"
+              className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-600 px-4 py-2 rounded-lg font-bold transition"
+            >
+              <Trash2 size={18} />
+              ゴミ箱
+            </button>
+          </div>
+          <p className="text-xs text-slate-400">
+            似た見積書がある場合は一覧の<Copy size={11} className="inline mx-0.5 -mt-0.5" />「複製」が早く作成できます
+          </p>
         </div>
       </div>
 
@@ -520,6 +661,17 @@ const EstimateList = ({ onEdit }) => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Excel取込：顧客未確定の確認モーダル */}
+      {pendingImport && (
+        <CustomerResolveModal
+          customerName={pendingImport.customerName}
+          customers={pendingImport.customers}
+          onRegisterNew={handleResolveAsNewCustomer}
+          onLinkExisting={handleResolveAsExistingCustomer}
+          onCancel={handleCancelPendingImport}
+        />
       )}
     </div>
   );

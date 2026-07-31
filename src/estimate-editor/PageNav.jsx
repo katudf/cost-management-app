@@ -40,7 +40,7 @@ export default function PageNav({
     const isActive = (anchor) => activeAnchor === anchor;
 
     return (
-        <nav className="w-40 shrink-0 sticky top-0 self-start max-h-screen overflow-y-auto py-3 pr-1">
+        <nav className="w-40 shrink-0 sticky top-0 z-10 self-start py-3 pr-1">
             <div className="text-xs font-bold text-slate-400 px-3 mb-2 uppercase tracking-wide">
                 ページ
             </div>
@@ -94,7 +94,7 @@ export default function PageNav({
                                     onClick={() => setPendingDelete(idx)}
                                     aria-label={`${sheet.title || 'シート'}を削除`}
                                     title="このシートを削除"
-                                    className="p-1.5 rounded-md text-slate-300 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all shrink-0"
+                                    className="p-1.5 rounded-md text-slate-300 hover:text-red-600 hover:bg-red-50 opacity-60 group-hover:opacity-100 transition-all shrink-0"
                                 >
                                     <Trash2 size={14} />
                                 </button>

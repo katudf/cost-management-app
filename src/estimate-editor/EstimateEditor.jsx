@@ -13,7 +13,7 @@
 // 明細セル編集は Phase 4、計算・リンクエンジンは Phase 5 で実装する。
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { ArrowLeft, FileText, Lock, Eye, RefreshCw, Download, X, AlertCircle } from 'lucide-react';
+import { ArrowLeft, FileText, Lock, Eye, RefreshCw, Download, X, AlertCircle, Maximize2, Minimize2, History } from 'lucide-react';
 import { BlobProvider } from '@react-pdf/renderer';
 import ConfirmModal from '../components/ConfirmModal';
 import EstimateDocument, { downloadEstimatePDF } from '../EstimatePDF';
@@ -45,6 +45,8 @@ import {
   loadEstimateDraft,
   clearEstimateDraft,
   formatDraftAge,
+  saveLastSavedSnapshot,
+  loadLastSavedSnapshot,
 } from './estimateDraftV2';
 import { addDays, toDateStr } from '../utils/dateUtils';
 
@@ -204,6 +206,9 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   const [previewKey, setPreviewKey] = useState(0);
   const [previewStale, setPreviewStale] = useState(false);
 
+  // 明細シート全画面表示（サイドバーの制約を受けずに1シートのみ表示）
+  const [fullscreenSheetIndex, setFullscreenSheetIndex] = useState(null);
+
   // 未保存変更の追跡
   const isDirty = useRef(false);
   const isInitialized = useRef(false);
@@ -211,6 +216,10 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
 
   // 自動退避（localStorage）からの復元プロンプト
   const [pendingDraft, setPendingDraft] = useState(null); // { header, sheets, items, savedAt } | null
+  // この端末への自動退避が最後に行われた日時（UIインジケーター表示用。サーバー保存とは別物）
+  const [lastDraftSavedAt, setLastDraftSavedAt] = useState(null);
+  // 保存後に誤って明細を上書き・削除した場合の救済用「直前の保存内容に戻す」確認モーダル
+  const [showRestoreLastSaved, setShowRestoreLastSaved] = useState(false);
 
   // 見積番号を文字列に結合
   const estimateNumber = [
@@ -339,6 +348,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
 
     const timer = setTimeout(() => {
       saveEstimateDraft(estimateId, { header, sheets, items });
+      setLastDraftSavedAt(new Date().toISOString());
     }, 1500);
     return () => clearTimeout(timer);
   }, [header, sheets, items, estimateId, isNew, originalStatus, pendingDraft]);
@@ -1019,15 +1029,29 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [previewOpen]);
 
+  // Escape キーで明細シート全画面表示を閉じる
+  useEffect(() => {
+    if (fullscreenSheetIndex === null) return;
+    const onKeyDown = (e) => { if (e.key === 'Escape') setFullscreenSheetIndex(null); };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [fullscreenSheetIndex]);
+
+  // 保存エラー発生時、原因箇所（鑑）が画面外にあっても気づけるようスクロールする
+  const scrollToCover = () => {
+    const el = document.getElementById('paper-cover');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   // ============================================================
   // 保存処理
   // ============================================================
   const handleSave = async () => {
     if (isLocked) { setError('提出済み以降の見積書は編集できません。「下書きに戻す」を実行してください。'); return; }
-    if (!header.customer_id) { setError('顧客を選択してください'); return; }
-    if (!header.title.trim()) { setError('工事名を入力してください'); return; }
+    if (!header.customer_id) { setError('顧客が選択されていません。鑑（表紙）の「顧客」欄で選択してください。'); scrollToCover(); return; }
+    if (!header.title.trim()) { setError('工事名が入力されていません。鑑（表紙）の「工事名」欄に入力してください。'); scrollToCover(); return; }
     if (!estimateNumber.match(/^\d{6}-\d{4}-\d{3}$/)) {
-      setNumberError('形式: YYMMDD-NNNN-NNN');
+      setNumberError('見積番号の形式が正しくありません（正しい形式: YYMMDD-NNNN-NNN）。右側の設定パネルで確認してください。');
       return;
     }
     // Phase 3の確定判断: カテゴリ必須明細バリデーションは廃止。空行は保持する。
@@ -1044,7 +1068,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
 
       const isDuplicate = await checkDuplicateNumber(estimateNumber, estimateId || null);
       if (isDuplicate) {
-        setNumberError(`見積番号「${estimateNumber}」は既に使用されています。`);
+        setNumberError(`見積番号「${estimateNumber}」は既に使用されています。右側の設定パネルの「再採番」ボタンで別の番号を自動採番できます。`);
         setSaving(false);
         return;
       }
@@ -1188,6 +1212,9 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
       setOriginalStatus(header.status);
       isDirty.current = false;
       clearEstimateDraft(estimateId);
+      // 保存成功時点の内容を「直前の保存内容」として退避する。
+      // 保存後に明細を誤って上書き・削除してしまった場合の救済用（このブラウザ内のみ・3日間）。
+      saveLastSavedSnapshot(savedId, { header, sheets, items });
       onSaved?.();
     } catch (e) {
       // 23505 = Postgres unique_violation。事前チェックと保存実行の間に
@@ -1219,6 +1246,20 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   const handleDiscardDraft = () => {
     clearEstimateDraft(estimateId);
     setPendingDraft(null);
+  };
+
+  // 保存後に誤って明細を上書き・削除してしまった場合の救済:
+  // 直近の保存成功時点の内容（このブラウザ内に3日間保持）に画面上の内容を戻す。
+  // あくまで画面上の状態を戻すだけで、戻した後にあらためて「保存」を押すまでDBには反映されない。
+  const handleRestoreLastSaved = () => {
+    const snapshot = loadLastSavedSnapshot(estimateId);
+    if (snapshot) {
+      setHeader(snapshot.header);
+      setSheets(snapshot.sheets);
+      setItems((snapshot.items || []).map(it => it._uid ? it : { ...it, _uid: newUid() }));
+      isDirty.current = true;
+    }
+    setShowRestoreLastSaved(false);
   };
 
   // ============================================================
@@ -1255,6 +1296,26 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
             <Lock size={12} /> 編集ロック中
           </span>
         )}
+        {!isLocked && lastDraftSavedAt && (
+          <span
+            className="flex items-center gap-1 text-xs text-slate-400"
+            title="この端末のブラウザにのみ一時保存されています。別の端末では復元できません。正式に保存するには「保存」ボタンを押してください。"
+          >
+            <RefreshCw size={11} />
+            この端末に自動保存済み（{formatDraftAge(lastDraftSavedAt)}）
+          </span>
+        )}
+        {!isNew && !isLocked && loadLastSavedSnapshot(estimateId) && (
+          <button
+            onClick={() => setShowRestoreLastSaved(true)}
+            title="保存後に明細を誤って上書き・削除してしまった場合、直前に保存した内容へ画面を戻せます（このブラウザ内のみ・3日間有効。戻した後は改めて「保存」を押すまでDBには反映されません）"
+            aria-label="直前の保存内容に戻す"
+            className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600 transition"
+          >
+            <History size={12} />
+            直前の保存内容に戻す
+          </button>
+        )}
         <button
           onClick={handleOpenPreview}
           title="PDFプレビューを表示"
@@ -1282,10 +1343,13 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
       )}
 
       {/* ===== 本体: 左ナビ / 中央紙面スタック / 右設定パネル ===== */}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
+      {/* この行に overflow を指定してはいけない: overflow が visible 以外だと左ナビ（PageNav）の
+          sticky の基準がこの行になり、ウィンドウスクロールに追従しなくなる。
+          実際のスクロールはウィンドウ（ドキュメント）レベルで発生する。 */}
+      <div className="flex flex-1 min-h-0">
 
         {/* 左ナビ */}
-        <div className="shrink-0 px-2 bg-white border-r border-slate-200 overflow-y-auto">
+        <div className="shrink-0 px-2 bg-white border-r border-slate-200">
           <PageNav
             sheets={sheets}
             items={items}
@@ -1296,7 +1360,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
         </div>
 
         {/* 中央: 紙面スタック（PC専用・横スクロール可） */}
-        <div className="flex-1 min-w-0 overflow-auto bg-slate-200 py-8">
+        <div className="flex-1 min-w-0 overflow-x-auto bg-slate-200 py-8">
           <div className="flex flex-col items-center gap-8 px-6">
             {/* 鑑（表紙） */}
             <CoverPaper
@@ -1312,28 +1376,39 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
 
             {/* 各明細シート */}
             {sheets.map((sheet, idx) => (
-              <SheetPaper
-                key={sheet.id ?? idx}
-                sheet={sheet}
-                sheetIndex={idx}
-                items={itemsBySheet.get(sheet.id) || []}
-                header={header}
-                settings={settings}
-                totals={totals}
-                sheetTotal={sheetTotals.get(sheet.id)}
-                cycleUids={cycleUids}
-                linkTargets={linkTargets}
-                startPageNumber={sheetStartPages[idx]}
-                isLocked={isLocked}
-                onUpdateItem={updateItem}
-                onAddRowAfter={addRowAfter}
-                onAddRowToSheet={addRowToSheet}
-                onRemoveRow={removeRow}
-                onDuplicateRow={duplicateRow}
-                onMoveRow={moveRow}
-                onPasteTsv={pasteTsv}
-                onSetRowLink={setRowLink}
-              />
+              <div key={sheet.id ?? idx} className="relative w-full flex flex-col items-center">
+                <button
+                  type="button"
+                  onClick={() => setFullscreenSheetIndex(idx)}
+                  title="このシートを全画面表示（両サイドの制約なしで広く編集）"
+                  aria-label="このシートを全画面表示"
+                  className="absolute -top-6 right-0 flex items-center gap-1 text-xs text-slate-500 hover:text-blue-600 transition"
+                >
+                  <Maximize2 size={13} />
+                  全画面
+                </button>
+                <SheetPaper
+                  sheet={sheet}
+                  sheetIndex={idx}
+                  items={itemsBySheet.get(sheet.id) || []}
+                  header={header}
+                  settings={settings}
+                  totals={totals}
+                  sheetTotal={sheetTotals.get(sheet.id)}
+                  cycleUids={cycleUids}
+                  linkTargets={linkTargets}
+                  startPageNumber={sheetStartPages[idx]}
+                  isLocked={isLocked}
+                  onUpdateItem={updateItem}
+                  onAddRowAfter={addRowAfter}
+                  onAddRowToSheet={addRowToSheet}
+                  onRemoveRow={removeRow}
+                  onDuplicateRow={duplicateRow}
+                  onMoveRow={moveRow}
+                  onPasteTsv={pasteTsv}
+                  onSetRowLink={setRowLink}
+                />
+              </div>
             ))}
 
             {/* シート追加（最終シート下） */}
@@ -1350,8 +1425,8 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
           </div>
         </div>
 
-        {/* 右: 設定パネル */}
-        <div className="w-[280px] shrink-0 bg-white border-l border-slate-200 overflow-y-auto p-3">
+        {/* 右: 設定パネル（overflow を付けると内部の sticky top-4 が効かなくなるので付けない） */}
+        <div className="w-[280px] shrink-0 bg-white border-l border-slate-200 p-3">
           <SettingsPanel
             totals={totals}
             header={header}
@@ -1475,6 +1550,64 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
         </div>
       )}
 
+      {/* ===== 明細シート全画面表示オーバーレイ（両サイドの制約を受けずに1シートのみ表示） ===== */}
+      {fullscreenSheetIndex !== null && sheets[fullscreenSheetIndex] && (
+        <div className="fixed inset-0 z-[9999] flex flex-col bg-slate-200">
+
+          {/* ミニヘッダー */}
+          <div className="bg-white border-b border-slate-200 px-4 py-2.5 flex items-center gap-4 shrink-0 flex-wrap">
+            <span className="font-bold text-slate-700 text-sm flex items-center gap-1.5">
+              <FileText size={16} className="text-blue-600" />
+              {sheets[fullscreenSheetIndex].title || '見積内訳明細書'}
+            </span>
+            <span className="text-xs text-slate-500 truncate max-w-[40vw]">
+              工事名：<span className="font-medium text-slate-700">{header.title || '（未入力）'}</span>
+            </span>
+            <span className="text-xs text-slate-500">
+              工事金額：<span className="font-medium text-slate-700">¥{formatCurrency(totals.subtotal)}</span>
+            </span>
+            <span className="text-xs text-slate-500">
+              税込合計：<span className="font-bold text-blue-700">¥{formatCurrency(totals.total)}</span>
+            </span>
+            <button
+              onClick={() => setFullscreenSheetIndex(null)}
+              title="全画面表示を閉じる（Esc）"
+              aria-label="全画面表示を閉じる"
+              className="ml-auto p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 transition"
+            >
+              <Minimize2 size={18} />
+            </button>
+          </div>
+
+          {/* シート表示エリア */}
+          <div className="flex-1 min-h-0 overflow-auto py-8">
+            <div className="flex flex-col items-center px-6">
+              <SheetPaper
+                sheet={sheets[fullscreenSheetIndex]}
+                sheetIndex={fullscreenSheetIndex}
+                items={itemsBySheet.get(sheets[fullscreenSheetIndex].id) || []}
+                header={header}
+                settings={settings}
+                totals={totals}
+                sheetTotal={sheetTotals.get(sheets[fullscreenSheetIndex].id)}
+                cycleUids={cycleUids}
+                linkTargets={linkTargets}
+                startPageNumber={sheetStartPages[fullscreenSheetIndex]}
+                isLocked={isLocked}
+                onUpdateItem={updateItem}
+                onAddRowAfter={addRowAfter}
+                onAddRowToSheet={addRowToSheet}
+                onRemoveRow={removeRow}
+                onDuplicateRow={duplicateRow}
+                onMoveRow={moveRow}
+                onPasteTsv={pasteTsv}
+                onSetRowLink={setRowLink}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 未保存変更の離脱確認モーダル */}
       <ConfirmModal
         isOpen={showLeaveConfirm}
@@ -1499,6 +1632,18 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
         }
         confirmText="復元する"
         cancelText="破棄する"
+        variant="primary"
+      />
+
+      {/* 直前の保存内容へ戻す確認（保存後の誤上書き・誤削除の救済） */}
+      <ConfirmModal
+        isOpen={showRestoreLastSaved}
+        onClose={() => setShowRestoreLastSaved(false)}
+        onConfirm={handleRestoreLastSaved}
+        title="直前の保存内容に戻しますか？"
+        message="直近に保存が成功した時点の内容に、画面上の表示を戻します。現在の未保存の変更は失われます。戻した後、この内容をサーバーに反映するには改めて「保存」を押す必要があります。"
+        confirmText="戻す"
+        cancelText="キャンセル"
         variant="primary"
       />
     </div>
