@@ -1247,7 +1247,18 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   // ============================================================
   const handleRestoreDraft = () => {
     if (pendingDraft) {
-      setHeader(pendingDraft.header);
+      // ステータスの変更はデータの変更とは別に管理する。
+      // 退避データはステータスバッジ操作より前の古いステータスを含んでいる場合があるため、
+      // 復元時はステータス関連フィールドを現在の値のまま維持し、退避データで上書きしない。
+      setHeader(h => ({
+        ...pendingDraft.header,
+        status: h.status,
+        approved_by: h.approved_by,
+        approved_at: h.approved_at,
+        returned_reason: h.returned_reason,
+        approver_staff_id: h.approver_staff_id,
+        project_id: h.project_id,
+      }));
       setSheets(pendingDraft.sheets);
       // 旧スキーマの退避データには _uid が無い場合があるため補完する
       setItems((pendingDraft.items || []).map(it => it._uid ? it : { ...it, _uid: newUid() }));
