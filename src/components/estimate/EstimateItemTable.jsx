@@ -90,7 +90,7 @@ const getCategoryGroupIndices = (items, catIdx) => {
   const result = [catIdx];
   for (let i = catIdx + 1; i < items.length; i++) {
     const t = items[i].item_type;
-    if (t === ITEM_TYPE.FIXED || t === ITEM_TYPE.CATEGORY) break;
+    if (t === ITEM_TYPE.CATEGORY) break;
     result.push(i);
   }
   return result;
@@ -147,15 +147,12 @@ const doCopy = (items, selectedIndices) => {
     _tempId: `copy_${Date.now()}_${Math.random()}_${i}`,
   }));
 
-  // FIXED行より前に挿入する
   const insertAfter = Math.max(...sortedIndices);
-  const fixedStart = items.findIndex(item => item.item_type === ITEM_TYPE.FIXED);
-  const clampedInsert = fixedStart !== -1 ? Math.min(insertAfter, fixedStart - 1) : insertAfter;
 
   const result = [
-    ...items.slice(0, clampedInsert + 1),
+    ...items.slice(0, insertAfter + 1),
     ...copies,
-    ...items.slice(clampedInsert + 1),
+    ...items.slice(insertAfter + 1),
   ];
   return result.map((r, i) => ({ ...r, sort_order: i }));
 };
@@ -197,7 +194,7 @@ const ItemRow = ({
 
   const checkboxTd = (
     <td className="px-1 py-1.5 w-5">
-      {!disabled && item.item_type !== ITEM_TYPE.FIXED && (
+      {!disabled && (
         <input
           type="checkbox"
           checked={selected}
@@ -294,32 +291,6 @@ const ItemRow = ({
             </button>
           )}
         </td>
-      </tr>
-    );
-  }
-
-  // ── FIXED ──
-  if (item.item_type === ITEM_TYPE.FIXED) {
-    return (
-      <tr style={trStyle} className="bg-amber-50 border-t border-amber-100">
-        <td className="px-1 py-1.5 w-5"></td>
-        <td className="px-2 py-1.5"></td>
-        <td className="px-2 py-1.5 font-bold text-slate-600">{item.name}</td>
-        <td className="px-2 py-1.5"></td>
-        <td className="px-2 py-1.5 text-right text-slate-500 text-xs">1.0</td>
-        <td className="px-2 py-1.5 text-slate-500 text-xs">式</td>
-        <td className="px-2 py-1.5"></td>
-        <td className="px-2 py-1.5">
-          <NumberInput
-            inputMode="numeric"
-            value={item.amount}
-            onValueChange={v => onChange('amount', v)}
-            className="w-full border border-slate-300 rounded px-1 py-1 text-xs text-right bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
-            placeholder="0"
-            disabled={disabled}
-          />
-        </td>
-        <td colSpan={2} className="px-2 py-1.5"></td>
       </tr>
     );
   }
@@ -479,7 +450,6 @@ const ItemRow = ({
 // ============================================================
 const EstimateItemTable = ({
   items,
-  showFixedFees,
   showSubtotals,
   categorySubtotals,
   onUpdateItem,
@@ -554,16 +524,13 @@ const EstimateItemTable = ({
 
   // ── ドラッグ＆ドロップ（イベント委譲） ──
 
-  const getFixedStart = useCallback(() =>
-    items.findIndex(i => i.item_type === ITEM_TYPE.FIXED), [items]);
-
   const handleTableDragStart = useCallback((e) => {
     if (disabled) { e.preventDefault(); return; }
     const tr = e.target.closest('tr[data-row-idx]');
     if (!tr) { e.preventDefault(); return; }
     const rowIndex = parseInt(tr.dataset.rowIdx, 10);
     const item = items[rowIndex];
-    if (!item || item.item_type === ITEM_TYPE.FIXED) { e.preventDefault(); return; }
+    if (!item) { e.preventDefault(); return; }
 
     const srcIndices = item.item_type === ITEM_TYPE.CATEGORY
       ? getCategoryGroupIndices(items, rowIndex)
@@ -581,7 +548,7 @@ const EstimateItemTable = ({
     if (!tr) return;
     const rowIndex = parseInt(tr.dataset.rowIdx, 10);
     const item = items[rowIndex];
-    if (!item || item.item_type === ITEM_TYPE.FIXED) return;
+    if (!item) return;
 
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
@@ -590,12 +557,8 @@ const EstimateItemTable = ({
     const mid = rect.top + rect.height / 2;
     const raw = e.clientY < mid ? rowIndex : rowIndex + 1;
 
-    // FIXED行より後ろにはドロップさせない
-    const fixedStart = getFixedStart();
-    const clamped = fixedStart !== -1 ? Math.min(raw, fixedStart) : raw;
-
-    setDropLine(clamped);
-  }, [dragSrcIndices, items, getFixedStart]);
+    setDropLine(raw);
+  }, [dragSrcIndices, items]);
 
   const handleTableDragLeave = useCallback((e) => {
     // テーブル全体から出たときだけクリア
@@ -654,7 +617,7 @@ const EstimateItemTable = ({
     const item = items[index];
     if (item.item_type !== ITEM_TYPE.ITEM) return false;
     for (let j = index + 1; j < items.length; j++) {
-      if (items[j].item_type === ITEM_TYPE.CATEGORY || items[j].item_type === ITEM_TYPE.FIXED) return true;
+      if (items[j].item_type === ITEM_TYPE.CATEGORY) return true;
       if (items[j].item_type === ITEM_TYPE.ITEM) return false;
     }
     return true;
@@ -754,7 +717,6 @@ const EstimateItemTable = ({
           </thead>
           <tbody>
             {items.map((item, index) => {
-              if (item.item_type === ITEM_TYPE.FIXED && !showFixedFees) return null;
               if (item.item_type === ITEM_TYPE.SUBTOTAL) return null;
 
               const isDragSource = !!(dragSrcIndices?.includes(index));
@@ -773,7 +735,6 @@ const EstimateItemTable = ({
                       const absIdx = index + 1 + offset;
                       if (absIdx >= dropLine) return false;
                       if (it.item_type === ITEM_TYPE.SUBTOTAL) return false;
-                      if (!showFixedFees && it.item_type === ITEM_TYPE.FIXED) return false;
                       return true;
                     }
                   );

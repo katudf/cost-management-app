@@ -28,6 +28,8 @@ import {
   saveEstimateItemsV2,
   buildSaveItemsPayload,
   syncEstimateToProject,
+  copyEstimateItemsToProjectTasks,
+  projectExists,
   fetchCustomers,
   createCustomer,
   fetchWorkers,
@@ -135,10 +137,12 @@ const newCategoryRow = (sheetId, sortOrder) => ({
   _tempId: `cat_${Date.now()}_${Math.random()}`,
 });
 
-const fixedRows = [
-  { item_type: ITEM_TYPE.FIXED, name: '法定福利費', quantity: 1, unit: '式', amount: '', note: '' },
-  { item_type: ITEM_TYPE.FIXED, name: '安全費',     quantity: 1, unit: '式', amount: '', note: '' },
-];
+// 工種(グループ)行の記号候補。既存の工種行の数から次の記号を決める（A, B, C, ...）。
+const CATEGORY_SYMBOLS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const nextCategorySymbol = (items) => {
+  const count = items.filter(i => i.item_type === ITEM_TYPE.CATEGORY).length;
+  return CATEGORY_SYMBOLS[count] || '';
+};
 
 const MAX_ROWS = 300;
 
@@ -166,7 +170,6 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
     notes: '',
     tax_rate: 0.10,
     status: ESTIMATE_STATUS.DRAFT,
-    show_fixed_fees: true,
     show_net: true,
     show_subtotals: false,
     stamp_header: 'company',
@@ -199,6 +202,8 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   const [error, setError] = useState(null);
   const [numberError, setNumberError] = useState('');
   const [originalStatus, setOriginalStatus] = useState(ESTIMATE_STATUS.DRAFT);
+  // 編集ロック判定（handleGenerateSummary やdirty追跡effect等が isLocked を参照するため、それらより前で確定させる）
+  const isLocked = !isNew && originalStatus !== ESTIMATE_STATUS.DRAFT;
 
   // プレビュー state
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -212,6 +217,10 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   // 未保存変更の追跡
   const isDirty = useRef(false);
   const isInitialized = useRef(false);
+  // 初期化直後、dirty追跡effectが1回だけ「読み込み結果の反映」を検知してしまう
+  // （setHeader/setSheets/setItems による初期値セットが header/sheets/items の変化として
+  // カウントされるため）ので、その最初の1回分だけスキップするためのフラグ。
+  const skipNextDirtyCheck = useRef(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
 
   // 自動退避（localStorage）からの復元プロンプト
@@ -266,7 +275,6 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
           setItems([
             { ...newCategoryRow(topSheetId, 0), category_symbol: 'A', name: '' },
             { ...newItemRow(topSheetId, 1) },
-            ...fixedRows.map((r, i) => ({ ...r, sheet_id: topSheetId, sort_order: 100 + i })),
           ]);
         } else {
           const est = await fetchEstimateById(estimateId);
@@ -286,7 +294,6 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
             notes:          est.notes || '',
             tax_rate:       est.tax_rate || 0.10,
             status:         est.status || ESTIMATE_STATUS.DRAFT,
-            show_fixed_fees: est.show_fixed_fees ?? true,
             show_net:        est.show_net ?? true,
             show_subtotals:  est.show_subtotals ?? false,
             stamp_header:    est.stamp_header || 'company',
@@ -326,6 +333,9 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
       } finally {
         setLoading(false);
         isInitialized.current = true;
+        // このあと header/sheets/items の初期値セットが反映されたレンダーで
+        // dirty追跡effectが1回発火するが、それはユーザーの変更ではないのでスキップする。
+        skipNextDirtyCheck.current = true;
       }
     };
     init();
@@ -333,8 +343,15 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
 
   useEffect(() => {
     if (!isInitialized.current) return;
+    if (skipNextDirtyCheck.current) {
+      skipNextDirtyCheck.current = false;
+      return;
+    }
+    // ロック中（下書き以外）は編集操作自体が行えないため、
+    // ステータスバッジ操作等による header の再セットを「未保存の変更」として扱わない。
+    if (isLocked) return;
     isDirty.current = true;
-  }, [header, sheets, items]);
+  }, [header, sheets, items, isLocked]);
 
   // 入力内容を localStorage へ自動退避（debounce 1.5秒）。
   // ・初期化前は退避しない（読み込み直後のDB値で上書きしない）
@@ -406,6 +423,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
             await updateEstimate(estimateId, { project_id: linkedProjectId });
             setHeader(prev => ({ ...prev, project_id: linkedProjectId }));
           }
+          await copyEstimateItemsToProjectTasks(linkedProjectId, items);
         } catch (syncErr) {
           console.error('工事マスタへの連携に失敗しました:', syncErr);
           showToast(
@@ -421,7 +439,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
     } finally {
       setSaving(false);
     }
-  }, [estimateId, onStatusChanged, header.project_id, header.title, header.customer_id, originalStatus, showToast]);
+  }, [estimateId, onStatusChanged, header.project_id, header.title, header.customer_id, originalStatus, showToast, items]);
 
   // 承認・差し戻し（SECURITY DEFINER RPC経由。証跡カラムはDB側で記録される）
   const handleApprove = useCallback(async () => {
@@ -471,11 +489,6 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
     persistStatus({ status: ESTIMATE_STATUS.LOST, lost_reason: reason });
   }, [persistStatus]);
 
-  // ============================================================
-  // 編集ロック判定
-  // （handleGenerateSummary 等が isLocked を参照するため、シート操作より前で確定させる）
-  // ============================================================
-  const isLocked = !isNew && originalStatus !== ESTIMATE_STATUS.DRAFT;
   // 担当者(staff_id)未設定の見積書は作成者チェック対象外とし、誰でも編集可能とする
   const isCreator = !header.staff_id || String(header.staff_id) === String(currentStaff?.id);
   const creatorStaff = officeStaff.find(s => String(s.id) === String(header.staff_id)) || null;
@@ -499,10 +512,11 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   }, []);
 
   const handleDeleteSheet = useCallback((sheetIndex) => {
-    if (sheetIndex === 0) return; // トップシートは削除不可
     setSheets(prev => {
       const target = prev[sheetIndex];
       if (!target) return prev;
+      // トップシート（index 0）は「総括表」の場合のみ削除可（PageNav側でも制御）
+      if (sheetIndex === 0 && target.title !== SUMMARY_TITLE) return prev;
       // 該当シートに属する明細も併せて除去する
       setItems(items => items.filter(it => it.sheet_id !== target.id));
       return prev.filter((_, i) => i !== sheetIndex);
@@ -510,7 +524,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   }, []);
 
   // ============================================================
-  // 過去見積からの取込（トップシートの末尾＝FIXED行の手前へ追記）
+  // 過去見積からの取込（トップシートの末尾へ追記）
   // ============================================================
   const handleImportGroups = useCallback((groups) => {
     const topSheetId = sheets[0]?.id;
@@ -519,10 +533,8 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
       // トップシート内の明細を、その他シートの明細と分離して処理する
       const topItems = prev.filter(it => it.sheet_id === topSheetId);
       const otherItems = prev.filter(it => it.sheet_id !== topSheetId);
-      const nonFixed = topItems.filter(i => i.item_type !== ITEM_TYPE.FIXED);
-      const fixed = topItems.filter(i => i.item_type === ITEM_TYPE.FIXED);
       const symbols = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-      const existingCatCount = nonFixed.filter(i => i.item_type === ITEM_TYPE.CATEGORY).length;
+      const existingCatCount = topItems.filter(i => i.item_type === ITEM_TYPE.CATEGORY).length;
 
       const imported = [];
       groups.forEach((g, gIdx) => {
@@ -546,7 +558,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
       });
 
       // トップシート明細を再構成（sort_orderはシート内連番）し、他シートと結合
-      const rebuiltTop = [...nonFixed, ...imported, ...fixed].map((r, i) => ({ ...r, sort_order: i }));
+      const rebuiltTop = [...topItems, ...imported].map((r, i) => ({ ...r, sort_order: i }));
       return [...rebuiltTop, ...otherItems];
     });
     showToast('過去見積から明細を取込みました', 'success');
@@ -557,7 +569,6 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   // 明細シートのカテゴリ一覧から、各カテゴリ小計を②リンクで引く「総括表」シートを
   // トップシート（index 0）としてワンクリック生成する。リンクは各カテゴリの _uid で
   // 張る（computeEstimateCalc / buildSaveItemsPayload が _uid 参照を解決する）。
-  // FIXED（法定福利費・安全費）は「トップシート末尾に配置」ルールに従い総括表へ移す。
   // 既に総括表があれば作り直す（重複生成を防止）。
   // ============================================================
   const SUMMARY_TITLE = '総括表';
@@ -587,10 +598,6 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
         }
         if (cats.length === 0) return prevItems; // カテゴリが無ければ生成しない
 
-        // FIXED 行を明細から抜き出し（総括表へ移設する）、残りが明細本体
-        const movedFixed = detailItems.filter(it => it.item_type === ITEM_TYPE.FIXED);
-        const detailBody = detailItems.filter(it => it.item_type !== ITEM_TYPE.FIXED);
-
         // 総括表の②リンク行: 各カテゴリ小計を数量1.0式・単価・名称で引く
         let order = 0;
         const summaryRows = cats.map(cat => ({
@@ -602,16 +609,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
           linked_category_item_id: cat._uid,
         }));
 
-        // FIXED を総括表末尾へ（sort_order はシート内連番で再採番）
-        const summaryFixed = movedFixed.map(r => ({
-          ...r,
-          sheet_id: summaryId,
-          linked_sheet_id: null,
-          linked_category_item_id: null,
-          sort_order: order++,
-        }));
-
-        return [...summaryRows, ...summaryFixed, ...detailBody];
+        return [...summaryRows, ...detailItems];
       });
 
       // 総括表を先頭（トップシート）に据える
@@ -665,12 +663,13 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
         : kind === ITEM_TYPE.COMMENT ? newCommentRow
         : newItemRow;
       const row = factory(sheetId, 0);
+      if (kind === ITEM_TYPE.CATEGORY) row.category_symbol = nextCategorySymbol(prev);
       const next = [...prev.slice(0, idx + 1), row, ...prev.slice(idx + 1)];
       return renumberSheet(next, sheetId);
     });
   }, [renumberSheet]);
 
-  // 指定シート末尾（FIXED行の手前）へ新規行を追加
+  // 指定シート末尾へ新規行を追加
   const addRowToSheet = useCallback((sheetId, kind = ITEM_TYPE.ITEM) => {
     setItems(prev => {
       const factory =
@@ -678,32 +677,24 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
         : kind === ITEM_TYPE.COMMENT ? newCommentRow
         : newItemRow;
       const row = factory(sheetId, 0);
-      // シート内の FIXED 行の手前に差し込む（トップシートの法定福利費等を末尾に保つ）
+      if (kind === ITEM_TYPE.CATEGORY) row.category_symbol = nextCategorySymbol(prev);
       const sheetIdxs = prev
         .map((it, i) => ({ it, i }))
         .filter(x => x.it.sheet_id === sheetId);
-      const firstFixed = sheetIdxs.find(x => x.it.item_type === ITEM_TYPE.FIXED);
-      let next;
-      if (firstFixed) {
-        next = [...prev.slice(0, firstFixed.i), row, ...prev.slice(firstFixed.i)];
-      } else {
-        const lastOfSheet = sheetIdxs.length ? sheetIdxs[sheetIdxs.length - 1].i : prev.length - 1;
-        next = [...prev.slice(0, lastOfSheet + 1), row, ...prev.slice(lastOfSheet + 1)];
-      }
+      const lastOfSheet = sheetIdxs.length ? sheetIdxs[sheetIdxs.length - 1].i : prev.length - 1;
+      const next = [...prev.slice(0, lastOfSheet + 1), row, ...prev.slice(lastOfSheet + 1)];
       return renumberSheet(next, sheetId);
     });
   }, [renumberSheet]);
 
-  // 行削除（FIXED行は削除不可。シート内の最後の非FIXED行も削除しない＝空シート化を防ぐ）
+  // 行削除（シート内の最後の1行は削除しない＝空シート化を防ぐ）
   const removeRow = useCallback((uid) => {
     setItems(prev => {
       const target = prev.find(it => it._uid === uid);
-      if (!target || target.item_type === ITEM_TYPE.FIXED) return prev;
+      if (!target) return prev;
       const sheetId = target.sheet_id;
-      const nonFixedInSheet = prev.filter(
-        it => it.sheet_id === sheetId && it.item_type !== ITEM_TYPE.FIXED
-      );
-      if (nonFixedInSheet.length <= 1) return prev; // 最後の1行は残す
+      const itemsInSheet = prev.filter(it => it.sheet_id === sheetId);
+      if (itemsInSheet.length <= 1) return prev; // 最後の1行は残す
       const next = prev.filter(it => it._uid !== uid);
       return renumberSheet(next, sheetId);
     });
@@ -737,8 +728,6 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
       let j = idx + step;
       while (j >= 0 && j < prev.length && prev[j].sheet_id !== sheetId) j += step;
       if (j < 0 || j >= prev.length || prev[j].sheet_id !== sheetId) return prev;
-      // FIXED行との入れ替えは不可（末尾固定を維持）
-      if (prev[idx].item_type === ITEM_TYPE.FIXED || prev[j].item_type === ITEM_TYPE.FIXED) return prev;
       const next = [...prev];
       [next[idx], next[j]] = [next[j], next[idx]];
       return renumberSheet(next, sheetId);
@@ -761,7 +750,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
       if (anchorIdx < 0) return prev;
       const sheetId = prev[anchorIdx].sheet_id;
 
-      // 貼り付け対象となる連続した ITEM 行（アンカー以降・同一シート・FIXED手前）を収集
+      // 貼り付け対象となる連続した ITEM 行（アンカー以降・同一シート）を収集
       const applyToRow = (row, cells) => {
         let next = { ...row };
         COLS.forEach((col, ci) => {
@@ -841,22 +830,19 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   const { resolvedItems, sheetTotals, catTotals, cycleUids } = calc;
 
   // ============================================================
-  // 合計計算（トップシートの明細＋FIXEDを対象にする。鑑・トップシート表示用）
+  // 合計計算（トップシートの明細を対象にする。鑑・トップシート表示用）
   // リンク解決後の resolvedItems を基準にすることで、リンク①②の実値が鑑へ反映される。
   // ============================================================
   const totals = useMemo(() => {
     const topSheetId = sheets[0]?.id;
     const topItems = resolvedItems.filter(it => it.sheet_id === topSheetId);
-    const visibleItems = topItems.filter(i =>
-      i.item_type === ITEM_TYPE.ITEM ||
-      (i.item_type === ITEM_TYPE.FIXED && header.show_fixed_fees)
-    );
+    const visibleItems = topItems.filter(i => i.item_type === ITEM_TYPE.ITEM);
     return calcTotals(visibleItems, Number(header.tax_rate), {
       type: header.net_calc_type,
       perc: header.net_perc,
       manualAmount: header.net_amount,
     });
-  }, [resolvedItems, sheets, header.show_fixed_fees, header.tax_rate, header.net_calc_type, header.net_perc, header.net_amount]);
+  }, [resolvedItems, sheets, header.tax_rate, header.net_calc_type, header.net_perc, header.net_amount]);
 
   // 各シートの明細を sheet_id で束ねる（描画・保存で共用）。
   // 描画はリンク解決済みの resolvedItems を使う（編集・保存は生の items を使い続ける）。
@@ -896,6 +882,19 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
     return { sheetTargets, categoryTargets };
   }, [sheets, resolvedItems, sheetTotals, catTotals]);
 
+  // 他シートの合計を参照している sheet_id 一覧（①別シート合計リンクの参照先）
+  const linkedSheetIds = useMemo(() => {
+    const ids = new Set();
+    items.forEach(it => {
+      if (it.linked_sheet_id) ids.add(it.linked_sheet_id);
+    });
+    return ids;
+  }, [items]);
+
+  // サブシートの「合計」行を表示するか：他シートから参照されているか、末尾シートなら表示
+  const shouldShowTotalRow = (sheet, idx) =>
+    idx === 0 || linkedSheetIds.has(sheet.id) || idx === sheets.length - 1;
+
   // 各シート先頭ページの通しページ番号（鑑 = No.1、以降シート順に加算）
   const sheetStartPages = useMemo(() => {
     const starts = [];
@@ -903,10 +902,13 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
     sheets.forEach((sheet, idx) => {
       starts.push(running);
       const sheetItems = itemsBySheet.get(sheet.id) || [];
-      running += calcSheetPageCount(sheetItems, header, idx === 0, totals);
+      running += calcSheetPageCount(
+        sheetItems, header, idx === 0, totals,
+        sheetTotals.get(sheet.id), shouldShowTotalRow(sheet, idx)
+      );
     });
     return starts;
-  }, [sheets, itemsBySheet, header, totals]);
+  }, [sheets, itemsBySheet, header, totals, sheetTotals, linkedSheetIds]);
 
   const handleUnlock = async () => {
     if (!isCreator) return;
@@ -1116,19 +1118,25 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
         savingItems.push(...sheetItems);
       });
 
-      // 税込合計はトップシートの明細（FIXED含む）から算出（鑑と一致させる）
+      // 税込合計はトップシートの明細から算出（鑑と一致させる）
       const topSheetId = sheets[0]?.id;
       const savingVisibleItems = savingItems.filter(i =>
-        i.sheet_id === topSheetId && (
-          i.item_type === ITEM_TYPE.ITEM ||
-          (i.item_type === ITEM_TYPE.FIXED && header.show_fixed_fees)
-        )
+        i.sheet_id === topSheetId && i.item_type === ITEM_TYPE.ITEM
       );
       const savingTotals = calcTotals(savingVisibleItems, Number(header.tax_rate), {
         type: header.net_calc_type,
         perc: header.net_perc,
         manualAmount: header.net_amount,
       });
+
+      // 他画面での工事削除により project_id が孤立参照（FK違反）になっていないか事前チェックする。
+      // 孤立していれば連携を解除して保存を続行する（工事一覧から手動で再連携可能）。
+      let safeProjectId = header.project_id || null;
+      if (safeProjectId && !(await projectExists(safeProjectId))) {
+        safeProjectId = null;
+        setHeader(prev => ({ ...prev, project_id: null }));
+        showToast('連携していた工事案件が見つからないため、連携を解除して保存しました。', 'error');
+      }
 
       const payload = {
         estimate_number: estimateNumber,
@@ -1144,7 +1152,6 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
         tax_rate:       Number(header.tax_rate),
         status:         header.status,
         lost_reason:    header.lost_reason || null,
-        show_fixed_fees: header.show_fixed_fees,
         show_net:        header.show_net,
         show_subtotals:  header.show_subtotals,
         stamp_header:    header.stamp_header,
@@ -1158,7 +1165,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
         approved_at:     header.approved_at || null,
         returned_reason: header.returned_reason || null,
         approver_staff_id: header.approver_staff_id || null,
-        project_id:      header.project_id || null,
+        project_id:      safeProjectId,
       };
 
       let savedId = estimateId;
@@ -1200,6 +1207,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
             await updateEstimate(savedId, { project_id: linkedProjectId });
             setHeader(prev => ({ ...prev, project_id: linkedProjectId }));
           }
+          await copyEstimateItemsToProjectTasks(linkedProjectId, items);
         } catch (syncErr) {
           console.error('工事マスタへの連携に失敗しました:', syncErr);
           showToast(
@@ -1211,11 +1219,15 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
 
       setOriginalStatus(header.status);
       isDirty.current = false;
+      // 保存に伴う setSheets/setItems/setHeader の反映レンダーで
+      // dirty追跡effectが1回発火するが、それはユーザーの変更ではないのでスキップする。
+      skipNextDirtyCheck.current = true;
       clearEstimateDraft(estimateId);
       // 保存成功時点の内容を「直前の保存内容」として退避する。
       // 保存後に明細を誤って上書き・削除してしまった場合の救済用（このブラウザ内のみ・3日間）。
       saveLastSavedSnapshot(savedId, { header, sheets, items });
-      onSaved?.();
+      showToast('見積を保存しました', 'success');
+      onSaved?.(savedId);
     } catch (e) {
       // 23505 = Postgres unique_violation。事前チェックと保存実行の間に
       // 他ユーザーが同一番号で保存した競合ウィンドウのケース。
@@ -1223,6 +1235,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
         setNumberError(`見積番号「${estimateNumber}」は他のユーザーによって使用されました。再採番してください。`);
       } else {
         setError('保存に失敗しました: ' + e.message);
+        showToast('保存に失敗しました: ' + e.message, 'error');
       }
     } finally {
       setSaving(false);
@@ -1275,7 +1288,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
       {/* ===== ヘッダーバー ===== */}
       <div className="bg-white border-b border-slate-200 px-4 py-2.5 flex items-center gap-3 shrink-0 flex-wrap">
         <button
-          onClick={() => isDirty.current ? setShowLeaveConfirm(true) : onBack()}
+          onClick={() => (!isLocked && isDirty.current) ? setShowLeaveConfirm(true) : onBack()}
           aria-label="一覧に戻る"
           title="一覧に戻る"
           className="p-2 rounded-lg hover:bg-slate-100 text-slate-500 transition"
@@ -1395,6 +1408,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
                   settings={settings}
                   totals={totals}
                   sheetTotal={sheetTotals.get(sheet.id)}
+                  showTotalRow={shouldShowTotalRow(sheet, idx)}
                   cycleUids={cycleUids}
                   linkTargets={linkTargets}
                   startPageNumber={sheetStartPages[idx]}
@@ -1590,6 +1604,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
                 settings={settings}
                 totals={totals}
                 sheetTotal={sheetTotals.get(sheets[fullscreenSheetIndex].id)}
+                showTotalRow={shouldShowTotalRow(sheets[fullscreenSheetIndex], fullscreenSheetIndex)}
                 cycleUids={cycleUids}
                 linkTargets={linkTargets}
                 startPageNumber={sheetStartPages[fullscreenSheetIndex]}

@@ -268,16 +268,6 @@ const S = StyleSheet.create({
     maxHeight: 23,
     overflow: 'hidden',
   },
-  fixedRow: {
-    flexDirection: 'row',
-    backgroundColor: '#fffbf0',
-    borderBottom: '0.5pt dashed #888',
-    borderLeft: '1pt solid #1a1a1a',
-    borderRight: '1pt solid #1a1a1a',
-    height: 23,
-    maxHeight: 23,
-    overflow: 'hidden',
-  },
   subtotalRow: {
     flexDirection: 'row',
     borderBottom: '1pt solid #1a1a1a',
@@ -375,6 +365,12 @@ const S = StyleSheet.create({
 const fmt = (val) => {
   if (val === null || val === undefined || val === '') return '';
   return Number(val).toLocaleString('ja-JP');
+};
+
+// 数量は常に小数点以下1桁で表示（例: 5 → "5.0"）
+const fmtQty = (val) => {
+  if (val === null || val === undefined || val === '') return '';
+  return Number(val).toLocaleString('ja-JP', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 };
 
 const fmtDate = (dateStr) => {
@@ -556,21 +552,16 @@ const CoverPage = ({ estimate, settings, totals }) => {
 // 1シート分の items を「データ行＋ダミー行＋フッター行」の行記述子配列へ変換する。
 // 返り値の長さは必ず ROWS_PER_PAGE の倍数になり、19行ごとにページへ切り分ければ
 // フッター行（税抜合計 / 合計 / NET）が常に最終ページ末尾へ収まる。
-//   - トップシート: FIXED行(show_fixed_fees時)＋税抜合計＋NET行(show_net時)。
+//   - トップシート: 税抜合計＋NET行(show_net時)。
 //     消費税・税込合計は鑑(CoverPage)側にのみ表示する。
 //   - サブシート : 「合　計」1行のみ（リンク解決済みのシート合計 sheetTotal）。
 const PDF_ROWS_PER_PAGE = 19;
 
-const buildSheetRowsPDF = (items, header, isTopSheet, totals, sheetTotal) => {
-  const nonFixed = items.filter(i => i.item_type !== ITEM_TYPE.FIXED);
-  const fixedItems = items.filter(i => i.item_type === ITEM_TYPE.FIXED);
-
-  const showFixed = isTopSheet && header.show_fixed_fees;
-  const fixedFeeRows = showFixed ? fixedItems.length : 0;
+const buildSheetRowsPDF = (items, header, isTopSheet, totals, sheetTotal, showTotalRow = true) => {
   const netRowCount = isTopSheet && header.show_net ? 1 : 0;
-  const footerRows = isTopSheet ? fixedFeeRows + 1 + netRowCount : 1;
+  const footerRows = isTopSheet ? 1 + netRowCount : (showTotalRow ? 1 : 0);
 
-  const totalDataRows = nonFixed.length;
+  const totalDataRows = items.length;
   const remainder = totalDataRows % PDF_ROWS_PER_PAGE;
   let paddingCount;
   if (totalDataRows === 0) {
@@ -586,7 +577,7 @@ const buildSheetRowsPDF = (items, header, isTopSheet, totals, sheetTotal) => {
   // 工種見出しごとの小計（見出し行の金額セルに表示）
   const catSubtotalMap = new Map();
   let currentCat = null;
-  nonFixed.forEach(item => {
+  items.forEach(item => {
     if (item.item_type === ITEM_TYPE.CATEGORY) {
       currentCat = item;
       catSubtotalMap.set(item, 0);
@@ -597,7 +588,7 @@ const buildSheetRowsPDF = (items, header, isTopSheet, totals, sheetTotal) => {
 
   const rows = [];
   let itemNo = 0;
-  nonFixed.forEach(item => {
+  items.forEach(item => {
     if (item.item_type === ITEM_TYPE.CATEGORY) {
       rows.push({ kind: 'category', item, catTotal: catSubtotalMap.get(item) || 0 });
     } else if (item.item_type === ITEM_TYPE.COMMENT) {
@@ -623,14 +614,11 @@ const buildSheetRowsPDF = (items, header, isTopSheet, totals, sheetTotal) => {
   }
 
   if (isTopSheet) {
-    if (showFixed) {
-      fixedItems.forEach(item => rows.push({ kind: 'fixed', item }));
-    }
     rows.push({ kind: 'total-ex-tax', amount: totals.subtotal });
     if (header.show_net) {
       rows.push({ kind: 'net', amount: totals.net });
     }
-  } else {
+  } else if (showTotalRow) {
     const resolvedTotal = sheetTotal != null
       ? sheetTotal
       : items.reduce(
@@ -684,7 +672,7 @@ const renderPdfRow = (row, idx, pageBottomBorderStyle, shouldBreak) => {
           <Text style={S.cellName}>{wrapText(item.name)}</Text>
           <Text style={S.cellSpec}>{wrapText(item.spec || '')}</Text>
           <Text style={S.cellQty}>
-            {item.quantity != null && item.quantity !== '' ? Number(item.quantity).toLocaleString('ja-JP') : ''}
+            {item.quantity != null && item.quantity !== '' ? fmtQty(item.quantity) : ''}
           </Text>
           <Text style={S.cellUnit}>{item.unit || ''}</Text>
           <Text style={S.cellPrice}>
@@ -707,21 +695,6 @@ const renderPdfRow = (row, idx, pageBottomBorderStyle, shouldBreak) => {
           <Text style={[S.cellAmount, { fontWeight: 'bold' }]}>
             {fmt(row.item.amount)}
           </Text>
-          <Text style={S.cellNote}></Text>
-        </View>
-      );
-    }
-    case 'fixed': {
-      const { item } = row;
-      return (
-        <View key={idx} style={[S.fixedRow, pageBottomBorderStyle]} wrap={false} break={shouldBreak}>
-          <Text style={[S.cellNo, { borderRight: 'none' }]}></Text>
-          <Text style={[S.cellName, { borderRight: 'none' }]}>{item.name}</Text>
-          <Text style={[S.cellSpec, { borderRight: 'none' }]}></Text>
-          <Text style={S.cellQty}>1.0</Text>
-          <Text style={S.cellUnit}>式</Text>
-          <Text style={S.cellPrice}></Text>
-          <Text style={S.cellAmount}>{fmt(item.amount)}</Text>
           <Text style={S.cellNote}></Text>
         </View>
       );
@@ -782,11 +755,11 @@ const renderPdfRow = (row, idx, pageBottomBorderStyle, shouldBreak) => {
 // 内訳明細書コンポーネント（1シート = 1 <Page> グループ）
 // ============================================================
 // シートモデル（design.md §4）: 各明細シートが自前の末尾合計で閉じる。
-//   - トップシート: 末尾＝税抜合計（＋FIXED＋NET）。消費税・税込合計は鑑側。
+//   - トップシート: 末尾＝税抜合計（＋NET）。消費税・税込合計は鑑側。
 //   - サブシート : 末尾＝合　計（リンク解決済みシート合計 sheetTotal）。
 // ページ番号は鑑を No.1 とする通し番号（startPageNumber からの連番）。
-const DetailPage = ({ sheet, items, isTopSheet, totals, sheetTotal, settings, startPageNumber }) => {
-  const rows = buildSheetRowsPDF(items, sheet.header, isTopSheet, totals, sheetTotal);
+const DetailPage = ({ sheet, items, isTopSheet, totals, sheetTotal, showTotalRow, settings, startPageNumber }) => {
+  const rows = buildSheetRowsPDF(items, sheet.header, isTopSheet, totals, sheetTotal, showTotalRow);
   const sheetTitle = sheet.title || '見積内訳明細書';
   const estimateNumber = sheet.header.estimate_number;
 
@@ -839,7 +812,6 @@ const DetailPage = ({ sheet, items, isTopSheet, totals, sheetTotal, settings, st
 const EstimateDocument = ({ estimate, settings }) => {
   const header = {
     estimate_number: estimate.estimate_number,
-    show_fixed_fees: estimate.show_fixed_fees,
     show_net: estimate.show_net,
   };
 
@@ -850,22 +822,30 @@ const EstimateDocument = ({ estimate, settings }) => {
 
   // 鑑の合計はトップシートの明細から算出（リンク解決済みの値が渡る想定）。
   const topItems = sheets[0]?.items || [];
-  const visibleTopItems = topItems.filter(i =>
-    i.item_type === ITEM_TYPE.ITEM ||
-    (i.item_type === ITEM_TYPE.FIXED && estimate.show_fixed_fees)
-  );
+  const visibleTopItems = topItems.filter(i => i.item_type === ITEM_TYPE.ITEM);
   const totals = calcTotals(visibleTopItems, Number(estimate.tax_rate || 0.1), {
     type: estimate.net_calc_type,
     perc: estimate.net_perc,
     manualAmount: estimate.net_amount
   });
 
+  // 他シートの合計を参照している sheet_id 一覧（①別シート合計リンクの参照先）
+  const linkedSheetIds = new Set();
+  sheets.forEach(sheet => {
+    (sheet.items || []).forEach(it => {
+      if (it.linked_sheet_id) linkedSheetIds.add(it.linked_sheet_id);
+    });
+  });
+  // サブシートの「合計」行を表示するか：他シートから参照されているか、末尾シートなら表示
+  const shouldShowTotalRow = (sheet, idx) =>
+    idx === 0 || linkedSheetIds.has(sheet.id) || idx === sheets.length - 1;
+
   // 各シート先頭ページの通しページ番号（鑑 = No.1）
   let running = 2;
   const sheetStartPages = sheets.map((sheet, idx) => {
     const start = running;
     const rows = buildSheetRowsPDF(
-      sheet.items || [], header, idx === 0, totals, sheet.sheetTotal
+      sheet.items || [], header, idx === 0, totals, sheet.sheetTotal, shouldShowTotalRow(sheet, idx)
     );
     running += rows.length / PDF_ROWS_PER_PAGE;
     return start;
@@ -882,6 +862,7 @@ const EstimateDocument = ({ estimate, settings }) => {
           isTopSheet={idx === 0}
           totals={totals}
           sheetTotal={sheet.sheetTotal}
+          showTotalRow={shouldShowTotalRow(sheet, idx)}
           settings={settings}
           startPageNumber={sheetStartPages[idx]}
         />

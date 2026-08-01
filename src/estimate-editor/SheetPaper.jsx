@@ -5,8 +5,8 @@
 // 移植元: src/EstimatePDF.jsx の DetailPage（テーブル罫線・行高・ダミー行
 // パディングのアルゴリズムは同一）。ただしフッター行の構成は新シートモデル
 // （design.md §4）に合わせて変更している:
-//   - トップシート(sheetIndex 0): FIXED行(show_fixed_fees時) ＋「税抜合計」1行
-//     ＋ NET行(show_net時)。消費税・税込合計は鑑側にのみ表示する。
+//   - トップシート(sheetIndex 0): 「税抜合計」1行 ＋ NET行(show_net時)。
+//     消費税・税込合計は鑑側にのみ表示する。
 //   - サブシート: 「合　計」1行のみ（シート内 ITEM 金額の合計）。
 // Phase 6 で EstimatePDF.jsx をこの構成に追従させる。
 //
@@ -19,7 +19,8 @@
 // クライアント安定キー `_uid` で指定する（SheetPaper はシートローカルな items しか
 // 持たず、フラット配列内の絶対 index を知らないため）。
 import React, { useRef, useCallback, useState } from 'react';
-import { Plus, Trash2, Copy, ChevronUp, ChevronDown, Link2, Link2Off } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Plus, Trash2, Copy, ChevronUp, ChevronDown, Link2, Link2Off, FolderPlus, MessageSquarePlus } from 'lucide-react';
 import { ITEM_TYPE } from '../utils/constants';
 import {
   pt, PAPER_WIDTH, PAPER_HEIGHT, ROWS_PER_PAGE, COLORS, page, table, fmt,
@@ -66,6 +67,15 @@ const formatNumberInput = (value) => {
   return num < 0 ? `▲${formatted}` : formatted;
 };
 
+// 数量欄用: 常に小数点以下1桁で表示（例: 5 → "5.0"）
+const formatQuantityInput = (value) => {
+  if (value === null || value === undefined || value === '') return '';
+  const num = Number(value);
+  if (Number.isNaN(num)) return '';
+  const formatted = Math.abs(num).toLocaleString('ja-JP', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  return num < 0 ? `▲${formatted}` : formatted;
+};
+
 // 全角数字・カンマ・▲/全角マイナスを除去して数値文字列に戻す
 // （末尾の小数点は入力途中として許容）
 const parseNumberInput = (raw) => {
@@ -87,17 +97,12 @@ const parseNumberInput = (raw) => {
 // フッター行が必ず最終ページ末尾に収まるようにする。
 // 返り値は行記述子 {kind, item?, itemNo?, catTotal?, label?, amount?} の配列で、
 // 長さは必ず ROWS_PER_PAGE の倍数になる。
-export const buildSheetRows = (items, header, isTopSheet, totals, sheetTotal) => {
-  const nonFixed = items.filter(i => i.item_type !== ITEM_TYPE.FIXED);
-  const fixedItems = items.filter(i => i.item_type === ITEM_TYPE.FIXED);
-
-  const showFixed = isTopSheet && header.show_fixed_fees;
-  const fixedFeeRows = showFixed ? fixedItems.length : 0;
+export const buildSheetRows = (items, header, isTopSheet, totals, sheetTotal, showTotalRow = true) => {
   const netRowCount = isTopSheet && header.show_net ? 1 : 0;
-  // トップシート: FIXED行＋税抜合計＋NET / サブシート: 合計1行
-  const footerRows = isTopSheet ? fixedFeeRows + 1 + netRowCount : 1;
+  // トップシート: 税抜合計＋NET / サブシート: 合計1行（他シートから参照されていなければ非表示）
+  const footerRows = isTopSheet ? 1 + netRowCount : (showTotalRow ? 1 : 0);
 
-  const totalDataRows = nonFixed.length;
+  const totalDataRows = items.length;
   const remainder = totalDataRows % ROWS_PER_PAGE;
   let paddingCount;
   if (totalDataRows === 0) {
@@ -114,7 +119,7 @@ export const buildSheetRows = (items, header, isTopSheet, totals, sheetTotal) =>
   // 工種見出しごとの小計（見出し行の金額セルに表示）
   const catSubtotalMap = new Map();
   let currentCat = null;
-  nonFixed.forEach(item => {
+  items.forEach(item => {
     if (item.item_type === ITEM_TYPE.CATEGORY) {
       currentCat = item;
       catSubtotalMap.set(item, 0);
@@ -125,7 +130,7 @@ export const buildSheetRows = (items, header, isTopSheet, totals, sheetTotal) =>
 
   const rows = [];
   let itemNo = 0;
-  nonFixed.forEach(item => {
+  items.forEach(item => {
     if (item.item_type === ITEM_TYPE.CATEGORY) {
       rows.push({ kind: 'category', item, catTotal: catSubtotalMap.get(item) || 0 });
     } else if (item.item_type === ITEM_TYPE.COMMENT) {
@@ -146,14 +151,11 @@ export const buildSheetRows = (items, header, isTopSheet, totals, sheetTotal) =>
   }
 
   if (isTopSheet) {
-    if (showFixed) {
-      fixedItems.forEach(item => rows.push({ kind: 'fixed', item }));
-    }
     rows.push({ kind: 'total-ex-tax', amount: totals.subtotal });
     if (header.show_net) {
       rows.push({ kind: 'net', amount: totals.net });
     }
-  } else {
+  } else if (showTotalRow) {
     // 計算エンジン（Phase 5）がリンク解決済みのシート合計を渡す場合はそれを優先。
     // 渡されない場合（呼び出し元未対応・ページ数計算のみ等）は ITEM 金額を単純合算。
     const resolvedTotal = sheetTotal != null
@@ -168,8 +170,8 @@ export const buildSheetRows = (items, header, isTopSheet, totals, sheetTotal) =>
 };
 
 // シートが占めるページ数（EstimateEditor が通しページ番号を計算するのに使う）
-export const calcSheetPageCount = (items, header, isTopSheet, totals) =>
-  buildSheetRows(items, header, isTopSheet, totals).length / ROWS_PER_PAGE;
+export const calcSheetPageCount = (items, header, isTopSheet, totals, sheetTotal, showTotalRow = true) =>
+  buildSheetRows(items, header, isTopSheet, totals, sheetTotal, showTotalRow).length / ROWS_PER_PAGE;
 
 // ============================================================
 // セルスタイル
@@ -259,9 +261,10 @@ const TextCell = ({ uid, col, value, align, color, bold, italic, placeholder, on
 );
 
 // カンマ区切りの数値入力欄（フォーカス中は生値、blur で整形表示）
-const NumberCell = ({ uid, col, value, onChange, onPaste, onKeyDown }) => {
+const NumberCell = ({ uid, col, value, format, onChange, onPaste, onKeyDown }) => {
   const [draft, setDraft] = useState(null);
-  const displayValue = draft !== null ? draft : formatNumberInput(value);
+  const fmtFn = format || formatNumberInput;
+  const displayValue = draft !== null ? draft : fmtFn(value);
   return (
     <input
       type="text"
@@ -279,6 +282,120 @@ const NumberCell = ({ uid, col, value, onChange, onPaste, onKeyDown }) => {
       onKeyDown={onKeyDown}
       style={{ ...inputBase, textAlign: 'right' }}
     />
+  );
+};
+
+// 単位欄の候補（EstimateItemTable.jsx より移植）
+const UNIT_SUGGESTIONS = ['m²', 'm', 'm³', '本', '式', 'ヶ所', '個', 't', '枚', '組'];
+
+// 単位入力欄（候補プルダウン付き）。
+// フォーカスで候補を表示し、上下キーでハイライト移動、Enter/クリックで確定。
+// 候補未選択時の Enter・Tab・上下キーは既存のセル間ナビゲーション(onKeyDown)に委ねる。
+const UnitCell = ({ uid, col, value, onChange, onPaste, onKeyDown }) => {
+  const [showSug, setShowSug] = useState(false);
+  const [highlightIdx, setHighlightIdx] = useState(-1);
+  const [menuPos, setMenuPos] = useState(null);
+  const inputRef = useRef(null);
+
+  const openSug = () => {
+    const rect = inputRef.current?.getBoundingClientRect();
+    if (rect) setMenuPos({ top: rect.bottom, left: rect.left, minWidth: rect.width });
+    setShowSug(true);
+  };
+
+  const commit = (unit) => {
+    onChange(col, unit);
+    setShowSug(false);
+    setHighlightIdx(-1);
+  };
+
+  const handleKeyDown = (e) => {
+    if (showSug && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      e.preventDefault();
+      const dir = e.key === 'ArrowDown' ? 1 : -1;
+      setHighlightIdx((prev) => {
+        const next = prev + dir;
+        if (next < 0) return UNIT_SUGGESTIONS.length - 1;
+        if (next >= UNIT_SUGGESTIONS.length) return 0;
+        return next;
+      });
+      return;
+    }
+    if (showSug && e.key === 'Enter' && highlightIdx >= 0) {
+      e.preventDefault();
+      commit(UNIT_SUGGESTIONS[highlightIdx]);
+      return;
+    }
+    if (showSug && e.key === 'Escape') {
+      e.preventDefault();
+      setShowSug(false);
+      setHighlightIdx(-1);
+      return;
+    }
+    onKeyDown?.(e);
+  };
+
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <input
+        ref={inputRef}
+        type="text"
+        data-uid={uid}
+        data-col={col}
+        value={value || ''}
+        onChange={(e) => onChange(col, e.target.value)}
+        onFocus={openSug}
+        onBlur={() => setTimeout(() => { setShowSug(false); setHighlightIdx(-1); }, 150)}
+        onPaste={onPaste}
+        onKeyDown={handleKeyDown}
+        style={{ ...inputBase, textAlign: 'center' }}
+      />
+      {showSug && menuPos && createPortal(
+        <div
+          role="listbox"
+          aria-label="単位候補"
+          onMouseDown={(e) => e.preventDefault()}
+          style={{
+            position: 'fixed',
+            top: menuPos.top,
+            left: menuPos.left,
+            marginTop: 2,
+            minWidth: Math.max(menuPos.minWidth, 60),
+            maxHeight: 220,
+            overflowY: 'auto',
+            background: '#fff',
+            border: `1px solid ${COLORS.dashed}`,
+            borderRadius: 4,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+            zIndex: 10000,
+          }}
+        >
+          {UNIT_SUGGESTIONS.map((u, i) => (
+            <button
+              key={u}
+              type="button"
+              onMouseDown={() => commit(u)}
+              onMouseEnter={() => setHighlightIdx(i)}
+              style={{
+                display: 'block',
+                width: '100%',
+                textAlign: 'center',
+                padding: '4px 10px',
+                border: 'none',
+                background: i === highlightIdx ? COLORS.dashed : 'transparent',
+                cursor: 'pointer',
+                fontSize: table.cellFontSize,
+                color: COLORS.ink,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {u}
+            </button>
+          ))}
+        </div>,
+        document.body
+      )}
+    </div>
   );
 };
 
@@ -373,7 +490,7 @@ const RowToolbar = ({ item, onAddRowAfter, onDuplicateRow, onRemoveRow, onMoveRo
       className="sheet-row-toolbar"
       style={{
         position: 'absolute',
-        top: '50%',
+        top: `calc(50% - ${table.rowHeight}px)`,
         left: pt(-58),
         transform: 'translateY(-50%)',
         display: 'flex',
@@ -384,8 +501,8 @@ const RowToolbar = ({ item, onAddRowAfter, onDuplicateRow, onRemoveRow, onMoveRo
         borderRadius: 4,
         padding: '1px 3px',
         boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
-        opacity: 0.35,
-        pointerEvents: 'auto',
+        opacity: 0,
+        pointerEvents: 'none',
         transition: 'opacity 0.1s',
         zIndex: 5,
       }}
@@ -399,6 +516,12 @@ const RowToolbar = ({ item, onAddRowAfter, onDuplicateRow, onRemoveRow, onMoveRo
       <button type="button" style={btn} title="下に行を追加" aria-label="下に行を追加"
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => onAddRowAfter(item._uid, ITEM_TYPE.ITEM)}><Plus size={12} /></button>
+      <button type="button" style={btn} title="下にグループ行を追加" aria-label="下にグループ行を追加"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => onAddRowAfter(item._uid, ITEM_TYPE.CATEGORY)}><FolderPlus size={12} /></button>
+      <button type="button" style={btn} title="下にコメント行を追加" aria-label="下にコメント行を追加"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => onAddRowAfter(item._uid, ITEM_TYPE.COMMENT)}><MessageSquarePlus size={12} /></button>
       <button type="button" style={{ ...btn, color: '#2563eb' }} title="行を複製" aria-label="行を複製"
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => onDuplicateRow(item._uid)}><Copy size={12} /></button>
@@ -527,7 +650,7 @@ const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom, cycleUids }, e
             <div style={CELLS.no}>{itemNo ?? ''}</div>
             <div style={CELLS.name}>{item.name}</div>
             <div style={CELLS.spec}>{item.spec || ''}</div>
-            <div style={CELLS.qty}>{item.quantity != null && item.quantity !== '' ? Number(item.quantity).toLocaleString('ja-JP') : ''}</div>
+            <div style={CELLS.qty}>{item.quantity != null && item.quantity !== '' ? formatQuantityInput(item.quantity) : ''}</div>
             <div style={CELLS.unit}>{item.unit || ''}</div>
             <div style={CELLS.price}>{item.unit_price != null && item.unit_price !== '' ? fmt(item.unit_price) : ''}</div>
             <div style={CELLS.amount}>{item.amount != null && item.amount !== '' ? fmt(item.amount) : ''}</div>
@@ -567,13 +690,13 @@ const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom, cycleUids }, e
           </div>
           <div style={CELLS.qty}>
             {lockQty
-              ? (item.quantity != null && item.quantity !== '' ? Number(item.quantity).toLocaleString('ja-JP') : '')
-              : <NumberCell uid={uid} col="quantity" value={item.quantity} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />}
+              ? (item.quantity != null && item.quantity !== '' ? formatQuantityInput(item.quantity) : '')
+              : <NumberCell uid={uid} col="quantity" value={item.quantity} format={formatQuantityInput} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />}
           </div>
           <div style={CELLS.unit}>
             {lockUnit
               ? (item.unit || '')
-              : <TextCell uid={uid} col="unit" value={item.unit} align="center" onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />}
+              : <UnitCell uid={uid} col="unit" value={item.unit} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />}
           </div>
           <div style={CELLS.price}>
             {lockPrice
@@ -604,21 +727,6 @@ const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom, cycleUids }, e
           <div style={CELLS.unit} />
           <div style={CELLS.price} />
           <div style={{ ...CELLS.amount, fontWeight: 'bold' }}>{fmt(row.item.amount)}</div>
-          <div style={CELLS.note} />
-        </div>
-      );
-    }
-    case 'fixed': {
-      const { item } = row;
-      return (
-        <div key={rowKey} style={{ ...rowStyle, background: COLORS.fixedBg }}>
-          <div style={{ ...CELLS.no, borderRight: 'none' }} />
-          <div style={{ ...CELLS.name, borderRight: 'none' }}>{item.name}</div>
-          <div style={{ ...CELLS.spec, borderRight: 'none' }} />
-          <div style={CELLS.qty}>1.0</div>
-          <div style={CELLS.unit}>式</div>
-          <div style={CELLS.price} />
-          <div style={CELLS.amount}>{fmt(item.amount)}</div>
           <div style={CELLS.note} />
         </div>
       );
@@ -711,10 +819,11 @@ const SheetPaper = ({
   sheet,             // { id, title }
   sheetIndex,        // 0 = トップシート（総括表）
   items,             // このシートに属する明細（表示順。全 sheet_id === sheet.id）
-  header,            // estimate_number / show_fixed_fees / show_net を参照
+  header,            // estimate_number / show_net を参照
   settings,          // フッターの会社名表示用
   totals,            // calcTotals の結果（トップシートの税抜合計・NETに使用）
   sheetTotal,        // Phase 5: 計算エンジンが解決したこのシートの合計（サブシート合計に使用）
+  showTotalRow = true, // サブシートの「合計」行を表示するか（他シートから参照されていない中間シートは非表示）
   cycleUids,         // Phase 5: 循環参照で無効化された行の _uid 集合（警告表示用）
   linkTargets,       // Phase 5: 行リンクピッカーの候補 { sheetTargets, categoryTargets }
   startPageNumber,   // このシート先頭ページの通し番号（鑑が No.1）
@@ -730,7 +839,7 @@ const SheetPaper = ({
   onSetRowLink,      // Phase 5: 行にリンク①②を張る／外す
 }) => {
   const isTopSheet = sheetIndex === 0;
-  const rows = buildSheetRows(items, header, isTopSheet, totals, sheetTotal);
+  const rows = buildSheetRows(items, header, isTopSheet, totals, sheetTotal, showTotalRow);
   const estimateNumber = `${header.estimate_number_date}-${header.estimate_number_seq}-${header.estimate_number_branch}`;
 
   const editable = !isLocked && typeof onUpdateItem === 'function';
@@ -762,6 +871,28 @@ const SheetPaper = ({
     prevNavCountRef.current = navCells.length;
     onAddRowToSheet(sheet.id, ITEM_TYPE.ITEM);
     // 追加された ITEM 行の name セルは navCells 末尾に来る。次フレームで取得。
+    requestAnimationFrame(() => {
+      const inputs = sheetRef.current?.querySelectorAll('input[data-col="name"]');
+      const last = inputs && inputs.length ? inputs[inputs.length - 1] : null;
+      last?.focus();
+    });
+  }, [navCells.length, onAddRowToSheet, sheet.id]);
+
+  // 末尾にグループ(工種)行を追加 → 追加後の描画で最後の name セルへフォーカス
+  const addGroupRowAndFocus = useCallback(() => {
+    prevNavCountRef.current = navCells.length;
+    onAddRowToSheet(sheet.id, ITEM_TYPE.CATEGORY);
+    requestAnimationFrame(() => {
+      const inputs = sheetRef.current?.querySelectorAll('input[data-col="name"]');
+      const last = inputs && inputs.length ? inputs[inputs.length - 1] : null;
+      last?.focus();
+    });
+  }, [navCells.length, onAddRowToSheet, sheet.id]);
+
+  // 末尾にコメント行を追加 → 追加後の描画で最後の name セルへフォーカス
+  const addCommentRowAndFocus = useCallback(() => {
+    prevNavCountRef.current = navCells.length;
+    onAddRowToSheet(sheet.id, ITEM_TYPE.COMMENT);
     requestAnimationFrame(() => {
       const inputs = sheetRef.current?.querySelectorAll('input[data-col="name"]');
       const last = inputs && inputs.length ? inputs[inputs.length - 1] : null;
@@ -849,10 +980,8 @@ const SheetPaper = ({
       id={`paper-sheet-${sheetIndex}`}
       style={{ display: 'flex', flexDirection: 'column', gap: pt(18), alignItems: 'center' }}
     >
-      {/* 行ツールバーは常時薄く表示し、ホバー/タップ時にはっきり表示するためのスタイル
-          （タッチデバイスではホバーが効かないため、常時ある程度視認できるようにしている） */}
+      {/* 行ツールバーは通常非表示、アクティブ（フォーカス中）の行のみ表示するためのスタイル */}
       <style>{`
-        #paper-sheet-${sheetIndex} .sheet-edit-row:hover .sheet-row-toolbar,
         #paper-sheet-${sheetIndex} .sheet-edit-row:focus-within .sheet-row-toolbar { opacity: 1 !important; pointer-events: auto !important; }
       `}</style>
       {pages.map((pageRows, pageIdx) => (
@@ -896,22 +1025,58 @@ const SheetPaper = ({
             cycleUids,
           }, edit))}
 
-          {/* 末尾ページに［＋行を追加］（編集時のみ） */}
+          {/* 末尾ページに［＋行を追加］［＋グループ行を追加］［＋コメント行を追加］（編集時のみ） */}
           {editable && pageIdx === pages.length - 1 && (
-            <button
-              type="button"
-              onClick={addRowAndFocus}
-              style={{
-                position: 'absolute',
-                bottom: pt(30),
-                left: page.paddingX,
-                display: 'flex', alignItems: 'center', gap: 4,
-                fontSize: pt(9), color: '#2563eb',
-                background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
-              }}
-            >
-              <Plus size={12} /> 行を追加
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={addRowAndFocus}
+                aria-label="行を追加"
+                title="行を追加"
+                style={{
+                  position: 'absolute',
+                  bottom: pt(30),
+                  left: page.paddingX,
+                  display: 'flex', alignItems: 'center', gap: 4,
+                  fontSize: pt(9), color: '#2563eb',
+                  background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
+                }}
+              >
+                <Plus size={12} /> 行を追加
+              </button>
+              <button
+                type="button"
+                onClick={addGroupRowAndFocus}
+                aria-label="グループ行を追加"
+                title="グループ行を追加"
+                style={{
+                  position: 'absolute',
+                  bottom: pt(30),
+                  left: page.paddingX + pt(70),
+                  display: 'flex', alignItems: 'center', gap: 4,
+                  fontSize: pt(9), color: '#2563eb',
+                  background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
+                }}
+              >
+                <FolderPlus size={12} /> グループ行を追加
+              </button>
+              <button
+                type="button"
+                onClick={addCommentRowAndFocus}
+                aria-label="コメント行を追加"
+                title="コメント行を追加"
+                style={{
+                  position: 'absolute',
+                  bottom: pt(30),
+                  left: page.paddingX + pt(160),
+                  display: 'flex', alignItems: 'center', gap: 4,
+                  fontSize: pt(9), color: '#2563eb',
+                  background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
+                }}
+              >
+                <MessageSquarePlus size={12} /> コメント行を追加
+              </button>
+            </>
           )}
 
           {/* ページフッター（会社名・通しページ番号） */}

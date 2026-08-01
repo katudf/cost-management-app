@@ -11,7 +11,7 @@ import ConfirmModal from '../components/ConfirmModal';
  *   - sheets: [{ id, title }]
  *   - items: フラット明細（シートごとのページ数計算に使用。将来利用。現状は件数表示のみ）
  *   - activeAnchor: 現在アクティブなアンカー ('cover' | 'sheet-0' | ...)（任意）
- *   - onDeleteSheet: (sheetIndex) => void   （index 0 は呼ばれない）
+ *   - onDeleteSheet: (sheetIndex) => void   （index 0 は「総括表」の場合のみ呼ばれる）
  *   - onAddSheet: () => void
  *   - isLocked: boolean  ロック時は削除・追加を無効化
  */
@@ -65,7 +65,8 @@ export default function PageNav({
                 {sheets.map((sheet, idx) => {
                     const anchor = `sheet-${idx}`;
                     const count = itemCountForSheet(sheet.id);
-                    const canDelete = idx !== 0 && !isLocked;
+                    const isSummarySheet = idx === 0 && sheet.title === '総括表';
+                    const canDelete = (idx !== 0 || isSummarySheet) && !isLocked;
                     return (
                         <li key={sheet.id ?? idx} className="group flex items-center gap-1">
                             <button
@@ -129,7 +130,9 @@ export default function PageNav({
                     pendingDelete !== null
                         ? `「${
                               sheets[pendingDelete]?.title || '見積内訳明細書'
-                          }」とその明細をすべて削除します。この操作は保存するまで元に戻せます。`
+                          }」とその明細をすべて削除します。${
+                              pendingDelete === 0 ? '削除後、先頭シートは次の明細シートに切り替わります。' : ''
+                          }この操作は保存するまで元に戻せます。`
                         : ''
                 }
                 confirmText="削除する"

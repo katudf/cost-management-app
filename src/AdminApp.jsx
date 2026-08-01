@@ -1058,11 +1058,20 @@ const App = () => {
                             <EstimateEditor
                                 estimateId={estimateEditId}  // null=新規, number=編集
                                 onBack={() => setEstimateEditId(undefined)}
-                                onSaved={() => {
-                                    setEstimateEditId(undefined);
+                                onSaved={(savedId) => {
+                                    // 保存後も編集画面に留まる（一覧へは戻らない）。
+                                    // 新規作成直後は id を採番済みのものに更新し、以後の保存が更新として扱われるようにする。
+                                    if (savedId !== undefined && savedId !== estimateEditId) {
+                                        setEstimateEditId(savedId);
+                                    }
                                     fetchAllData(activeProjectId, setActiveProjectId);
                                 }}
-                                onStatusChanged={refreshEstimatesForBadge}
+                                onStatusChanged={() => {
+                                    // ステータスバッジ操作（保存を経由しない）でも
+                                    // Projectsへの連携が発生しうるため、一覧を再取得する
+                                    refreshEstimatesForBadge();
+                                    fetchAllData(activeProjectId, setActiveProjectId);
+                                }}
                             />
                         )
                     )}

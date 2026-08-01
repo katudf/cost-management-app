@@ -58,6 +58,7 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
         await supabase.from('SubcontractorRecords').delete().eq('project_id', id);
         await supabase.from('TaskRecords').delete().eq('project_id', id);
         await supabase.from('ProjectTasks').delete().eq('projectId', id);
+        await supabase.from('estimates').update({ project_id: null }).eq('project_id', id);
 
         const { error } = await supabase.from('Projects').delete().eq('id', id);
         if (error) {

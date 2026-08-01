@@ -167,6 +167,13 @@ const SystemSettingsTab = ({
                             </p>
                         </div>
 
+                        {/*
+                          AIによるExcel項目名最適化機能は現在無効化中。
+                          src/hooks/useSupabaseData.js の isGeminiEnabled 初期値を true に戻せば
+                          この設定UIおよび ImportModal 側のAI最適化ボタンが復活する。
+                          関連ロジックは src/utils/aiOptimizeUtils.js に温存済み。
+                        */}
+                        {isGeminiEnabled && (
                         <div className="mb-8 pt-8 border-t border-slate-100">
                             <label className="block text-sm font-bold text-slate-700 mb-4 text-slate-800">
                                 Gemini AI 機能
@@ -188,9 +195,9 @@ const SystemSettingsTab = ({
                                             Excel読み込み時の項目名最適化が利用可能です。
                                         </p>
                                     </div>
-                                    <a 
-                                        href="https://aistudio.google.com/app/apikey" 
-                                        target="_blank" 
+                                    <a
+                                        href="https://aistudio.google.com/app/apikey"
+                                        target="_blank"
                                         rel="noopener noreferrer"
                                         className="text-[10px] text-blue-600 font-bold hover:underline flex items-center gap-1"
                                     >
@@ -238,6 +245,7 @@ const SystemSettingsTab = ({
                                 )}
                             </div>
                         </div>
+                        )}
 
                         <div className="flex items-center gap-4 pt-6 border-t border-slate-100">
                             <button

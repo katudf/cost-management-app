@@ -28,6 +28,7 @@ const DashboardTab = ({
                         {summaryData.totalActual}<span className="text-sm font-normal text-slate-500">h</span>
                         <span className="text-slate-300 font-light mx-1">/</span>
                         {summaryData.totalTarget}<span className="text-sm font-normal text-slate-500">h</span>
+                        <span className="text-sm font-normal text-slate-400">（{Math.floor(summaryData.totalTarget / 7.5)}人工）</span>
                     </div>
                 </div>
 

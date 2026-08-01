@@ -323,7 +323,6 @@ const EstimateList = ({ onEdit }) => {
         notes: result.notes || null,
         tax_rate: 0.10,
         status: ESTIMATE_STATUS.DRAFT,
-        show_fixed_fees: false,
         show_net: true,
         show_subtotals: false,
         stamp_header: 'company',

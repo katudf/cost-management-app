@@ -7,7 +7,9 @@ export function useSupabaseData(showToast) {
     const [workers, setWorkers] = useState([]);
     const [customers, setCustomers] = useState([]);
     const [hourlyWage, setHourlyWage] = useState(3500);
-    const [isGeminiEnabled, setIsGeminiEnabled] = useState(true);
+    // AIによるExcel項目名最適化機能は現在無効化中（コード・UIは utils/aiOptimizeUtils.js に温存）。
+    // 再度有効化する場合はこの初期値を true に戻すだけでよい。
+    const [isGeminiEnabled, setIsGeminiEnabled] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
 
     const fetchAllData = useCallback(async (forceActiveId = null, setActiveProjectId) => {

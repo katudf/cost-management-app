@@ -475,7 +475,6 @@ const SettingsPanel = ({
         {pdfExpanded && (
           <div className="px-4 pb-4 pt-2 border-t border-slate-100 space-y-2 text-sm">
             {[
-              { key: 'show_fixed_fees', label: '法定福利費・安全費を表示' },
               { key: 'show_net',        label: 'NET金額を表示' },
               { key: 'show_subtotals',  label: '工種ごとに合計行を表示' },
               { key: 'show_approver',   label: '上長印欄を表示' },

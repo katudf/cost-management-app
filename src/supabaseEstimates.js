@@ -2,7 +2,7 @@
 // 見積書機能のSupabase操作関数
 
 import { supabase } from './lib/supabase';
-import { ITEM_TYPE, ESTIMATE_STATUS, PROJECT_STATUS } from './utils/constants';
+import { ITEM_TYPE, ITEM_SENTINEL, ESTIMATE_STATUS, PROJECT_STATUS } from './utils/constants';
 import { getStampSignedUrl } from './utils/stampStorage';
 
 // ============================================================
@@ -353,6 +353,22 @@ export const buildSaveItemsPayload = (sheets, items) => {
 // ============================================================
 // 承認済み見積を工事案件（Projects）へ連携
 // ------------------------------------------------------------
+// 指定IDのProjectsが現存するかを確認する。
+// 通常保存時、他画面での工事削除により estimates.project_id が孤立参照
+// （FK違反）になっていないかを事前チェックするために使う。
+// ============================================================
+export const projectExists = async (projectId) => {
+  if (!projectId) return false;
+  const { data, error } = await supabase
+    .from('Projects')
+    .select('id')
+    .eq('id', projectId)
+    .limit(1);
+  if (error) throw error;
+  return !!(data && data.length > 0);
+};
+
+// ============================================================
 // estimates.project_id で紐付け済みの案件があればそれを使い回す
 // （工事名変更後の再承認でも重複作成されない）。
 // 未連携の場合のみ status=見積 の案件を order 末尾に新規作成する。
@@ -393,6 +409,53 @@ export const syncEstimateToProject = async ({ projectId, title, customerId }) =>
 
   if (insertError) throw insertError;
   return inserted.id;
+};
+
+// ============================================================
+// 見積の明細行（item_type: 'item'）を工事の作業項目（ProjectTasks）へコピーする
+// 既に作業項目が1件以上存在する工事には反映しない（手動編集済みの上書き防止）。
+// ============================================================
+export const copyEstimateItemsToProjectTasks = async (projectId, estimateItems) => {
+  const { data: existingTasks, error: existingError } = await supabase
+    .from('ProjectTasks')
+    .select('id')
+    .eq('projectId', projectId)
+    .limit(1);
+
+  if (existingError) throw existingError;
+  if (existingTasks && existingTasks.length > 0) return; // 既に作業項目あり → 上書きしない
+
+  const workItems = (estimateItems || []).filter(
+    (it) =>
+      it.item_type === ITEM_TYPE.ITEM &&
+      it.category_symbol !== ITEM_SENTINEL.COMMENT &&
+      (it.name || '').trim() !== ''
+  );
+  if (workItems.length === 0) return;
+
+  // 目標時間は見積金額を人工単価（system_settings.hourly_wage）で割って算出する
+  // （MasterTab.jsx の手動設定と同じ計算式: Math.round(見積金額 / 人工単価)）
+  const { data: settingsData } = await supabase
+    .from('system_settings')
+    .select('hourly_wage')
+    .eq('id', 1)
+    .single();
+  const hourlyWage = settingsData?.hourly_wage || 3500;
+
+  const rows = workItems.map((it, idx) => {
+    const amount = Number(it.amount) || 0;
+    return {
+      projectId,
+      name: it.name,
+      target_hours: hourlyWage > 0 ? Math.round(amount / hourlyWage) : 0,
+      estimated_amount: amount,
+      order: idx + 1,
+      progress_percentage: 0,
+    };
+  });
+
+  const { error: insertError } = await supabase.from('ProjectTasks').insert(rows);
+  if (insertError) throw insertError;
 };
 
 // ============================================================
@@ -452,30 +515,26 @@ export const fetchWorkers = async () => {
 // ============================================================
 export const calcTotals = (items, taxRate = 0.1, netCalcSettings = {}) => {
   const itemRows = items.filter(i => i.item_type === ITEM_TYPE.ITEM);
-  const fixedRows = items.filter(i => i.item_type === ITEM_TYPE.FIXED);
-
   const itemTotal = itemRows.reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
-  const fixedTotal = fixedRows.reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
 
   // NET金額（純工事費）の計算設定
   const { type = 'perc', perc = 95, manualAmount } = netCalcSettings;
   let net;
-  const baseAmount = itemTotal + fixedTotal; // 純工事費＋法定福利・安全費をベースにする
 
   if (type === 'perc') {
-    net = Math.floor(baseAmount * (Number(perc) / 100));
+    net = Math.floor(itemTotal * (Number(perc) / 100));
   } else if (type === 'manual') {
     net = Number(manualAmount) || 0;
   } else {
     // 互換性のため: 旧 auto の場合は 100% として計算
-    net = baseAmount;
+    net = itemTotal;
   }
 
-  const subtotal = itemTotal + fixedTotal;      // 税抜合計
+  const subtotal = itemTotal;                   // 税抜合計
   const tax = Math.floor(subtotal * taxRate);   // 消費税（切り捨て）
   const total = subtotal + tax;                 // 税込合計
 
-  return { net, fixedTotal, subtotal, tax, total };
+  return { net, subtotal, tax, total };
 };
 
 // ============================================================

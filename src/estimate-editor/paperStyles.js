@@ -22,7 +22,6 @@ export const COLORS = {
   ink: '#1a1a1a',          // 基本文字色・実線罫線
   headerBg: '#dae8f5',     // 列ヘッダー・合計ラベルの薄い水色
   categoryBg: '#f8fafc',   // 工種見出し行の背景
-  fixedBg: '#fffbf0',      // 法定福利費・安全費行の背景
   dashed: '#888',          // 破線罫線
   subInk: '#333',          // 仕様セル等のやや薄い文字
   noteInk: '#555',         // 摘要セルの文字
