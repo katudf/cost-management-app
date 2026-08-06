@@ -93,7 +93,7 @@ const WorkersTab = ({
                                         <span className="text-[10px] text-slate-400 font-bold">{worker.kana || 'フリガナ未設定'}</span>
                                         <span className="font-bold text-lg text-slate-800 group-hover:text-blue-700 transition">{worker.name}</span>
                                     </div>
-                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${worker.worker_type === WORKER_TYPE.OFFICE ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${worker.worker_type === WORKER_TYPE.OFFICE ? 'bg-purple-100 text-purple-700' : worker.worker_type === WORKER_TYPE.MANAGER ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
                                         {worker.worker_type || WORKER_TYPE.WORKER}
                                     </span>
                                     <div className="flex flex-col text-sm text-slate-600 ml-4 hidden md:flex">

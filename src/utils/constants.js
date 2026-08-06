@@ -40,10 +40,12 @@ export const DASHBOARD_VIEW_MODE_LIST = [
 // === 作業員 属性 ===
 export const WORKER_TYPE = {
     WORKER: '作業員',
+    MANAGER: '管理',
     OFFICE: '事務',
 };
 export const WORKER_TYPE_LIST = [
     WORKER_TYPE.WORKER,
+    WORKER_TYPE.MANAGER,
     WORKER_TYPE.OFFICE,
 ];
 
