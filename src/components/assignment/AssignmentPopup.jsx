@@ -23,7 +23,10 @@ const AssignmentPopup = React.forwardRef(({
 }, ref) => {
     if (!editCell) return null;
 
-    const workerName = workers.find(w => w.id === editCell.workerId)?.name || '';
+    const isMultiWorker = editCell.workerIds && editCell.workerIds.length > 1;
+    const workerName = isMultiWorker
+        ? `${workers.find(w => w.id === editCell.workerIds[0])?.name || ''} ほか${editCell.workerIds.length - 1}名`
+        : workers.find(w => w.id === editCell.workerId)?.name || '';
 
     return (
         <div
@@ -57,7 +60,7 @@ const AssignmentPopup = React.forwardRef(({
                 </div>
 
                 {/* 現在の配置（単一セルの場合のみ） */}
-                {(!editCell.dragDates || editCell.dragDates.length <= 1) && editCellAssignments.length > 0 && (
+                {(!editCell.dragDates || editCell.dragDates.length <= 1) && !isMultiWorker && editCellAssignments.length > 0 && (
                     <div className="px-3 py-2 border-b border-slate-100">
                         <div className="text-[10px] font-bold text-slate-400 mb-1.5 uppercase">現在の配置</div>
                         <div className="space-y-1">

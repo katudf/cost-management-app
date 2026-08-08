@@ -1,5 +1,5 @@
 import React, { useMemo, useCallback } from 'react';
-import { Calendar, ChevronLeft, ChevronRight, Download } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, Download, Undo2 } from 'lucide-react';
 import { exportAssignmentChartToExcel } from '../../utils/assignmentChartExport';
 import { addDays } from '../../utils/dateUtils';
 import { useToast } from '../../components/Toast';
@@ -31,6 +31,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         isDragging,
         dragCells,
         dragWorkerId,
+        dragWorkerIds,
         hoverProjectStats,
         setHoverProjectStats,
         clipboard,
@@ -66,7 +67,9 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         goToToday,
         getBarSpan,
         popupRef,
-        tableContainerRef
+        tableContainerRef,
+        undo,
+        canUndo
     } = useAssignmentState({
         projects,
         workers,
@@ -102,8 +105,19 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
 
     const periodLabel = `${startDate.getFullYear()}/${startDate.getMonth() + 1}/${startDate.getDate()} 〜 ${addDays(startDate, totalDays - 1).getMonth() + 1}/${addDays(startDate, totalDays - 1).getDate()}`;
 
-    // 編集セルの配置データ
-    const editCellAssignments = editCell
+    // 列方向（縦）選択・ドラッグ中の作業員集合（O(1)判定用）
+    const editCellWorkerIdSet = useMemo(
+        () => (editCell && editCell.workerIds ? new Set(editCell.workerIds) : null),
+        [editCell]
+    );
+    const dragWorkerIdSet = useMemo(
+        () => (dragWorkerIds && dragWorkerIds.length > 0 ? new Set(dragWorkerIds) : null),
+        [dragWorkerIds]
+    );
+
+    // 編集セルの配置データ（複数作業員選択時は個別セルの配置内容が一意でないため空扱い）
+    const isMultiWorkerEditCell = !!editCell && editCell.workerIds && editCell.workerIds.length > 1;
+    const editCellAssignments = editCell && !isMultiWorkerEditCell
         ? (assignmentLookup[`${editCell.workerId}_${editCell.dateStr}`] || [])
         : [];
 
@@ -129,6 +143,15 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                     <Calendar className="text-blue-600 w-5 h-5" /> 配置表
                 </h2>
                 <div className="flex items-center gap-2">
+                    <button
+                        onClick={undo}
+                        disabled={!canUndo}
+                        className="p-1.5 rounded-md hover:bg-slate-100 text-slate-500 transition disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                        aria-label="元に戻す"
+                        title="元に戻す (Ctrl+Z)"
+                    >
+                        <Undo2 size={18} />
+                    </button>
                     <button
                         onClick={() => exportAssignmentChartToExcel(
                             workers, dateColumns, assignmentLookup, projectMap, barProjects, periodLabel, getBarSpan
@@ -345,25 +368,33 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                             })}
                         </tr>
 
-                        {activeWorkers.map((worker, widx) => (
-                            <WorkerRow
-                                key={worker.id}
-                                worker={worker}
-                                widx={widx}
-                                dateColumns={dateColumns}
-                                assignmentLookup={assignmentLookup}
-                                taskRecordLookup={taskRecordLookup}
-                                projectMap={projectMap}
-                                todayStr={todayStr}
-                                rowEditCell={editCell && editCell.workerId === worker.id ? editCell : null}
-                                rowDragCells={dragWorkerId === worker.id ? dragCells : EMPTY_ARRAY}
-                                isRowDragging={isDragging && dragWorkerId === worker.id}
-                                onCellMouseDown={handleCellMouseDown}
-                                onCellMouseEnter={handleCellMouseEnter}
-                                onCellClick={handleCellClick}
-                                onDropProject={addAssignment}
-                            />
-                        ))}
+                        {activeWorkers.map((worker, widx) => {
+                            const isInEditCell = editCellWorkerIdSet
+                                ? editCellWorkerIdSet.has(worker.id)
+                                : editCell && editCell.workerId === worker.id;
+                            const isInDragSet = dragWorkerIdSet
+                                ? dragWorkerIdSet.has(worker.id)
+                                : dragWorkerId === worker.id;
+                            return (
+                                <WorkerRow
+                                    key={worker.id}
+                                    worker={worker}
+                                    widx={widx}
+                                    dateColumns={dateColumns}
+                                    assignmentLookup={assignmentLookup}
+                                    taskRecordLookup={taskRecordLookup}
+                                    projectMap={projectMap}
+                                    todayStr={todayStr}
+                                    rowEditCell={isInEditCell ? editCell : null}
+                                    rowDragCells={isInDragSet ? dragCells : EMPTY_ARRAY}
+                                    isRowDragging={isDragging && isInDragSet}
+                                    onCellMouseDown={handleCellMouseDown}
+                                    onCellMouseEnter={handleCellMouseEnter}
+                                    onCellClick={handleCellClick}
+                                    onDropProject={addAssignment}
+                                />
+                            );
+                        })}
 
                         {workers.length === 0 && (
                             <tr>

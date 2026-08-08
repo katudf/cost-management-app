@@ -1107,6 +1107,45 @@ const WorkerApp = () => {
                         <span className="text-xs font-bold text-slate-400">定時 {scheduledStartStr}〜{scheduledEndStr}</span>
                     </div>
 
+                    {/* 本日サマリー */}
+                    {(() => {
+                        const enteredProjectIds = [...new Set(workerDailyAllRecords.map(r => r.project_id))];
+                        const enteredCount = enteredProjectIds.length;
+                        const totalApprovalsWaiting = pendingApprovals.length + pendingAllowanceApprovals.length;
+                        const totalDailyNinku = calculateNinku(totalDailyHours, selectedDate);
+                        return (
+                            <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden mb-2">
+                                <div className="bg-blue-600 px-4 py-3 flex gap-2 items-center text-white shadow-sm">
+                                    <Clock className="shrink-0 w-5 h-5" /><h3 className="font-bold text-sm">本日サマリー</h3>
+                                </div>
+                                <div className="p-4 bg-slate-50 flex flex-col gap-3">
+                                    <div className="grid grid-cols-3 gap-3">
+                                        <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center justify-center">
+                                            <div className="text-[10px] font-bold text-slate-500 mb-1">入力済み現場</div>
+                                            <div className="text-2xl font-black text-blue-600">{enteredCount}</div>
+                                        </div>
+                                        <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center justify-center">
+                                            <div className="text-[10px] font-bold text-slate-500 mb-1">合計時間</div>
+                                            <div className="text-2xl font-black text-blue-600">{totalDailyHours.toFixed(1)}</div>
+                                        </div>
+                                        <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center justify-center">
+                                            <div className="text-[10px] font-bold text-slate-500 mb-1">合計人工</div>
+                                            <div className="text-2xl font-black text-blue-600">{totalDailyNinku.toFixed(2)}</div>
+                                        </div>
+                                    </div>
+                                    {enteredCount === 0 && (
+                                        <div className="text-xs font-bold text-slate-400 text-center">この日はまだ入力がありません</div>
+                                    )}
+                                    {isForeman && totalApprovalsWaiting > 0 && (
+                                        <div className="flex items-center gap-1.5 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2 text-xs font-bold text-orange-700">
+                                            <AlertCircle size={14} className="shrink-0" /> 承認待ちが{totalApprovalsWaiting}件あります
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })()}
+
                     {/* 入力済み現場の表示 */}
                     {workerDailyAllRecords.length > 0 && (() => {
                         const enteredProjectIds = [...new Set(workerDailyAllRecords.map(r => r.project_id))];

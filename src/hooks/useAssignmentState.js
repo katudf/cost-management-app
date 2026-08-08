@@ -30,15 +30,22 @@ export function useAssignmentState({
 
     // ドラッグ選択
     const [isDragging, setIsDragging] = useState(false);
-    const [dragWorkerId, setDragWorkerId] = useState(null);
+    const [dragWorkerId, setDragWorkerId] = useState(null); // ドラッグ開始位置の作業員（起点）
+    const [dragWorkerIds, setDragWorkerIds] = useState([]); // 列方向（縦）選択中の作業員ID配列
     const [dragCells, setDragCells] = useState([]); // 選択中のdateStr配列
     const [dragSourceCell, setDragSourceCell] = useState(null); // ドラッグ開始セル
+    const [dragDirection, setDragDirection] = useState(null); // 'row' | 'col' | null（未確定）
+    const dragStartRef = useRef(null); // { workerId, dateStr } ドラッグ開始セル情報
 
     // ツールチップ表示用
     const [hoverProjectStats, setHoverProjectStats] = useState(null);
     // クリップボード (コピペ用)
     const [clipboard, setClipboard] = useState(null);
     const [draggingGantt, setDraggingGantt] = useState(null);
+
+    // Undo履歴（配置の追加・削除・並替え操作の逆操作スタック）
+    const [undoStack, setUndoStack] = useState([]);
+    const undoingRef = useRef(false);
 
     const popupRef = useRef(null);
     const tableContainerRef = useRef(null);
@@ -293,12 +300,25 @@ export function useAssignmentState({
     // ドラッグ中のmouseup（window全体）
     useEffect(() => {
         const handleMouseUp = () => {
-            if (isDragging && dragCells.length > 0 && dragWorkerId) {
-                // ドラッグ終了 → ポップアップを表示して配置先を選択
-                const firstDateStr = dragCells[0];
-                if (dragSourceCell) {
+            if (isDragging && dragWorkerId && dragSourceCell) {
+                if (dragDirection === 'col' && dragWorkerIds.length > 0) {
+                    // 列方向（縦）選択 → 複数作業員・単一日付
+                    const dateStr = dragCells[0];
+                    setEditCell({
+                        workerId: dragWorkerIds[0],
+                        workerIds: [...dragWorkerIds],
+                        dateStr,
+                        dragDates: null,
+                        top: dragSourceCell.top,
+                        left: dragSourceCell.left,
+                        showAbove: dragSourceCell.showAbove
+                    });
+                } else if (dragCells.length > 0) {
+                    // 行方向（横）選択 → 単一作業員・複数日付
+                    const firstDateStr = dragCells[0];
                     setEditCell({
                         workerId: dragWorkerId,
+                        workerIds: [dragWorkerId],
                         dateStr: firstDateStr,
                         dragDates: [...dragCells],
                         top: dragSourceCell.top,
@@ -308,13 +328,15 @@ export function useAssignmentState({
                 }
             }
             setIsDragging(false);
+            setDragDirection(null);
+            dragStartRef.current = null;
         };
 
         if (isDragging) {
             window.addEventListener('mouseup', handleMouseUp);
         }
         return () => window.removeEventListener('mouseup', handleMouseUp);
-    }, [isDragging, dragCells, dragWorkerId, dragSourceCell]);
+    }, [isDragging, dragCells, dragWorkerId, dragWorkerIds, dragDirection, dragSourceCell]);
 
     // === ガントチャート (案件バー) ドラッグ & リサイズ ===
     const handleGanttPointerDown = useCallback((e, proj, mode) => {
@@ -462,49 +484,107 @@ export function useAssignmentState({
         return result;
     }, [taskRecords, workers]);
 
+    // === Undo（元に戻す）機能 ===
+    // entry: { label, undo: async () => Promise<void> }
+    const pushUndo = useCallback((entry) => {
+        if (undoingRef.current) return;
+        setUndoStack(prev => [...prev.slice(-19), entry]); // 直近20件まで保持
+    }, []);
+
+    // 削除されたAssignmentsレコードをDBに再INSERTし、stateにも反映する（Undo用）
+    const restoreAssignments = useCallback(async (records) => {
+        if (!records || records.length === 0) return;
+        const inserts = records.map(r => ({
+            workerId: r.workerId,
+            projectId: r.projectId,
+            date: r.date,
+            title: r.title,
+            assignment_order: r.assignment_order
+        }));
+        const { data, error } = await supabase.from('Assignments').insert(inserts).select();
+        if (error) throw error;
+        if (data) {
+            setAssignments(prev => [...prev, ...data]);
+        }
+    }, []);
+
+    // 追加されたAssignmentsレコードをID指定でDBから削除し、stateにも反映する（Undo用）
+    const deleteAssignmentsByIds = useCallback(async (ids) => {
+        if (!ids || ids.length === 0) return;
+        setAssignments(prev => prev.filter(a => !ids.includes(a.id)));
+        const { error } = await supabase.from('Assignments').delete().in('id', ids);
+        if (error) throw error;
+    }, []);
+
+    const undo = useCallback(async () => {
+        if (undoStack.length === 0) return;
+        const entry = undoStack[undoStack.length - 1];
+        setUndoStack(prev => prev.slice(0, -1));
+        undoingRef.current = true;
+        try {
+            await entry.undo();
+            showToast(`「${entry.label}」を元に戻しました`, 'success');
+        } catch (err) {
+            console.error('Undo実行エラー:', err);
+            showToast('元に戻す操作に失敗しました', 'error');
+        } finally {
+            undoingRef.current = false;
+        }
+    }, [undoStack, showToast]);
+
     // === キーボードとUIからのアクションハンドラ ===
     const handleActionDelete = useCallback(async () => {
         if (!editCell) return;
         const targetDates = editCell.dragDates || [editCell.dateStr];
-        const workerId = editCell.workerId;
+        const targetWorkerIds = editCell.workerIds && editCell.workerIds.length > 0 ? editCell.workerIds : [editCell.workerId];
         const toDelete = [];
-        targetDates.forEach(dateStr => {
-            const existing = assignmentLookup[`${workerId}_${dateStr}`] || [];
-            toDelete.push(...existing);
+        targetWorkerIds.forEach(workerId => {
+            targetDates.forEach(dateStr => {
+                const existing = assignmentLookup[`${workerId}_${dateStr}`] || [];
+                toDelete.push(...existing);
+            });
         });
         if (toDelete.length === 0) return;
 
         const idsToDelete = toDelete.map(a => a.id);
+        const deletedRecords = toDelete.map(a => ({ ...a }));
         setAssignments(prev => prev.filter(a => !idsToDelete.includes(a.id)));
         try {
             await supabase.from('Assignments').delete().in('id', idsToDelete);
             showToast(`${toDelete.length}件の配置を削除しました`, 'success');
+            pushUndo({
+                label: '配置の削除',
+                undo: () => restoreAssignments(deletedRecords)
+            });
         } catch (err) {
             console.error('一括削除エラー', err);
             showToast('削除に失敗しました', 'error');
         }
         setEditCell(null);
         setDragCells([]);
-    }, [editCell, assignmentLookup, showToast]);
+    }, [editCell, assignmentLookup, showToast, pushUndo, restoreAssignments]);
 
     const handleActionCopy = useCallback(() => {
         if (!editCell) return;
         const targetDates = editCell.dragDates || [editCell.dateStr];
-        const workerId = editCell.workerId;
+        const targetWorkerIds = editCell.workerIds && editCell.workerIds.length > 0 ? editCell.workerIds : [editCell.workerId];
         const baseDate = new Date(targetDates[0]);
         const copiedData = [];
 
-        targetDates.forEach(dateStr => {
-            const existing = assignmentLookup[`${workerId}_${dateStr}`] || [];
-            const currentDate = new Date(dateStr);
-            const dayOffset = Math.round((currentDate - baseDate) / (1000 * 60 * 60 * 24));
+        targetWorkerIds.forEach((workerId, workerOffset) => {
+            targetDates.forEach(dateStr => {
+                const existing = assignmentLookup[`${workerId}_${dateStr}`] || [];
+                const currentDate = new Date(dateStr);
+                const dayOffset = Math.round((currentDate - baseDate) / (1000 * 60 * 60 * 24));
 
-            existing.forEach(a => {
-                copiedData.push({
-                    dayOffset,
-                    projectId: a.projectId,
-                    title: a.title,
-                    assignment_order: a.assignment_order
+                existing.forEach(a => {
+                    copiedData.push({
+                        dayOffset,
+                        workerOffset,
+                        projectId: a.projectId,
+                        title: a.title,
+                        assignment_order: a.assignment_order
+                    });
                 });
             });
         });
@@ -518,24 +598,27 @@ export function useAssignmentState({
     const handleActionCut = useCallback(async () => {
         if (!editCell) return;
         const targetDates = editCell.dragDates || [editCell.dateStr];
-        const workerId = editCell.workerId;
+        const targetWorkerIds = editCell.workerIds && editCell.workerIds.length > 0 ? editCell.workerIds : [editCell.workerId];
         const baseDate = new Date(targetDates[0]);
         const copiedData = [];
         const toDelete = [];
 
-        targetDates.forEach(dateStr => {
-            const existing = assignmentLookup[`${workerId}_${dateStr}`] || [];
-            const currentDate = new Date(dateStr);
-            const dayOffset = Math.round((currentDate - baseDate) / (1000 * 60 * 60 * 24));
+        targetWorkerIds.forEach((workerId, workerOffset) => {
+            targetDates.forEach(dateStr => {
+                const existing = assignmentLookup[`${workerId}_${dateStr}`] || [];
+                const currentDate = new Date(dateStr);
+                const dayOffset = Math.round((currentDate - baseDate) / (1000 * 60 * 60 * 24));
 
-            existing.forEach(a => {
-                copiedData.push({
-                    dayOffset,
-                    projectId: a.projectId,
-                    title: a.title,
-                    assignment_order: a.assignment_order
+                existing.forEach(a => {
+                    copiedData.push({
+                        dayOffset,
+                        workerOffset,
+                        projectId: a.projectId,
+                        title: a.title,
+                        assignment_order: a.assignment_order
+                    });
+                    toDelete.push(a);
                 });
-                toDelete.push(a);
             });
         });
 
@@ -543,23 +626,28 @@ export function useAssignmentState({
             setClipboard({ type: 'cut', data: copiedData });
 
             const idsToDelete = toDelete.map(a => a.id);
+            const deletedRecords = toDelete.map(a => ({ ...a }));
             setAssignments(prev => prev.filter(a => !idsToDelete.includes(a.id)));
             try {
                 await supabase.from('Assignments').delete().in('id', idsToDelete);
                 showToast(`${copiedData.length}件をカットしました`, 'success');
+                pushUndo({
+                    label: '配置のカット',
+                    undo: () => restoreAssignments(deletedRecords)
+                });
             } catch (err) {
                 console.error('カットエラー', err);
             }
             setEditCell(null);
             setDragCells([]);
         }
-    }, [editCell, assignmentLookup, showToast]);
+    }, [editCell, assignmentLookup, showToast, pushUndo, restoreAssignments]);
 
     const handleActionPaste = useCallback(async () => {
         if (!editCell || !clipboard || !clipboard.data || clipboard.data.length === 0) return;
 
         const targetDates = editCell.dragDates || [editCell.dateStr];
-        const workerId = editCell.workerId;
+        const targetWorkerIds = editCell.workerIds && editCell.workerIds.length > 0 ? editCell.workerIds : [editCell.workerId];
         const baseDateStr = targetDates[0];
         const baseDate = new Date(baseDateStr);
 
@@ -568,38 +656,40 @@ export function useAssignmentState({
 
         const isSingleDayCopy = clipboard.data.every(item => item.dayOffset === 0);
         const isMultiDayPasteTarget = targetDates.length > 1;
+        const isSingleWorkerCopy = clipboard.data.every(item => (item.workerOffset || 0) === 0);
+        const isMultiWorkerPasteTarget = targetWorkerIds.length > 1;
 
-        if (isSingleDayCopy && isMultiDayPasteTarget) {
+        const pushRecord = (workerId, dateStr, item) => {
+            const tempId = `temp-${Date.now()}-${Math.random()}`;
+            tempIds.push(tempId);
+            newRecords.push({
+                id: tempId,
+                workerId,
+                projectId: item.projectId,
+                date: dateStr,
+                title: item.title,
+                assignment_order: item.assignment_order
+            });
+        };
+
+        if (isSingleWorkerCopy && isMultiWorkerPasteTarget) {
+            // 列方向（縦）貼り付け：単一日付・複数作業員へ展開
+            const dateStr = targetDates[0];
+            targetWorkerIds.forEach(wId => {
+                clipboard.data.forEach(item => pushRecord(wId, dateStr, item));
+            });
+        } else if (isSingleDayCopy && isMultiDayPasteTarget) {
+            const workerId = targetWorkerIds[0];
             targetDates.forEach(tDateStr => {
-                clipboard.data.forEach(item => {
-                    const tempId = `temp-${Date.now()}-${Math.random()}`;
-                    tempIds.push(tempId);
-                    newRecords.push({
-                        id: tempId,
-                        workerId: workerId,
-                        projectId: item.projectId,
-                        date: tDateStr,
-                        title: item.title,
-                        assignment_order: item.assignment_order
-                    });
-                });
+                clipboard.data.forEach(item => pushRecord(workerId, tDateStr, item));
             });
         } else {
+            const workerId = targetWorkerIds[0];
             clipboard.data.forEach(item => {
                 const targetDate = new Date(baseDate);
                 targetDate.setDate(targetDate.getDate() + item.dayOffset);
                 const targetDateStr = targetDate.toISOString().split('T')[0];
-
-                const tempId = `temp-${Date.now()}-${Math.random()}`;
-                tempIds.push(tempId);
-                newRecords.push({
-                    id: tempId,
-                    workerId: workerId,
-                    projectId: item.projectId,
-                    date: targetDateStr,
-                    title: item.title,
-                    assignment_order: item.assignment_order
-                });
+                pushRecord(workerId, targetDateStr, item);
             });
         }
 
@@ -625,6 +715,11 @@ export function useAssignmentState({
                     });
                     return updated;
                 });
+                const insertedIds = data.map(d => d.id);
+                pushUndo({
+                    label: '配置の貼り付け',
+                    undo: () => deleteAssignmentsByIds(insertedIds)
+                });
             }
             showToast(`${newRecords.length}件の配置を展開しました`, 'success');
             setEditCell(null);
@@ -634,7 +729,7 @@ export function useAssignmentState({
             setAssignments(prev => prev.filter(a => !tempIds.includes(a.id)));
             showToast('ペーストに失敗しました', 'error');
         }
-    }, [editCell, clipboard, showToast]);
+    }, [editCell, clipboard, showToast, pushUndo, deleteAssignmentsByIds]);
 
     // キーボードショートカット（セル編集ポップアップ表示中のみ有効）
     useEffect(() => {
@@ -672,6 +767,22 @@ export function useAssignmentState({
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [editCell, handleActionDelete, handleActionCopy, handleActionCut, handleActionPaste]);
 
+    // Ctrl+Z / Cmd+Z（セル編集ポップアップの表示有無に関わらずグローバルに有効）
+    useEffect(() => {
+        const handleUndoKeyDown = (e) => {
+            const tag = e.target.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
+
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+                e.preventDefault();
+                undo();
+            }
+        };
+
+        window.addEventListener('keydown', handleUndoKeyDown);
+        return () => window.removeEventListener('keydown', handleUndoKeyDown);
+    }, [undo]);
+
     // === 配置編集アクション ===
 
     const addAssignment = useCallback(async (workerId, dateStr, projectId, title = null) => {
@@ -705,12 +816,16 @@ export function useAssignmentState({
             if (error) throw error;
             if (data && data[0]) {
                 setAssignments(prev => prev.map(a => a.id === tempId ? data[0] : a));
+                pushUndo({
+                    label: '配置の追加',
+                    undo: () => deleteAssignmentsByIds([data[0].id])
+                });
             }
         } catch (e) {
             console.error('配置追加エラー:', e);
             setAssignments(prev => prev.filter(a => a.id !== tempId));
         }
-    }, [assignmentLookup]);
+    }, [assignmentLookup, pushUndo, deleteAssignmentsByIds]);
 
     const addAssignmentBatch = useCallback(async (workerId, dateStrs, projectId, title = null) => {
         const newRecords = [];
@@ -762,13 +877,18 @@ export function useAssignmentState({
                     });
                     return updated;
                 });
+                const insertedIds = data.map(d => d.id);
+                pushUndo({
+                    label: '配置の一括追加',
+                    undo: () => deleteAssignmentsByIds(insertedIds)
+                });
             }
         } catch (e) {
             console.error('一括配置追加エラー:', e);
             setAssignments(prev => prev.filter(a => !tempIds.includes(a.id)));
             showToast('配置の追加に失敗しました。', 'error');
         }
-    }, [assignmentLookup, showToast]);
+    }, [assignmentLookup, showToast, pushUndo, deleteAssignmentsByIds]);
 
     const removeAssignment = useCallback(async (assignmentId) => {
         let removed = null;
@@ -784,12 +904,19 @@ export function useAssignmentState({
                 .eq('id', assignmentId);
 
             if (error) throw error;
+            if (removed) {
+                const removedRecord = { ...removed };
+                pushUndo({
+                    label: '配置の削除',
+                    undo: () => restoreAssignments([removedRecord])
+                });
+            }
         } catch (e) {
             console.error('配置削除エラー:', e);
             if (removed) setAssignments(prev => [...prev, removed]);
             showToast('配置の削除に失敗しました。', 'error');
         }
-    }, [showToast]);
+    }, [showToast, pushUndo, restoreAssignments]);
 
     const handleAssignmentReorder = useCallback(async (draggedId, targetId) => {
         if (!editCell) return;
@@ -936,7 +1063,10 @@ export function useAssignmentState({
         const showAbove = spaceBelow < 350;
 
         setIsDragging(true);
+        setDragDirection(null);
+        dragStartRef.current = { workerId, dateStr };
         setDragWorkerId(workerId);
+        setDragWorkerIds([workerId]);
         setDragCells([dateStr]);
         setDragSourceCell({
             top: showAbove
@@ -948,30 +1078,67 @@ export function useAssignmentState({
     }, []);
 
     const handleCellMouseEnter = useCallback((workerId, dateStr) => {
-        if (!isDragging || workerId !== dragWorkerId) return;
-        setDragCells(prev => {
-            if (prev.length === 0) return [dateStr];
-            if (prev[prev.length - 1] === dateStr) return prev;
+        if (!isDragging || !dragStartRef.current) return;
+        const { workerId: startWorkerId, dateStr: startDateStr } = dragStartRef.current;
 
-            const startD = new Date(prev[0] + 'T00:00:00');
-            const currentD = new Date(dateStr + 'T00:00:00');
-            const step = startD <= currentD ? 1 : -1;
-
-            const newCells = [];
-            let tempD = new Date(startD);
-            while (true) {
-                newCells.push(toDateStr(tempD));
-
-                if (tempD.getTime() === currentD.getTime()) break;
-                tempD.setDate(tempD.getDate() + step);
+        // 方向未確定の場合、移動先セルから行方向/列方向を判定する
+        let direction = dragDirection;
+        if (!direction) {
+            if (workerId !== startWorkerId && dateStr === startDateStr) {
+                direction = 'col';
+                setDragDirection('col');
+            } else if (dateStr !== startDateStr) {
+                direction = 'row';
+                setDragDirection('row');
+            } else {
+                return; // 起点セルのまま：方向未確定
             }
+        }
 
-            if (prev.length === newCells.length && prev.every((v, i) => v === newCells[i])) {
-                return prev;
-            }
-            return newCells;
-        });
-    }, [isDragging, dragWorkerId]);
+        if (direction === 'row') {
+            if (workerId !== startWorkerId) return;
+            setDragCells(prev => {
+                if (prev.length === 0) return [dateStr];
+                if (prev[prev.length - 1] === dateStr) return prev;
+
+                const startD = new Date(prev[0] + 'T00:00:00');
+                const currentD = new Date(dateStr + 'T00:00:00');
+                const step = startD <= currentD ? 1 : -1;
+
+                const newCells = [];
+                let tempD = new Date(startD);
+                while (true) {
+                    newCells.push(toDateStr(tempD));
+
+                    if (tempD.getTime() === currentD.getTime()) break;
+                    tempD.setDate(tempD.getDate() + step);
+                }
+
+                if (prev.length === newCells.length && prev.every((v, i) => v === newCells[i])) {
+                    return prev;
+                }
+                return newCells;
+            });
+        } else {
+            // 列方向（縦）：同一日付内で作業員範囲を拡張
+            if (dateStr !== startDateStr) return;
+            const startIdx = activeWorkers.findIndex(w => w.id === startWorkerId);
+            const currentIdx = activeWorkers.findIndex(w => w.id === workerId);
+            if (startIdx === -1 || currentIdx === -1) return;
+
+            const lo = Math.min(startIdx, currentIdx);
+            const hi = Math.max(startIdx, currentIdx);
+            const newWorkerIds = activeWorkers.slice(lo, hi + 1).map(w => w.id);
+
+            setDragWorkerIds(prev => {
+                if (prev.length === newWorkerIds.length && prev.every((v, i) => v === newWorkerIds[i])) {
+                    return prev;
+                }
+                return newWorkerIds;
+            });
+            setDragCells([startDateStr]);
+        }
+    }, [isDragging, dragDirection, activeWorkers]);
 
     const handleCellClick = useCallback((e, workerId, dateStr) => {
         setEditHolidayCell(null);
@@ -983,6 +1150,7 @@ export function useAssignmentState({
 
         setEditCell({
             workerId,
+            workerIds: [workerId],
             dateStr,
             dragDates: null,
             top: showAbove
@@ -1012,9 +1180,13 @@ export function useAssignmentState({
     const handlePopupAssign = useCallback(async (projectId, title = null) => {
         if (!editCell) return;
         const dates = editCell.dragDates || [editCell.dateStr];
+        const workerIds = editCell.workerIds && editCell.workerIds.length > 0 ? editCell.workerIds : [editCell.workerId];
 
         try {
-            if (dates.length <= 1) {
+            if (workerIds.length > 1) {
+                // 列方向（縦）：単一日付・複数作業員へ展開
+                await Promise.all(workerIds.map(wId => addAssignment(wId, dates[0], projectId, title)));
+            } else if (dates.length <= 1) {
                 await addAssignment(editCell.workerId, dates[0], projectId, title);
             } else {
                 await addAssignmentBatch(editCell.workerId, dates, projectId, title);
@@ -1071,6 +1243,7 @@ export function useAssignmentState({
         setEditCell,
         isDragging,
         dragWorkerId,
+        dragWorkerIds,
         dragCells,
         hoverProjectStats,
         setHoverProjectStats,
@@ -1113,6 +1286,8 @@ export function useAssignmentState({
         goToToday,
         getBarSpan,
         popupRef,
-        tableContainerRef
+        tableContainerRef,
+        undo,
+        canUndo: undoStack.length > 0
     };
 }

@@ -45,9 +45,12 @@ const WorkerRow = ({
                 const isWeekend = col.dow === 0 || col.dow === 6;
                 const isToday = col.dateStr === todayStr;
                 const isEditing = rowEditCell && (
-                    rowEditCell.dragDates ? rowEditCell.dragDates.includes(col.dateStr) : rowEditCell.dateStr === col.dateStr
+                    rowEditCell.dragDates
+                        ? rowEditCell.dragDates.includes(col.dateStr)
+                        : rowEditCell.dateStr === col.dateStr
                 );
                 const isDragSelected = isRowDragging && rowDragCells.includes(col.dateStr);
+                const isMultiRowSelected = !!rowEditCell && rowEditCell.workerIds && rowEditCell.workerIds.length > 1 && rowEditCell.dateStr === col.dateStr;
 
                 // 過去日付の場合は日報実績を優先表示
                 const displayItems = isPastDate && actualProjectIds.length > 0
@@ -89,7 +92,7 @@ const WorkerRow = ({
                         onMouseDown={(e) => onCellMouseDown(e, worker.id, col.dateStr)}
                         onMouseEnter={() => onCellMouseEnter(worker.id, col.dateStr)}
                         onClick={(e) => {
-                            if (!isRowDragging && rowDragCells.length <= 1) {
+                            if (!isRowDragging && rowDragCells.length <= 1 && !isMultiRowSelected) {
                                 onCellClick(e, worker.id, col.dateStr);
                             }
                         }}
