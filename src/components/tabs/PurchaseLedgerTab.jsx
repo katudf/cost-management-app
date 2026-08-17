@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Loader2, Database, Plus, Edit3, Trash2, X, Check, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Loader2, Database, Plus, Edit3, Trash2, X, Check, ChevronLeft, ChevronRight, FlaskConical } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../components/Toast';
 import ConfirmModal from '../ConfirmModal';
+import { searchPaintProductsByName, fetchPaintProductsByIds } from '../../features/paint/supabasePaint';
 
 const initialFormData = {
     date: '',
@@ -13,7 +14,8 @@ const initialFormData = {
     quantity: '',
     unit: '',
     unit_price: '',
-    amount: ''
+    amount: '',
+    paint_product_id: null
 };
 
 const PurchaseLedgerTab = () => {
@@ -27,6 +29,12 @@ const PurchaseLedgerTab = () => {
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [addFormData, setAddFormData] = useState(initialFormData);
     const [isSaving, setIsSaving] = useState(false);
+
+    // 塗料製品リンク用ステート
+    const [paintSearch, setPaintSearch] = useState('');
+    const [paintCandidates, setPaintCandidates] = useState([]);
+    const [selectedPaint, setSelectedPaint] = useState(null);
+    const [linkedPaintMap, setLinkedPaintMap] = useState({});
 
     // インライン編集用ステート
     const [editingRowId, setEditingRowId] = useState(null);
@@ -93,6 +101,41 @@ const PurchaseLedgerTab = () => {
         setCurrentPage(1);
     }, [searchTerm]);
 
+    // 塗料製品の部分一致検索（300ms debounce）
+    useEffect(() => {
+        if (!isAddModalOpen || selectedPaint) return;
+        const term = paintSearch.trim();
+        if (!term) {
+            setPaintCandidates([]);
+            return;
+        }
+        const timer = setTimeout(async () => {
+            try {
+                const results = await searchPaintProductsByName(term);
+                setPaintCandidates(results);
+            } catch (err) {
+                console.error('塗料製品検索エラー:', err);
+            }
+        }, 300);
+        return () => clearTimeout(timer);
+    }, [paintSearch, isAddModalOpen, selectedPaint]);
+
+    // 紐付け済み塗料製品の表示用情報を取得
+    useEffect(() => {
+        const ids = [...new Set(data.map(r => r.paint_product_id).filter(Boolean))];
+        const missing = ids.filter(id => !(id in linkedPaintMap));
+        if (missing.length === 0) return;
+        fetchPaintProductsByIds(missing)
+            .then(products => {
+                setLinkedPaintMap(prev => {
+                    const next = { ...prev };
+                    products.forEach(p => { next[p.id] = p; });
+                    return next;
+                });
+            })
+            .catch(err => console.error('塗料製品取得エラー:', err));
+    }, [data, linkedPaintMap]);
+
     const filteredData = useMemo(() => {
         if (!searchTerm.trim()) return data;
         
@@ -146,6 +189,26 @@ const PurchaseLedgerTab = () => {
         setAddFormData(prev => ({ ...prev, [key]: value }));
     };
 
+    const closeAddModal = () => {
+        setIsAddModalOpen(false);
+        setAddFormData(initialFormData);
+        setPaintSearch('');
+        setPaintCandidates([]);
+        setSelectedPaint(null);
+    };
+
+    const handleSelectPaint = (product) => {
+        setSelectedPaint(product);
+        setAddFormData(prev => ({ ...prev, paint_product_id: product.id }));
+        setPaintSearch('');
+        setPaintCandidates([]);
+    };
+
+    const handleClearPaint = () => {
+        setSelectedPaint(null);
+        setAddFormData(prev => ({ ...prev, paint_product_id: null }));
+    };
+
     const handleSaveNewRecord = async () => {
         if (!addFormData.date || !addFormData.project_name || !addFormData.item_name) {
             showToast('月/日、工事名、名称は必須項目です。', 'error');
@@ -171,8 +234,7 @@ const PurchaseLedgerTab = () => {
                 setData(prev => [...prev, insertedData[0]]);
                 // 最後のページに切り替えるなど
             }
-            setIsAddModalOpen(false);
-            setAddFormData(initialFormData);
+            closeAddModal();
         } catch (err) {
             console.error(err);
             showToast('登録に失敗しました: ' + err.message, 'error');
@@ -223,6 +285,7 @@ const PurchaseLedgerTab = () => {
             if (updateData.quantity === '') updateData.quantity = null;
             if (updateData.unit_price === '') updateData.unit_price = null;
             if (updateData.amount === '') updateData.amount = null;
+            if (updateData.paint_product_id === '') updateData.paint_product_id = null;
 
             const { data: updatedData, error } = await supabase
                 .from('PurchaseRecords')
@@ -361,7 +424,17 @@ const PurchaseLedgerTab = () => {
                                                     style={{ minWidth: h.type === 'number' ? '80px' : h.type === 'date' ? '120px' : '100px' }}
                                                 />
                                             ) : (
-                                                <div className="max-w-xs truncate" title={String(row[h.key] || '')}>
+                                                <div className="max-w-xs truncate flex items-center gap-1" title={String(row[h.key] || '')}>
+                                                    {h.key === 'item_name' && row.paint_product_id && (
+                                                        <span
+                                                            className="shrink-0 text-blue-500"
+                                                            title={linkedPaintMap[row.paint_product_id]
+                                                                ? `塗料製品: ${linkedPaintMap[row.paint_product_id].manufacturer?.name ? `[${linkedPaintMap[row.paint_product_id].manufacturer.name}] ` : ''}${linkedPaintMap[row.paint_product_id].name}`
+                                                                : '塗料製品に紐付け済み'}
+                                                        >
+                                                            <FlaskConical size={13} />
+                                                        </span>
+                                                    )}
                                                     {formatCell(h.key, row[h.key], row)}
                                                 </div>
                                             )}
@@ -450,7 +523,7 @@ const PurchaseLedgerTab = () => {
                             <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
                                 <Plus className="text-blue-600" /> 仕入帳 新規登録
                             </h3>
-                            <button onClick={() => setIsAddModalOpen(false)} aria-label="閉じる" title="閉じる" className="text-slate-400 hover:text-slate-600 transition">
+                            <button onClick={closeAddModal} aria-label="閉じる" title="閉じる" className="text-slate-400 hover:text-slate-600 transition">
                                 <X size={20} />
                             </button>
                         </div>
@@ -469,10 +542,70 @@ const PurchaseLedgerTab = () => {
                                     </div>
                                 ))}
                             </div>
+
+                            {/* 塗料製品リンク（任意） */}
+                            <div className="mt-4">
+                                <label className="block text-xs font-bold text-slate-500 mb-1 flex items-center gap-1">
+                                    <FlaskConical size={12} className="text-blue-500" />
+                                    塗料製品（任意）
+                                </label>
+                                {selectedPaint ? (
+                                    <div className="flex items-center gap-2">
+                                        <span className="inline-flex items-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-700 text-sm font-bold px-3 py-1.5 rounded-lg">
+                                            <FlaskConical size={14} />
+                                            {selectedPaint.manufacturer?.name ? `[${selectedPaint.manufacturer.name}] ` : ''}{selectedPaint.name}
+                                            {selectedPaint.product_code && (
+                                                <span className="font-mono text-xs text-blue-500">{selectedPaint.product_code}</span>
+                                            )}
+                                        </span>
+                                        <button
+                                            onClick={handleClearPaint}
+                                            aria-label="塗料製品の紐付けを解除"
+                                            title="塗料製品の紐付けを解除"
+                                            className="p-1 rounded text-slate-400 hover:text-red-500 hover:bg-red-50 transition"
+                                        >
+                                            <X size={16} />
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="relative">
+                                        <input
+                                            type="text"
+                                            value={paintSearch}
+                                            onChange={(e) => setPaintSearch(e.target.value)}
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                            placeholder="製品名・品番で検索して紐付け（任意）"
+                                        />
+                                        {paintCandidates.length > 0 && (
+                                            <ul className="absolute z-10 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                                                {paintCandidates.map((p) => (
+                                                    <li key={p.id}>
+                                                        <button
+                                                            onClick={() => handleSelectPaint(p)}
+                                                            className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 transition flex items-center gap-2"
+                                                        >
+                                                            <FlaskConical size={14} className="text-blue-400 shrink-0" />
+                                                            <span className="font-bold text-slate-700">
+                                                                {p.manufacturer?.name ? `[${p.manufacturer.name}] ` : ''}{p.name}
+                                                            </span>
+                                                            {p.product_code && (
+                                                                <span className="font-mono text-xs text-slate-400">{p.product_code}</span>
+                                                            )}
+                                                        </button>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        )}
+                                        {paintSearch.trim() && paintCandidates.length === 0 && (
+                                            <p className="mt-1 text-xs text-slate-400">該当する塗料製品がありません</p>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                         <div className="p-4 border-t border-slate-200 bg-slate-50 flex justify-end gap-2">
-                            <button 
-                                onClick={() => setIsAddModalOpen(false)}
+                            <button
+                                onClick={closeAddModal}
                                 className="px-4 py-2 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-100 font-bold text-sm transition"
                                 disabled={isSaving}
                             >

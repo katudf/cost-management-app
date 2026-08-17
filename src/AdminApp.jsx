@@ -8,7 +8,7 @@ import { useToast } from './components/Toast';
 import { useAuth } from './hooks/useAuth';
 import LoginScreen from './components/auth/LoginScreen';
 import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
-import { Table, Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, Upload, GripVertical, LogOut, Bell } from 'lucide-react';
+import { Table, Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, Upload, GripVertical, LogOut, Bell, Database } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { DEFAULT_MASTER_DATA, PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR, ITEM_TYPE, DASHBOARD_VIEW_MODE, DASHBOARD_VIEW_MODE_LIST, ESTIMATE_STATUS } from './utils/constants';
 import { calculateAge } from './utils/dateUtils';
@@ -32,6 +32,7 @@ import WorkersTab from './components/tabs/WorkersTab';
 import DailyReportTab from './components/tabs/DailyReportTab';
 import SystemSettingsTab from './components/tabs/SystemSettingsTab';
 import PurchaseLedgerTab from './components/tabs/PurchaseLedgerTab';
+import PaintDatabaseTab from './components/tabs/paint/PaintDatabaseTab';
 import AssignmentChartTab from './components/tabs/AssignmentChartTab';
 import EstimateList from './EstimateList';
 import EstimateEditor from './estimate-editor/EstimateEditor';
@@ -638,6 +639,7 @@ const App = () => {
                                     { key: 'estimate', label: '見積', Icon: Clipboard },
                                     { key: 'workers', label: '作業員', Icon: Users },
                                     { key: 'purchase_ledger', label: '材料', Icon: Table },
+                                    { key: 'paint_db', label: 'データベース', Icon: Database },
                                     { key: 'settings', label: '設定', Icon: Settings },
                                 ].map(({ key, label, Icon }) => (
                                     <button key={key} onClick={() => setActiveTab(key)} className={`relative px-4 py-2 rounded-md transition font-bold whitespace-nowrap flex items-center gap-1.5 ${activeTab === key ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 text-slate-600'}`}>
@@ -1033,6 +1035,10 @@ const App = () => {
 
                     {activeTab === 'purchase_ledger' && (
                         <PurchaseLedgerTab />
+                    )}
+
+                    {activeTab === 'paint_db' && (
+                        <PaintDatabaseTab />
                     )}
 
                     {activeTab === 'assignment' && (
