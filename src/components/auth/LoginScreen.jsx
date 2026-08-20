@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { LogIn, Mail, Lock, Loader2, AlertCircle, CheckCircle2, ArrowLeft } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 
-const LoginScreen = ({ title = '工事原価管理システム', subtitle = '管理者ログイン' }) => {
+const LoginScreen = ({ title = 'CostNavi', subtitle = '管理者ログイン' }) => {
     const { signIn, resetPasswordForEmail } = useAuth();
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');

@@ -8,6 +8,8 @@ import { useToast } from './components/Toast';
 import { useAuth } from './hooks/useAuth';
 import LoginScreen from './components/auth/LoginScreen';
 import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
+import HomeLanding from './components/HomeLanding';
+import logoUrl from './img/logo.png';
 import { Table, Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, Upload, GripVertical, LogOut, Bell, Database } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { DEFAULT_MASTER_DATA, PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR, ITEM_TYPE, DASHBOARD_VIEW_MODE, DASHBOARD_VIEW_MODE_LIST, ESTIMATE_STATUS } from './utils/constants';
@@ -42,6 +44,9 @@ const App = () => {
     const { showToast } = useToast();
     const { isAuthenticated, isLoading: isAuthLoading, currentStaff, signOut, isPasswordRecovery } = useAuth();
     const [activeTab, setActiveTab] = useState('dashboard');
+    // ログイン直後はトップページ（タイル画面）を表示し、タイル選択で各タブへ入る。
+    // ヘッダーのロゴ／システム名クリックでトップページへ戻る。
+    const [showHome, setShowHome] = useState(true);
     const [estimateEditId, setEstimateEditId] = useState(undefined);
     // undefined = 一覧表示
     // null      = 新規作成フォーム
@@ -617,6 +622,20 @@ const App = () => {
         return <div className="min-h-screen flex items-center justify-center bg-slate-50"><Loader2 className="w-8 h-8 animate-spin text-blue-500" /></div>;
     }
 
+    if (showHome) {
+        return (
+            <HomeLanding
+                staffName={currentStaff?.name}
+                onSignOut={signOut}
+                onNavigate={(key) => {
+                    setActiveTab(key);
+                    if (key === 'estimate') setEstimateEditId(undefined);
+                    setShowHome(false);
+                }}
+            />
+        );
+    }
+
     // 見積エディタ表示中は <main> の overflow-hidden を外す必要がある:
     // overflow が visible 以外の祖先は position:sticky の基準になってしまい、
     // スクロールしない <main> が基準になると左ナビ（PageNav）の sticky が効かなくなるため。
@@ -628,12 +647,19 @@ const App = () => {
                 <header className="mb-6">
                     <div className="flex flex-col gap-4">
                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                            <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2 cursor-pointer hover:opacity-80 transition" onClick={() => setActiveTab('dashboard')}>
-                                <BarChart3 className="text-blue-600" /> 工事管理システム
+                            <h1 className="text-2xl font-bold text-slate-800 shrink-0">
+                                <button
+                                    onClick={() => setShowHome(true)}
+                                    title="トップページへ戻る"
+                                    className="flex items-center gap-2 hover:opacity-80 transition"
+                                >
+                                    <img src={logoUrl} alt="" className="w-8 h-8 object-contain" />
+                                    CostNavi
+                                </button>
                             </h1>
                             <nav className="bg-white p-2 rounded-lg shadow-sm border flex gap-1 overflow-x-auto">
                                 {[
-                                    { key: 'dashboard', label: 'ホーム', Icon: Home },
+                                    { key: 'dashboard', label: '現場管理', Icon: Home },
                                     { key: 'assignment', label: '配置表', Icon: Calendar },
                                     { key: 'daily_report', label: '日報', Icon: FileText },
                                     { key: 'estimate', label: '見積', Icon: Clipboard },

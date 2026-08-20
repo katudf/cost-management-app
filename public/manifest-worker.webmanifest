@@ -1,7 +1,7 @@
 {
-  "name": "作業日報",
+  "name": "CostNavi 作業日報",
   "short_name": "作業日報",
-  "description": "作業員向け日報入力アプリ",
+  "description": "CostNavi 作業員向け日報入力アプリ",
   "start_url": "/worker.html",
   "scope": "/",
   "display": "standalone",

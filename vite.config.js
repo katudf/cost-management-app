@@ -51,9 +51,9 @@ export default defineConfig({
             // worker.html / inventory.html は各HTMLの<link rel="manifest">で専用マニフェストを参照し、
             // ホーム画面追加時に個別のアイコン・名前を持たせている。
             manifest: {
-                name: '工事原価管理システム',
-                short_name: '工事原価管理',
-                description: '建設業向け工事原価管理・作業日報アプリ',
+                name: 'CostNavi',
+                short_name: 'CostNavi',
+                description: 'CostNavi 建設業向け工事原価管理・作業日報アプリ',
                 start_url: '/',
                 scope: '/',
                 display: 'standalone',
