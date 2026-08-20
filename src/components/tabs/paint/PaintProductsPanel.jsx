@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Search, Plus, Edit3, Trash2, X, Save, Loader2, FlaskConical } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Search, Plus, Edit3, Trash2, X, Save, Loader2, FlaskConical, Upload, Download } from 'lucide-react';
 import { useToast } from '../../Toast';
 import ConfirmModal from '../../ConfirmModal';
 import {
@@ -7,7 +7,13 @@ import {
     createPaintProduct,
     updatePaintProduct,
     deletePaintProduct,
+    createPaintProductsBulk,
 } from '../../../features/paint/supabasePaint';
+import {
+    parsePaintProductsMarkdown,
+    resolvePaintProductsAgainstMasters,
+    buildPaintProductsTemplateMarkdown,
+} from '../../../features/paint/paintImportFormat';
 
 const emptyForm = {
     id: null,
@@ -41,7 +47,7 @@ const formatRecoat = (p) => {
 
 const PaintProductsPanel = ({ masters }) => {
     const { showToast } = useToast();
-    const { manufacturers, processRoles, axes } = masters;
+    const { manufacturers, processRoles, axes, standards = [] } = masters;
 
     const [products, setProducts] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -59,6 +65,11 @@ const PaintProductsPanel = ({ masters }) => {
     const [form, setForm] = useState(emptyForm);
     const [formTagIds, setFormTagIds] = useState([]);
     const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+
+    // MD一括インポート
+    const fileInputRef = useRef(null);
+    const [importPreview, setImportPreview] = useState(null); // { fileName, valid, errors }
+    const [isImporting, setIsImporting] = useState(false);
 
     // フリーワードは300msデバウンス
     useEffect(() => {
@@ -113,6 +124,7 @@ const PaintProductsPanel = ({ masters }) => {
     const openCreate = () => {
         setForm(emptyForm);
         setFormTagIds([]);
+        setImportPreview(null);
         setIsModalOpen(true);
     };
 
@@ -179,6 +191,62 @@ const PaintProductsPanel = ({ masters }) => {
             showToast('保存に失敗しました', 'error');
         } finally {
             setIsSaving(false);
+        }
+    };
+
+    // --- MD一括インポート ---
+
+    const handleDownloadTemplate = () => {
+        const md = buildPaintProductsTemplateMarkdown({ manufacturers, processRoles, axes, standards });
+        const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = '塗料製品_一括登録フォーマット.md';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
+    const handleFileSelected = async (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = ''; // 同じファイルを再選択できるようにリセット
+        if (!file) return;
+        try {
+            const text = await file.text();
+            const { items, errors: parseErrors } = parsePaintProductsMarkdown(text);
+            const { valid, errors: resolveErrors } = resolvePaintProductsAgainstMasters(items, {
+                manufacturers,
+                processRoles,
+                axes,
+                standards,
+            });
+            setImportPreview({
+                fileName: file.name,
+                valid,
+                errors: [...parseErrors, ...resolveErrors],
+            });
+        } catch (error) {
+            console.error('MDファイル読み込みエラー:', error);
+            showToast('ファイルの読み込みに失敗しました', 'error');
+        }
+    };
+
+    const handleRunImport = async () => {
+        if (!importPreview || importPreview.valid.length === 0) return;
+        setIsImporting(true);
+        try {
+            await createPaintProductsBulk(importPreview.valid);
+            showToast(`${importPreview.valid.length}件の塗料製品を登録しました`, 'success');
+            setImportPreview(null);
+            setIsModalOpen(false);
+            loadProducts();
+        } catch (error) {
+            console.error('塗料製品一括登録エラー:', error);
+            showToast('一括登録に失敗しました', 'error');
+        } finally {
+            setIsImporting(false);
         }
     };
 
@@ -406,6 +474,87 @@ const PaintProductsPanel = ({ masters }) => {
                             </button>
                         </div>
                         <div className="p-6 space-y-4">
+                            {/* MDファイルからの一括登録（新規登録時のみ） */}
+                            {!form.id && (
+                                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <div>
+                                            <div className="text-sm font-bold text-slate-700">MDファイルから一括登録</div>
+                                            <div className="text-[11px] font-bold text-slate-400 mt-0.5">
+                                                1つのファイルで複数の製品をまとめて登録できます
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-2 shrink-0">
+                                            <button
+                                                onClick={handleDownloadTemplate}
+                                                className="px-3 py-2 rounded-lg font-bold text-xs bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 transition flex items-center gap-1"
+                                                title="登録用フォーマットをダウンロード"
+                                            >
+                                                <Download size={14} /> フォーマット
+                                            </button>
+                                            <button
+                                                onClick={() => fileInputRef.current?.click()}
+                                                className="px-3 py-2 rounded-lg font-bold text-xs bg-emerald-600 text-white hover:bg-emerald-700 transition flex items-center gap-1"
+                                                title="MDファイルを読み込む"
+                                            >
+                                                <Upload size={14} /> 読み込み
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <input
+                                        ref={fileInputRef}
+                                        type="file"
+                                        accept=".md,.markdown,.txt,text/markdown"
+                                        onChange={handleFileSelected}
+                                        className="hidden"
+                                        aria-label="一括登録用MDファイルを選択"
+                                    />
+
+                                    {importPreview && (
+                                        <div className="mt-3 border-t border-slate-200 pt-3 space-y-2">
+                                            <div className="text-xs font-bold text-slate-500">
+                                                {importPreview.fileName}：登録可能 {importPreview.valid.length}件
+                                                {importPreview.errors.length > 0 && ` / エラー ${importPreview.errors.length}件`}
+                                            </div>
+
+                                            {importPreview.valid.length > 0 && (
+                                                <ul className="max-h-32 overflow-y-auto bg-white border border-slate-200 rounded-lg p-2 space-y-0.5">
+                                                    {importPreview.valid.map((v, i) => (
+                                                        <li key={i} className="text-xs font-bold text-slate-600">・{v.name}</li>
+                                                    ))}
+                                                </ul>
+                                            )}
+
+                                            {importPreview.errors.length > 0 && (
+                                                <ul className="max-h-32 overflow-y-auto bg-red-50 border border-red-200 rounded-lg p-2 space-y-0.5">
+                                                    {importPreview.errors.map((msg, i) => (
+                                                        <li key={i} className="text-xs font-bold text-red-600">・{msg}</li>
+                                                    ))}
+                                                </ul>
+                                            )}
+
+                                            <div className="flex justify-end gap-2">
+                                                <button
+                                                    onClick={() => setImportPreview(null)}
+                                                    disabled={isImporting}
+                                                    className="px-3 py-2 rounded-lg font-bold text-xs text-slate-500 bg-white border border-slate-200 hover:bg-slate-100 transition disabled:opacity-50"
+                                                >
+                                                    取消
+                                                </button>
+                                                <button
+                                                    onClick={handleRunImport}
+                                                    disabled={isImporting || importPreview.valid.length === 0}
+                                                    className="px-3 py-2 rounded-lg font-bold text-xs bg-emerald-600 text-white hover:bg-emerald-700 transition flex items-center gap-1 disabled:opacity-50"
+                                                >
+                                                    {isImporting ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                                                    {importPreview.valid.length}件を登録
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
                                     <label className={labelClass}>メーカー <span className="text-red-500">*</span></label>

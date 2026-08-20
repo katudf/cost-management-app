@@ -15,7 +15,7 @@ const SUB_TABS = [
 const PaintDatabaseTab = () => {
     const { showToast } = useToast();
     const [activeSub, setActiveSub] = useState('products');
-    const [masters, setMasters] = useState({ manufacturers: [], processRoles: [], axes: [] });
+    const [masters, setMasters] = useState({ manufacturers: [], processRoles: [], axes: [], standards: [], abbreviations: [] });
     const [isLoading, setIsLoading] = useState(true);
 
     const loadMasters = useCallback(async () => {

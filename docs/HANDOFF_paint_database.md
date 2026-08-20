@@ -2,7 +2,8 @@
 
 > このドキュメントは Claude Code が文脈ゼロから開発を継続できるようにまとめたものです。
 > 既存リポジトリ `katudf/cost-management-app`（React 18 + Vite + Supabase + Tailwind / Vercel）への
-> 機能追加を想定しています。DBスキーマは設計・適用済みです。フロントエンド実装から着手してください。
+> 機能追加を想定しています。DBスキーマは設計・適用済み（日本ペイント設計価格表対応の拡張を含む）です。
+> フロントエンド実装から着手してください。
 
 ---
 
@@ -34,21 +35,34 @@
 
 ## 3. 完了済み：DB設計（概念設計→論理設計→物理設計）
 
-以下のテーブルは**Supabase上に作成・RLS設定・初期マスタ投入まで完了済み**です。マイグレーションは
-`add_paint_database_schema` として適用済み（Supabase MCP経由）。ここからはフロントエンド実装のみでOKです。
+以下のテーブルは**Supabase上に作成・RLS設定・初期マスタ投入まで完了済み**です。ここからはフロントエンド実装のみでOKです。
+
+適用済みマイグレーションは2本あります。
+
+| # | 名前 | 出所 | 内容 |
+|---|------|------|------|
+| 1 | `add_paint_database_schema` | Supabase MCP経由のみ（**リポジトリにSQLファイルなし**） | 基本スキーマ（メーカー／工程区分／製品／分類タグ／塗装仕様） |
+| 2 | [`20260818000000_extend_paint_database_for_nippon_pricelist.sql`](../supabase/migrations/20260818000000_extend_paint_database_for_nippon_pricelist.sql) | **リポジトリにSQLファイルあり** | 日本ペイント設計価格表への対応（材工価格・JIS/JASS規格・略号・代表製品・F☆☆☆☆） |
 
 ### テーブル一覧
 
 ```
-paint_manufacturers        塗料メーカーマスタ
-paint_process_roles        工程区分マスタ（下塗/中塗/上塗/防食下地/ジンクリッチ）※初期データ投入済み(5件)
-paint_products              塗料製品マスタ（中心テーブル）
-paint_classification_axes   分類軸マスタ（用途系統/樹脂種別/水性溶剤区分/液性/JIS認証）※初期データ投入済み(5件)
-paint_classification_tags   分類タグ値マスタ（軸ごとの値）※初期データ投入済み(17件)
-paint_product_tags          製品×タグ 多対多中間テーブル
+paint_manufacturers          塗料メーカーマスタ
+paint_process_roles          工程区分マスタ（下塗/中塗/上塗/防食下地/ジンクリッチ）※初期データ投入済み(5件)
+paint_products               塗料製品マスタ（中心テーブル）
+paint_classification_axes    分類軸マスタ（用途系統/樹脂種別/水性溶剤区分/液性）※現在4軸
+paint_classification_tags    分類タグ値マスタ（軸ごとの値）※現在15件
+paint_product_tags           製品×タグ 多対多中間テーブル
 coating_systems              塗装仕様（組み合わせレシピ）マスタ
 coating_system_steps         塗装仕様の構成行（1系統×1工程=1製品）
 PurchaseRecords（既存）      paint_product_id 列を追加済み（NULL許容、新規分から紐付け）
+
+--- 以下は拡張マイグレーション(20260818000000)で追加 ---
+coating_system_variants      塗装仕様の価格分岐（材工価格 円/㎡・工程数・JIS A 6909適合）
+paint_standards              JIS / JASS 規格マスタ（規格番号つき）
+paint_product_standards      製品×規格 多対多中間テーブル
+paint_abbreviations          略号マスタ（SOP / VP / DP / EP / EP-G 等）
+coating_system_abbreviations 仕様×略号 多対多中間テーブル
 ```
 
 ### 主要カラム（`paint_products`）
@@ -68,8 +82,52 @@ pot_life                        text（可使時間、自由記述）
 drying_time                     text（乾燥時間、自由記述）
 reference_price                 numeric（未購入品の参考単価）
 reference_price_unit            text
+formaldehyde_grade              text（ホルムアルデヒド放散等級。例: F☆☆☆☆）※拡張で追加
 deleted_at                      timestamptz（論理削除）
 ```
+
+### 拡張テーブルの主要カラム
+
+`coating_system_variants`（材工価格）— 価格表では同一仕様でも価格が枝分かれするため、
+「仕上げの種類 × 施工方法 × 目地 × 面積区分」を分岐軸（いずれもNULL可）として1行=1価格で保持する。
+
+```
+coating_system_id     bigint FK -> coating_systems.id（ON DELETE CASCADE）
+finish_type           text（仕上げの種類：平滑／ゆず肌／凸部処理 等）
+application_method    text（施工方法：吹付け／ローラー 等）
+joint_type            text（目地：有／無 等）
+area_min / area_max   numeric（適用面積の下限・上限 ㎡）
+material_labor_price  numeric（材工価格 円/㎡）
+process_count         integer（工程数。価格表からの転記値）
+jis_a6909_compliant   boolean（JIS A 6909 適合＝㋓表示。行ごとに異なる）
+```
+
+`paint_standards` / `paint_product_standards`（JIS・JASS認証）
+
+```
+standard_type   text NOT NULL CHECK ('JIS' | 'JASS')
+code            text NOT NULL（例: 'A 6909' / '18 M-109'）
+name            text（例: '建築用仕上塗材'）
+is_abolished    boolean（廃止規格か）
+sort_order      integer
+UNIQUE (standard_type, code)
+```
+
+`paint_abbreviations` / `coating_system_abbreviations`（略号）
+
+```
+code           text NOT NULL UNIQUE（'EP-G' 等）
+name           text（'水性つや有エマルションペイント塗り' 等）
+description    text
+sort_order     integer
+```
+
+`coating_systems.primary_product_id`（代表製品）— この仕様を代表する製品（多くは上塗材）。
+「水性ケンエースグロス（EP-G）の下塗りは水性カチオンシーラー透明」を
+**製品 → 代表仕様 → 工程** と辿って引くための入口。
+
+`coating_system_steps.coat_count`（塗回数、NOT NULL DEFAULT 1）— 見積の数量計算専用。
+**工程数（`process_count`）の導出には使わない**（価格表上、工程数は塗回数の合計と一致しない）。
 
 ### 関連構造
 
@@ -77,6 +135,23 @@ deleted_at                      timestamptz（論理削除）
 - `paint_products` ⇔ `paint_classification_tags` は `paint_product_tags` 経由の多対多（1製品に複数タグ付与可）
 - `coating_systems` は複数の `coating_system_steps` を持ち、各ステップが1つの `paint_products` を指す（1系統×1工程=1製品、決め打ち）
 - `PurchaseRecords.paint_product_id` は任意（NULL許容）。過去の購入記録は `item_name` の自由記述のまま残る
+- `coating_systems` ⇔ `coating_system_variants` は1対多（1仕様に複数の材工価格行）
+- `coating_systems` ⇔ `paint_abbreviations` は `coating_system_abbreviations` 経由の多対多
+  （「略号：EP-Si・EP-CS」のように1仕様に複数付くことがある）
+- `paint_products` ⇔ `paint_standards` は `paint_product_standards` 経由の多対多
+- `coating_systems.primary_product_id` により `coating_systems` → `paint_products` の**2本目のFK経路**が存在する。
+  PostgREST の埋め込みでは曖昧になるため、必ず制約名でヒントを与えること
+  → `paint_products!coating_systems_primary_product_id_fkey(...)`（`supabasePaint.js` の `fetchCoatingSystems` を参照）
+
+### 旧「JIS認証」分類軸の廃止（拡張マイグレーションで実施済み）
+
+JIS認証は「取得／非該当」の2値ではなく**規格番号（JIS A 6909 等）を持つ属性**だと判明したため、
+分類タグではなく `paint_standards` で表現する方式に移行した。移行時の扱いは以下の通り（データ消失なし）。
+
+- 「JIS取得」タグが付いていた製品（7件）は、暫定行 `('JIS', '規格番号未確認')` に紐付けて情報を保全した
+  → 実際の規格番号が判明したら `paint_standards` に正規の行を作り、`paint_product_standards` を張り替えること
+- 「JIS非該当」は新スキーマでは**紐付けなし**で表現するため、引き継いでいない
+- `paint_classification_axes` / `paint_classification_tags` から「JIS認証」軸とその配下タグは削除済み
 
 ### RLS
 
@@ -85,12 +160,17 @@ deleted_at                      timestamptz（論理削除）
 
 ## 4. 設計判断メモ（なぜこうしたか）
 
-- **分類は多軸タグ制**：塗料の分類方法が「系統・樹脂・水性/溶剤・液性・JIS」など複数軸にまたがり、1製品が複数の用途に該当しうる（例: 屋根用かつ鉄部用）ため、単純な階層ではなく多対多のタグ方式にした。
+- **分類は多軸タグ制**：塗料の分類方法が「系統・樹脂・水性/溶剤・液性」など複数軸にまたがり、1製品が複数の用途に該当しうる（例: 屋根用かつ鉄部用）ため、単純な階層ではなく多対多のタグ方式にした。
 - **使用量・上塗間隔は数値、希釈率・可使時間・乾燥時間はテキスト**：前者は見積計算（面積×使用量）に直結するため数値必須。後者は気温条件等で表現が複雑になるため、無理に構造化せず自由記述にしている。将来「希釈率で絞り込み検索」等のニーズが出たら再検討。
 - **塗装仕様(レシピ)は1工程=1製品の決め打ち**：メーカー横断比較は「工程区分ごとの製品一覧検索」側で対応する想定で、レシピ自体は複雑にしていない。
 - **上塗間隔は「標準値／許容範囲」を製品マスタに保持**：案件ごとの協議実績（例: 10日→1〜6ヶ月に変更した事例）は本DBの対象外。マスタは仕様書ベースの標準値・許容範囲のみを持つ。
 - **VOC・鉛含有量等の安全データは対象外**：スコープ外として明示的に除外。
 - **色情報（日塗工番号等）は別扱い**：既存のΔE2000色マッチングツールと分離。ライセンス上の理由もあり、このDBでは扱わない。
+- **材工価格は製品ではなく「仕様」に付く**：日本ペイント設計価格表は製品単価表ではなく**仕様（工程セット）のカタログ**で、価格は円/㎡の材工価格として仕様側に載る。さらに同一仕様でも仕上げ・施工方法・目地・面積で価格が枝分かれするため、`coating_systems` に直接持たせず `coating_system_variants` に1行=1価格で分離した。
+- **工程数は転記値にした**：ジキトーン御影の例で同一仕様の工程数が 5/9/13/7/11/17 と価格分岐ごとに変わり、`coat_count` の合計からは導出できないことを確認したため、`process_count` として価格表の値をそのまま持つ。`coat_count` は見積計算専用に残している。
+- **JIS A 6909 適合は行（価格分岐）単位**：㋓表示は仕様全体ではなく価格表の行ごとに付くため、`coating_system_variants.jis_a6909_compliant` に置いた。一方 **JASS適合は製品単位**で規格番号（JASS18 M-109 等）を持つため `paint_standards` 側で扱う。
+- **略号は仕様に付ける**：SOP / VP / DP / EP-G 等は公共建築工事標準仕様書における「塗り仕様」の略号であり、単一製品の属性ではないため `coating_systems` 側に中間テーブルで紐付けた。
+- **材料間の相互関係は `primary_product_id` で表現**：「この上塗材の下塗りは何か」は、製品を代表製品とする仕様を引き当て、その `coating_system_steps` を見れば分かる。専用の製品間リレーションテーブルは作らず、既存の仕様構造を再利用した（`fetchCoatingSystemsByProduct()`）。
 - **PurchaseRecordsとの連携はA案（新規分から紐付け）**：既存の `item_name` は自由記述で製品マスタと未接続。過去データの一括紐付けは行わず、新規購入記録の入力画面で `paint_product_id` を選択できるようにする方針。
 
 ## 5. 未確定・将来課題（Claude Codeが実装で迷ったら参照）
@@ -99,15 +179,35 @@ deleted_at                      timestamptz（論理削除）
 - `PurchaseRecords.item_name` は自由記述のため、塗料製品との紐付けUIでは「製品名の部分一致検索で候補を出す」程度の支援に留める（自動マッチングは不要）。
 - 在庫管理（`InventoryItems` / `Warehouses`）との連携は明示的にスコープ外（消費管理が現場で正確にできないため）。
 - 案件（`Projects`）との使用実績連携は将来課題。今回は着手しない。
+- **防火材料認定番号（NM-8585 / QM-9816 等）は未対応**。日本ペイント価格表には記載があるが、
+  保持先（製品側か仕様側か）をユーザーと詰めていないためスキーマに入れていない。要否確認が必要。
+- `paint_standards` の暫定行 `('JIS', '規格番号未確認')` は移行用の受け皿。実際の規格番号が判明次第、
+  正規の行に張り替えて暫定行を削除すること。
 
 ## 6. 実装フェーズ計画
 
-### Phase 1: Supabaseラッパー関数
-`src/features/paint/supabasePaint.js` を新規作成し、以下のCRUDを実装：
+### Phase 1: Supabaseラッパー関数 ✅ 実装済み
+`src/features/paint/supabasePaint.js`：
 - メーカー・工程区分・分類軸/タグの一覧取得（マスタ選択肢用）
 - 塗料製品の一覧・検索（メーカー・工程区分・タグでのフィルタ）・登録・更新・論理削除
 - 塗料製品へのタグ付け（`paint_product_tags` への追加/削除）
 - 塗装仕様（`coating_systems`）と構成行（`coating_system_steps`）のCRUD
+
+拡張マイグレーション対応分（同ファイルに追加済み）：
+
+| 関数 | 役割 |
+|------|------|
+| `fetchPaintMasters()` | 戻り値に `standards` / `abbreviations` を追加 |
+| `createPaintProduct(product, tagIds, standardIds)` | 第3引数で規格認証を紐付け（既存呼び出しは省略可） |
+| `updatePaintProduct(id, product, tagIds, standardIds)` | 同上 |
+| `saveCoatingSystemVariants(systemId, variants)` | 材工価格行を全置換で保存 |
+| `saveCoatingSystemAbbreviations(systemId, abbreviationIds)` | 仕様の略号を全置換で保存 |
+| `createPaintStandard` / `updatePaintStandard` / `deletePaintStandard` | 規格マスタCRUD（物理削除） |
+| `createPaintAbbreviation` / `updatePaintAbbreviation` / `deletePaintAbbreviation` | 略号マスタCRUD（物理削除） |
+| `fetchCoatingSystemsByProduct(productId)` | **要件4**：ある製品が使われている（または代表製品になっている）仕様を返す |
+
+`saveCoatingSystemSteps` は `coat_count`、`createCoatingSystem`/`updateCoatingSystem` は
+`primary_product_id` を扱うよう拡張済み。**新規引数はすべて省略可**なので既存の呼び出し側はそのまま動く。
 
 ### Phase 2: マスタ管理画面（office/admin向け）
 - メーカー管理、工程区分管理、分類タグ管理の簡易CRUD画面
@@ -126,6 +226,20 @@ deleted_at                      timestamptz（論理削除）
 ### Phase 5: PurchaseRecords連携
 - 購入記録の入力画面に `paint_product_id` の選択欄を追加（製品名の部分一致検索で候補提示）
 - 既存の登録済みレコードは変更不要（NULLのまま）
+
+### Phase 4.5: 拡張スキーマのUI対応（未着手）
+拡張マイグレーションで追加した項目はまだ画面に出ていない。必要な作業：
+- 塗装仕様フォーム：材工価格（`coating_system_variants`）の行編集UI、略号の複数選択、代表製品の選択
+- 塗料製品フォーム：JIS/JASS規格の複数選択、ホルムアルデヒド放散等級の入力
+- マスタ管理タブ：`paint_standards` / `paint_abbreviations` のCRUD画面
+- 製品詳細：`fetchCoatingSystemsByProduct()` を使った「この製品に関連する仕様・下塗材」の表示
+- 一括登録フォーマット（`src/features/paint/paintImportFormat.js`）は
+  `formaldehyde_grade` と規格認証に未対応。必要なら `FIELD_LABELS` と
+  `resolvePaintProductsAgainstMasters()` の戻り値（`standardIds`）を拡張する
+
+**マスタ未投入**：`paint_abbreviations` は0件、`paint_standards` は暫定行1件のみ。
+UI着手前後に SOP / VP / DP / EP / EP-G / EP-Si / EP-CS / EP-MSi / EP-AB 等の略号と、
+JIS A 6909・JASS18 M-xxx の規格行を投入すること。
 
 ### Phase 6（将来・今回は着手しない）
 - 見積書機能（`estimate_items`）との連携：明細行で塗装仕様/塗料製品を選ぶと自動入力
