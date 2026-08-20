@@ -4,6 +4,8 @@ import { exportAssignmentChartToExcel } from '../../utils/assignmentChartExport'
 import { addDays } from '../../utils/dateUtils';
 import { useToast } from '../../components/Toast';
 import { useAssignmentState } from '../../hooks/useAssignmentState';
+import { useDailyWeatherCodes } from '../../hooks/useWeather';
+import { getWeatherIcon } from '../../utils/weatherIcons';
 import EditColorPopup from '../assignment/EditColorPopup';
 import EditHolidayPopup from '../assignment/EditHolidayPopup';
 import AssignmentPopup from '../assignment/AssignmentPopup';
@@ -15,6 +17,8 @@ const EMPTY_ARRAY = [];
 
 const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTab, setActiveProjectId, setProjects, customers }) => {
     const { showToast } = useToast();
+    // 日付ヘッダー下に表示する天気マーク（予報期間外の日は空欄）
+    const { codeByDate: weatherCodeByDate } = useDailyWeatherCodes();
 
     const {
         isLoading,
@@ -210,7 +214,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                         <tr>
                             <th
                                 className="sticky left-0 z-20 bg-slate-700 text-white text-xs font-bold p-2 border border-slate-600"
-                                rowSpan={2}
+                                rowSpan={3}
                             >
                                 現場名
                             </th>
@@ -240,6 +244,31 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                         <div style={{ color: info.isToday ? '#BFDBFE' : (info.color || '#64748B') }}>
                                             {col.dowLabel}
                                         </div>
+                                    </th>
+                                );
+                            })}
+                        </tr>
+                        {/* 天気マーク（Open-Meteo の予報期間内のみ表示） */}
+                        <tr>
+                            {dateColumns.map((col, i) => {
+                                const info = dayHeaderInfo[i];
+                                const weather = getWeatherIcon(weatherCodeByDate.get(col.dateStr));
+                                return (
+                                    <th
+                                        key={i}
+                                        className="p-0.5 border border-slate-300 text-center align-middle"
+                                        style={{ backgroundColor: info.isToday ? '#DBEAFE' : (info.bg || '#F8FAFC') }}
+                                    >
+                                        {weather ? (
+                                            <img
+                                                src={weather.url}
+                                                alt={weather.label}
+                                                title={weather.label}
+                                                className="w-6 h-[18px] mx-auto object-contain"
+                                            />
+                                        ) : (
+                                            <div className="h-[18px]" />
+                                        )}
                                     </th>
                                 );
                             })}
