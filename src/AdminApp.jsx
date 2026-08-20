@@ -10,7 +10,7 @@ import LoginScreen from './components/auth/LoginScreen';
 import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
 import HomeLanding from './components/HomeLanding';
 import logoUrl from './img/logo.png';
-import { Table, Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, Upload, GripVertical, LogOut, Bell, Database } from 'lucide-react';
+import { Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, Upload, GripVertical, LogOut, Bell, Database } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { DEFAULT_MASTER_DATA, PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR, ITEM_TYPE, DASHBOARD_VIEW_MODE, DASHBOARD_VIEW_MODE_LIST, ESTIMATE_STATUS } from './utils/constants';
 import { calculateAge } from './utils/dateUtils';
@@ -33,8 +33,7 @@ import MasterTab from './components/tabs/MasterTab';
 import WorkersTab from './components/tabs/WorkersTab';
 import DailyReportTab from './components/tabs/DailyReportTab';
 import SystemSettingsTab from './components/tabs/SystemSettingsTab';
-import PurchaseLedgerTab from './components/tabs/PurchaseLedgerTab';
-import PaintDatabaseTab from './components/tabs/paint/PaintDatabaseTab';
+import DatabaseTab from './components/tabs/DatabaseTab';
 import AssignmentChartTab from './components/tabs/AssignmentChartTab';
 import EstimateList from './EstimateList';
 import EstimateEditor from './estimate-editor/EstimateEditor';
@@ -664,7 +663,6 @@ const App = () => {
                                     { key: 'daily_report', label: '日報', Icon: FileText },
                                     { key: 'estimate', label: '見積', Icon: Clipboard },
                                     { key: 'workers', label: '作業員', Icon: Users },
-                                    { key: 'purchase_ledger', label: '材料', Icon: Table },
                                     { key: 'paint_db', label: 'データベース', Icon: Database },
                                     { key: 'settings', label: '設定', Icon: Settings },
                                 ].map(({ key, label, Icon }) => (
@@ -1059,12 +1057,8 @@ const App = () => {
                         />
                     )}
 
-                    {activeTab === 'purchase_ledger' && (
-                        <PurchaseLedgerTab />
-                    )}
-
                     {activeTab === 'paint_db' && (
-                        <PaintDatabaseTab />
+                        <DatabaseTab />
                     )}
 
                     {activeTab === 'assignment' && (
