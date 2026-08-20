@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Save, CheckCircle2, Award, Activity, UserCheck, Building2 } from 'lucide-react';
+import { Settings, Save, CheckCircle2, Award, Activity, UserCheck, Building2, MessageSquare } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../components/Toast';
 import { getDailyApiUsage } from '../../utils/aiOptimizeUtils';
@@ -8,6 +8,7 @@ import CustomerSettings from './CustomerSettings';
 import StaffSettings from './StaffSettings';
 import CertificationManager from './settings/CertificationManager';
 import CompanyInfoSettings from './settings/CompanyInfoSettings';
+import LineWorksSettings from './settings/LineWorksSettings';
 
 const SystemSettingsTab = ({ 
     hourlyWage, 
@@ -26,7 +27,7 @@ const SystemSettingsTab = ({
     const [isSaving, setIsSaving] = useState(false);
     const [showSuccess, setShowSuccess] = useState(false);
     const [apiUsage, setApiUsage] = useState(null);
-    const [activeSubTab, setActiveSubTab] = useState('general'); // 'general', 'calendar', 'certs', 'customers', 'company'
+    const [activeSubTab, setActiveSubTab] = useState('general'); // 'general', 'calendar', 'certs', 'customers', 'company', 'lineworks'
 
     useEffect(() => {
         setApiUsage(getDailyApiUsage());
@@ -114,6 +115,12 @@ const SystemSettingsTab = ({
                     className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${activeSubTab === 'company' ? 'bg-blue-600 text-white shadow-md shadow-blue-200' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}
                 >
                     <Building2 size={18} /> 自社情報
+                </button>
+                <button
+                    onClick={() => setActiveSubTab('lineworks')}
+                    className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${activeSubTab === 'lineworks' ? 'bg-blue-600 text-white shadow-md shadow-blue-200' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}
+                >
+                    <MessageSquare size={18} /> LINE WORKS
                 </button>
             </div>
 
@@ -295,6 +302,10 @@ const SystemSettingsTab = ({
                     isLoading={isLoading}
                     setIsLoading={setIsLoading}
                 />
+            )}
+
+            {activeSubTab === 'lineworks' && (
+                <LineWorksSettings />
             )}
         </div>
     );
