@@ -72,7 +72,7 @@ const HomeLanding = ({ onNavigate, staffName, onSignOut, systemName = 'CostNavi'
                     <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
                         {TILES.map(({ key, label, Icon }) => (
                             <li key={key}>
-                                <button onClick={() => onNavigate(key)} className={`${tileClass} w-full`}>
+                                <button onClick={() => onNavigate(key)} className={`${tileClass} w-full h-full`}>
                                     <span className="flex items-center justify-center w-12 h-12 rounded-lg bg-emerald-100 text-emerald-700 shrink-0 transition group-hover:bg-emerald-200">
                                         <Icon size={26} />
                                     </span>
@@ -80,16 +80,15 @@ const HomeLanding = ({ onNavigate, staffName, onSignOut, systemName = 'CostNavi'
                                 </button>
                             </li>
                         ))}
+                        <li>
+                            <button onClick={() => onNavigate(SETTINGS_TILE.key)} className={`${tileClass} w-full h-full`}>
+                                <span className="flex items-center justify-center w-12 h-12 rounded-lg bg-slate-100 text-slate-600 shrink-0 transition group-hover:bg-slate-200">
+                                    <SETTINGS_TILE.Icon size={26} />
+                                </span>
+                                <span className="text-xl md:text-2xl font-bold text-slate-700">{SETTINGS_TILE.label}</span>
+                            </button>
+                        </li>
                     </ul>
-
-                    <div className="mt-6 md:mt-8 flex justify-end">
-                        <button onClick={() => onNavigate(SETTINGS_TILE.key)} className={`${tileClass} w-full sm:w-auto sm:min-w-[16rem]`}>
-                            <span className="flex items-center justify-center w-12 h-12 rounded-lg bg-slate-100 text-slate-600 shrink-0 transition group-hover:bg-slate-200">
-                                <SETTINGS_TILE.Icon size={26} />
-                            </span>
-                            <span className="text-xl md:text-2xl font-bold text-slate-700">{SETTINGS_TILE.label}</span>
-                        </button>
-                    </div>
                 </nav>
             </div>
         </div>
