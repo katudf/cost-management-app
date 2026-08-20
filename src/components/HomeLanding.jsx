@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { HardHat, Calendar, Clipboard, FileText, Users, Database, Settings, LogOut } from 'lucide-react';
 import { useCompanyInfo } from '../hooks/useCompanyInfo';
+import WeatherPanel from './WeatherPanel';
 import logoUrl from '../img/logo.png';
 
 // トップページのタイル定義。key は AdminApp の activeTab と対応する。
@@ -90,6 +91,8 @@ const HomeLanding = ({ onNavigate, staffName, onSignOut, systemName = 'CostNavi'
                         </li>
                     </ul>
                 </nav>
+
+                <WeatherPanel />
             </div>
         </div>
     );
