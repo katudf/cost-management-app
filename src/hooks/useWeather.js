@@ -1,19 +1,19 @@
 import { useState, useEffect, useCallback } from 'react';
-import { OSHU_LOCATION, WEATHER_LOCATION_KEY } from '../utils/weatherUtils';
+import { loadSavedLocation } from '../utils/weatherUtils';
+import { buildOneboxUrl, parseOneboxHtml } from '../utils/weathernewsParser';
 
-const FORECAST_ENDPOINT = 'https://api.open-meteo.com/v1/forecast';
-const GEOCODING_ENDPOINT = 'https://geocoding-api.open-meteo.com/v1/search';
+// 地点検索は OpenStreetMap Nominatim を利用する（日本語で検索可能）
+const GEOCODING_ENDPOINT = 'https://nominatim.openstreetmap.org/search';
 
-// Open-Meteo の予報可能日数の上限
-const MAX_FORECAST_DAYS = 16;
-
-// 取得項目: 気温 / 降水量 / 降水確率 / 積雪量 / 風速（+ 表示用の湿度・風向）
-const CURRENT_FIELDS = 'temperature_2m,relative_humidity_2m,precipitation,snowfall,wind_speed_10m,weather_code';
-const HOURLY_FIELDS = 'temperature_2m,relative_humidity_2m,precipitation,precipitation_probability,snowfall,wind_speed_10m,wind_direction_10m,weather_code';
-const DAILY_FIELDS = 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,snowfall_sum,wind_speed_10m_max';
+/** ウェザーニュースの onebox ページを取得して解析する */
+const fetchOnebox = async (latitude, longitude) => {
+    const res = await fetch(buildOneboxUrl(latitude, longitude));
+    if (!res.ok) throw new Error(`天気情報の取得エラー: ${res.status}`);
+    return parseOneboxHtml(await res.text());
+};
 
 /**
- * Open-Meteo から気象データ（現在・1時間毎・週間）を取得する。
+ * ウェザーニュースから気象データ（週間・1時間毎）を取得する。
  * @param {{latitude:number, longitude:number}} location 取得地点の緯度経度
  */
 export function useWeather(location) {
@@ -32,20 +32,8 @@ export function useWeather(location) {
             setIsLoading(true);
             setError(null);
             try {
-                const params = new URLSearchParams({
-                    latitude: String(latitude),
-                    longitude: String(longitude),
-                    current: CURRENT_FIELDS,
-                    hourly: HOURLY_FIELDS,
-                    daily: DAILY_FIELDS,
-                    timezone: 'Asia/Tokyo',
-                    wind_speed_unit: 'ms',
-                    forecast_days: '8',
-                });
-                const res = await fetch(`${FORECAST_ENDPOINT}?${params}`);
-                if (!res.ok) throw new Error(`天気APIエラー: ${res.status}`);
-                const data = await res.json();
-                if (!cancelled) setWeather(data);
+                const parsed = await fetchOnebox(latitude, longitude);
+                if (!cancelled) setWeather(parsed);
             } catch (e) {
                 console.error('気象データ取得エラー:', e);
                 if (!cancelled) setError(e);
@@ -62,8 +50,8 @@ export function useWeather(location) {
 }
 
 /**
- * 地点名から候補を検索する（Open-Meteo Geocoding API）。
- * 日本語名では検索できないためローマ字入力を想定。結果は日本語表記で返る。
+ * 地点名から候補を検索する（OpenStreetMap Nominatim）。
+ * 日本語の地名でそのまま検索できる。国内の地点に絞って返す。
  */
 export function useLocationSearch() {
     const [results, setResults] = useState([]);
@@ -78,19 +66,23 @@ export function useLocationSearch() {
         setIsSearching(true);
         try {
             const params = new URLSearchParams({
-                name: keyword,
-                count: '10',
-                language: 'ja',
-                format: 'json',
+                q: keyword,
+                format: 'jsonv2',
+                limit: '10',
+                countrycodes: 'jp',
+                'accept-language': 'ja',
             });
             const res = await fetch(`${GEOCODING_ENDPOINT}?${params}`);
             if (!res.ok) throw new Error(`地点検索エラー: ${res.status}`);
             const data = await res.json();
-            // 国内の地点を優先して表示する
-            const list = (data.results || []).sort(
-                (a, b) => (b.country_code === 'JP') - (a.country_code === 'JP')
-            );
-            setResults(list);
+            setResults((data || []).map((item) => ({
+                id: String(item.place_id),
+                name: item.name || item.display_name,
+                // 「岩手県, 日本」のように国名まで含むため、先頭の地名と国名を除いて所属地域だけ残す
+                detail: String(item.display_name || '').split(',').slice(1, -1).join(',').trim(),
+                latitude: Number(item.lat),
+                longitude: Number(item.lon),
+            })));
         } catch (e) {
             console.error('地点検索エラー:', e);
             setResults([]);
@@ -104,60 +96,37 @@ export function useLocationSearch() {
     return { results, isSearching, search, clear };
 }
 
-/** 天気パネルで保存した地点を読み出す（未設定なら奥州市） */
-const loadSavedLocation = () => {
-    try {
-        const raw = localStorage.getItem(WEATHER_LOCATION_KEY);
-        if (!raw) return OSHU_LOCATION;
-        const parsed = JSON.parse(raw);
-        if (typeof parsed?.latitude === 'number' && typeof parsed?.longitude === 'number') return parsed;
-    } catch (e) {
-        console.error('保存地点の読み込みエラー:', e);
-    }
-    return OSHU_LOCATION;
-};
-
 /**
- * 日付ごとの天気コードを取得する（配置表の天気マーク用）。
- * 予報期間を超える日はキーが存在しないため、呼び出し側で空表示にする。
- * @returns {{codeByDate: Map<string, number>, isLoading: boolean}}
+ * 日付ごとの天気アイコン番号を取得する（配置表の天気マーク用）。
+ * 予報は当日から15日先まで。範囲を超える日はキーが存在しないため、
+ * 呼び出し側で空表示にする。
+ * @returns {{iconByDate: Map<string, string>, isLoading: boolean}}
  */
 export function useDailyWeatherCodes() {
-    const [codeByDate, setCodeByDate] = useState(() => new Map());
+    const [iconByDate, setIconByDate] = useState(() => new Map());
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
         let cancelled = false;
         const location = loadSavedLocation();
 
-        const fetchCodes = async () => {
+        const fetchIcons = async () => {
             setIsLoading(true);
             try {
-                const params = new URLSearchParams({
-                    latitude: String(location.latitude),
-                    longitude: String(location.longitude),
-                    daily: 'weather_code',
-                    timezone: 'Asia/Tokyo',
-                    forecast_days: String(MAX_FORECAST_DAYS),
-                });
-                const res = await fetch(`${FORECAST_ENDPOINT}?${params}`);
-                if (!res.ok) throw new Error(`天気APIエラー: ${res.status}`);
-                const data = await res.json();
+                const parsed = await fetchOnebox(location.latitude, location.longitude);
                 if (cancelled) return;
-                const dates = data?.daily?.time || [];
-                const codes = data?.daily?.weather_code || [];
-                setCodeByDate(new Map(dates.map((d, i) => [d, codes[i]])));
+                setIconByDate(new Map(parsed.daily.map((d) => [d.date, d.icon])));
             } catch (e) {
                 console.error('気象データ取得エラー:', e);
-                if (!cancelled) setCodeByDate(new Map());
+                if (!cancelled) setIconByDate(new Map());
             } finally {
                 if (!cancelled) setIsLoading(false);
             }
         };
 
-        fetchCodes();
+        fetchIcons();
         return () => { cancelled = true; };
     }, []);
 
-    return { codeByDate, isLoading };
+    return { iconByDate, isLoading };
 }

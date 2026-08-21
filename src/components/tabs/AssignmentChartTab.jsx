@@ -18,7 +18,7 @@ const EMPTY_ARRAY = [];
 const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTab, setActiveProjectId, setProjects, customers }) => {
     const { showToast } = useToast();
     // 日付ヘッダー下に表示する天気マーク（予報期間外の日は空欄）
-    const { codeByDate: weatherCodeByDate } = useDailyWeatherCodes();
+    const { iconByDate: weatherIconByDate } = useDailyWeatherCodes();
 
     const {
         isLoading,
@@ -248,11 +248,11 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                 );
                             })}
                         </tr>
-                        {/* 天気マーク（Open-Meteo の予報期間内のみ表示） */}
+                        {/* 天気マーク（ウェザーニュースの予報期間内＝当日から15日先のみ表示） */}
                         <tr>
                             {dateColumns.map((col, i) => {
                                 const info = dayHeaderInfo[i];
-                                const weather = getWeatherIcon(weatherCodeByDate.get(col.dateStr));
+                                const weather = getWeatherIcon(weatherIconByDate.get(col.dateStr));
                                 return (
                                     <th
                                         key={i}
