@@ -177,8 +177,10 @@ const SystemSettingsTab = ({
                         {/*
                           AIによるExcel項目名最適化機能は現在無効化中。
                           src/hooks/useSupabaseData.js の isGeminiEnabled 初期値を true に戻せば
-                          この設定UIおよび ImportModal 側のAI最適化ボタンが復活する。
-                          関連ロジックは src/utils/aiOptimizeUtils.js に温存済み。
+                          この設定UIが復活する。関連ロジックは
+                          src/utils/aiOptimizeUtils.js に温存済み。
+                          ※ 呼び出し元だった管理画面のExcelインポートUI（ImportModal）は
+                          　 見積タブ側に集約されたため削除済み。
                         */}
                         {isGeminiEnabled && (
                         <div className="mb-8 pt-8 border-t border-slate-100">

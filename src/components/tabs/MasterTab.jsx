@@ -10,8 +10,6 @@ import ConfirmModal from '../ConfirmModal';
 const MasterTab = ({
     activeProject,
     isLoading,
-    handleExcelImport,
-    fileInputRef,
     removeProject,
     updateLayer,
     handleSiteNameBlur,

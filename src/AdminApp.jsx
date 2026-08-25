@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useSupabaseData } from './hooks/useSupabaseData';
 import { useProjects } from './hooks/useProjects';
 import { useWorkers } from './hooks/useWorkers';
@@ -10,18 +10,15 @@ import LoginScreen from './components/auth/LoginScreen';
 import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
 import HomeLanding from './components/HomeLanding';
 import logoUrl from './img/logo.png';
-import { Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, Upload, GripVertical, LogOut, Bell, Database } from 'lucide-react';
+import { Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, GripVertical, LogOut, Bell, Database } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { DEFAULT_MASTER_DATA, PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR, ITEM_TYPE, DASHBOARD_VIEW_MODE, DASHBOARD_VIEW_MODE_LIST, ESTIMATE_STATUS } from './utils/constants';
 import { calculateAge } from './utils/dateUtils';
 import { calculateProjectsSummary } from './utils/projectUtils';
-import { parseExcelForImport } from './utils/excelImportUtils';
 import { exportToExcel, generateWorkerReportExcel, generateMultipleWorkersReportExcel } from './utils/excelExportUtils';
 import { generateWorkerReportPDF, generateMultipleWorkersReportPDF } from './utils/pdfExportUtils';
 import { fetchApprovalsForReport } from './lib/overtimeApprovals';
 import { fetchWorkAllowanceApprovalsForReport } from './lib/workAllowanceApprovals';
-import { optimizeItemsWithGemini } from './utils/aiOptimizeUtils';
-import ImportModal from './components/ImportModal';
 import WorkerEditModal from './components/WorkerEditModal';
 import ExportReportModal from './components/ExportReportModal';
 import DashboardTab from './components/tabs/DashboardTab';
@@ -50,8 +47,6 @@ const App = () => {
     // undefined = 一覧表示
     // null      = 新規作成フォーム
     // number    = 編集フォーム（IDを指定）
-    const [importModalInfo, setImportModalInfo] = useState(null);
-    const [aliasName, setAliasName] = useState("");
 
     // 見積承認依頼バッジ用: 全見積を保持し、承認者/申請者それぞれの承認待ち件数を算出する
     const [estimatesForBadge, setEstimatesForBadge] = useState([]);
@@ -297,148 +292,6 @@ const App = () => {
         }
     }, [activeProjectId, projects, fetchProjectDetails]);
 
-    // --- Excelインポート ---
-    const fileInputRef = useRef(null);
-
-    const handleExcelImport = async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-
-        try {
-            const parseRes = await parseExcelForImport(file, hourlyWage);
-            const newMasterData = parseRes.masterData;
-
-            if (newMasterData.length > 0) {
-                const finalSiteName = parseRes.projectName || file.name.replace(/\.[^/.]+$/, "");
-                const duplicateProject = projects.find(p => p.siteName === finalSiteName);
-
-                setImportModalInfo({
-                    type: duplicateProject ? 'duplicate' : 'normal',
-                    data: newMasterData,
-                    count: newMasterData.length,
-                    fileName: finalSiteName,
-                    customerName: parseRes.customerName,
-                    duplicateId: duplicateProject?.id,
-                    aiOptimized: false,
-                    canOptimize: isGeminiEnabled,
-                    isEmpty: !duplicateProject && !(projectOps.activeProject.masterData && projectOps.activeProject.masterData.length > 0)
-                });
-
-                if (duplicateProject) setAliasName(`${finalSiteName} (コピー)`);
-
-            } else {
-                showToast('取り込めるデータが見つかりませんでした。', 'error');
-            }
-        } catch (error) {
-            console.error('Excelパースエラー:', error);
-            showToast('エラーが発生しました。', 'error');
-        } finally {
-            if (fileInputRef.current) fileInputRef.current.value = '';
-        }
-    };
-
-    const handleOptimizeRequest = async () => {
-        if (!isGeminiEnabled || !importModalInfo) return;
-        setIsLoading(true);
-        showToast("AIが項目を最適化しています...", "success");
-        try {
-            const processedData = await optimizeItemsWithGemini(importModalInfo.data);
-            setImportModalInfo({ ...importModalInfo, data: processedData, aiOptimized: true });
-        } catch (error) {
-            console.error('AI Optimize Error:', error);
-            let userMessage = error.message;
-            if (userMessage.includes('503') || userMessage.toLowerCase().includes('high demand') || userMessage.toLowerCase().includes('overloaded')) {
-                userMessage = "現在AIサーバー(Google)が混雑しており利用できません。時間をおいて再度お試しいただくか、今回はAIを使わずにそのままインポート処理を進めてください。";
-            } else if (userMessage.includes('404')) {
-                userMessage = "AIモデルが見つかりません。設定されたモデルが廃止されたか一時的に利用できない可能性があります。";
-            }
-            showToast(`【エラー】${userMessage}`, 'error');
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    const handleImportChoice = async (choice, directParams = null) => {
-        const info = directParams || importModalInfo;
-        if (!info) return;
-        setIsLoading(true);
-
-        try {
-            let targetProjectId = null;
-            let siteNameToUse = info.fileName || info.finalSiteName || 'エクセル取込現場';
-            const nextOrder = projects.length > 0 ? Math.max(...projects.map(p => p.order || 0)) + 1 : 0;
-
-            // 顧客の登録・紐付け処理
-            let customerId = null;
-            if (info.customerName) {
-                const { data: existingCustomer } = await supabase.from('Customers').select('id').eq('name', info.customerName).maybeSingle();
-                if (existingCustomer) {
-                    customerId = existingCustomer.id;
-                } else {
-                    const { data: newCustomer, error: insertError } = await supabase.from('Customers').insert([{ name: info.customerName }]).select();
-                    if (!insertError && newCustomer && newCustomer.length > 0) {
-                        customerId = newCustomer[0].id;
-                    }
-                }
-            }
-
-            if (choice === 'create_new') {
-                const { data, error } = await supabase.from('Projects').insert([{ name: siteNameToUse, order: nextOrder, status: PROJECT_STATUS.ESTIMATE, customerId }]).select();
-                if (error) throw error;
-                targetProjectId = data[0].id;
-            } else if (choice === 'create_alias') {
-                const { data, error } = await supabase.from('Projects').insert([{ name: aliasName || 'エクセル取込現場', order: nextOrder, status: PROJECT_STATUS.ESTIMATE, customerId }]).select();
-                if (error) throw error;
-                targetProjectId = data[0].id;
-            } else if (choice === 'overwrite' || choice === 'overwrite_empty') {
-                targetProjectId = directParams ? directParams.projId : activeProjectId;
-                if (!targetProjectId) {
-                    const { data, error } = await supabase.from('Projects').insert([{ name: siteNameToUse, order: nextOrder, status: PROJECT_STATUS.ESTIMATE, customerId }]).select();
-                    if (error) throw error;
-                    targetProjectId = data[0].id;
-                } else {
-                    await supabase.from('ProjectTasks').delete().eq('projectId', targetProjectId);
-                    if (choice === 'overwrite_empty' || siteNameToUse !== "エクセル取込現場") {
-                        await supabase.from('Projects').update({ name: siteNameToUse, customerId }).eq('id', targetProjectId);
-                    } else if (customerId) {
-                        await supabase.from('Projects').update({ customerId }).eq('id', targetProjectId);
-                    }
-                }
-            } else if (choice === 'overwrite_duplicate') {
-                targetProjectId = info.duplicateId;
-                await supabase.from('Projects').update({ customerId }).eq('id', targetProjectId);
-                await supabase.from('ProjectTasks').delete().eq('projectId', targetProjectId);
-            }
-
-            // info.dataから isExcluded !== true のものだけを抽出し、taskプロパティに直して保存
-            const validData = info.data.filter(m => !m.isExcluded);
-
-            // タスクの挿入
-            const tasksToInsert = validData.map((m, idx) => ({
-                projectId: targetProjectId,
-                name: m.task,
-                target_hours: m.target,
-                estimated_amount: m.estimatedAmount || 0,
-                order: idx + 1,
-                progress_percentage: 0
-            }));
-
-            if (tasksToInsert.length > 0) {
-                await supabase.from('ProjectTasks').insert(tasksToInsert);
-            }
-
-            // DBから最新を再フェッチし、インポートした現場をアクティブにする
-            await fetchAllData(targetProjectId, setActiveProjectId);
-
-        } catch (e) {
-            console.error(e);
-            showToast("DB保存中にエラーが発生しました", 'error');
-        } finally {
-            setIsLoading(false);
-            setImportModalInfo(null);
-            setAliasName("");
-        }
-    };
     const handleExportToExcel = () => {
         if (!projectOps.activeProject || !projectOps.activeProject.masterData || projectOps.activeProject.masterData.length === 0) {
             showToast('出力するデータがありません。', 'error');
@@ -715,32 +568,6 @@ const App = () => {
                             </div>
                         )}
 
-                        <div className="flex flex-wrap items-center gap-2">
-                            {activeTab === 'master' && (
-                                <div className="flex items-center gap-1">
-                                    <button onClick={projectOps.addNewProject} title="新しい現場を追加" className="px-3 py-2 text-slate-500 flex items-center gap-2 hover:text-blue-600 hover:bg-white rounded-lg transition shadow-sm border border-transparent hover:border-blue-200 text-sm font-bold">
-                                        <PlusCircle size={18} />
-                                        新しい現場を追加
-                                    </button>
-                                    <div className="w-px h-6 bg-slate-200 mx-1"></div>
-                                    <input
-                                        type="file"
-                                        accept=".xlsx, .xls"
-                                        onChange={handleExcelImport}
-                                        ref={fileInputRef}
-                                        className="hidden"
-                                        id="excel-upload"
-                                    />
-                                    <label
-                                        htmlFor="excel-upload"
-                                        className="cursor-pointer px-3 py-2 text-slate-500 flex items-center gap-2 hover:text-blue-600 hover:bg-white rounded-lg transition shadow-sm border border-transparent hover:border-blue-200 text-sm font-bold"
-                                    >
-                                        {isLoading ? <Loader2 className="animate-spin w-4 h-4" /> : <Upload size={18} />}
-                                        Excelからインポート
-                                    </label>
-                                </div>
-                            )}
-                        </div>
                     </div>
                 </header>
 
@@ -789,6 +616,14 @@ const App = () => {
 
                                 {projects.length > 0 && (
                                     <div className="flex items-center gap-2 w-full md:w-auto">
+                                        <button
+                                            onClick={projectOps.addNewProject}
+                                            title="新しい現場を追加"
+                                            className="px-3 py-2 bg-white text-slate-600 flex items-center gap-2 hover:text-blue-600 hover:border-blue-200 rounded-lg transition shadow-sm border border-slate-200 text-sm font-bold whitespace-nowrap shrink-0"
+                                        >
+                                            <PlusCircle size={18} />
+                                            新しい現場を追加
+                                        </button>
                                         <div className="relative group flex-1 md:w-64">
                                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 group-focus-within:text-blue-500 transition-colors" />
                                             <input
@@ -988,8 +823,6 @@ const App = () => {
                         <MasterTab
                             activeProject={projectOps.activeProject}
                             isLoading={isLoading}
-                            handleExcelImport={handleExcelImport}
-                            fileInputRef={fileInputRef}
                             removeProject={projectOps.removeProject}
                             updateLayer={projectOps.updateLayer}
                             handleSiteNameBlur={projectOps.handleSiteNameBlur}
@@ -1114,20 +947,6 @@ const App = () => {
                     onExport={exportWorkerReport}
                     onExportPDF={exportWorkerReportPDF}
                     isLoading={isLoading}
-                />
-
-                {/* エクセルインポート時の選択モーダル */}
-                <ImportModal
-                    info={importModalInfo}
-                    isLoading={isLoading}
-                    aliasName={aliasName}
-                    setAliasName={setAliasName}
-                    onChoice={handleImportChoice}
-                    onCancel={() => {
-                        setImportModalInfo(null);
-                        setAliasName("");
-                    }}
-                    onOptimize={handleOptimizeRequest}
                 />
 
                 {/* 作業員詳細編集モーダル */}
