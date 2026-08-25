@@ -26,6 +26,7 @@ const DashboardTab = ({
                     <div className="text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">消化済工数 / 全体目標</div>
                     <div className="text-2xl font-black text-slate-800 flex items-baseline gap-2">
                         {summaryData.totalActual}<span className="text-sm font-normal text-slate-500">h</span>
+                        <span className="text-sm font-normal text-slate-400">（{Math.floor(summaryData.totalActual / 7.5)}人工）</span>
                         <span className="text-slate-300 font-light mx-1">/</span>
                         {summaryData.totalTarget}<span className="text-sm font-normal text-slate-500">h</span>
                         <span className="text-sm font-normal text-slate-400">（{Math.floor(summaryData.totalTarget / 7.5)}人工）</span>
