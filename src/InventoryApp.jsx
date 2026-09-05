@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
     Loader2, LogOut, Package, Search, Plus, Map as MapIcon, Home, X,
-    Trash2, ImageIcon, Minus, Upload, MapPin,
+    Trash2, ImageIcon, Minus, Upload, MapPin, ArrowDownUp,
 } from 'lucide-react';
 import { useToast } from './components/Toast';
 import { useAuth } from './hooks/useAuth';
@@ -47,6 +47,7 @@ const InventoryApp = () => {
     const [searchText, setSearchText] = useState('');
     const [filterWarehouse, setFilterWarehouse] = useState('');
     const [filterCategory, setFilterCategory] = useState('');
+    const [sortOrder, setSortOrder] = useState('desc'); // 'desc'=登録日新しい順, 'asc'=登録日古い順
 
     // フォームモーダル: null=閉、{ id: null }=新規、{ id: n, ... }=編集
     const [editingId, setEditingId] = useState(null); // null | 'new' | number
@@ -91,7 +92,7 @@ const InventoryApp = () => {
     // ===== フィルタ済みリスト =====
     const filteredItems = useMemo(() => {
         const q = searchText.trim().toLowerCase();
-        return items.filter(i => {
+        const result = items.filter(i => {
             if (filterWarehouse && String(i.warehouse_id) !== String(filterWarehouse)) return false;
             if (filterCategory && i.category !== filterCategory) return false;
             if (q) {
@@ -100,7 +101,14 @@ const InventoryApp = () => {
             }
             return true;
         });
-    }, [items, searchText, filterWarehouse, filterCategory]);
+        const dir = sortOrder === 'asc' ? 1 : -1;
+        return [...result].sort((a, b) => {
+            const da = a.recorded_date || '';
+            const db = b.recorded_date || '';
+            if (da !== db) return da < db ? -dir : dir;
+            return (a.id - b.id) * dir;
+        });
+    }, [items, searchText, filterWarehouse, filterCategory, sortOrder]);
 
     const warehouseName = (id) => warehouses.find(w => w.id === id)?.name || '';
 
@@ -309,7 +317,19 @@ const InventoryApp = () => {
                                     ))}
                                 </select>
                             </div>
-                            <p className="text-xs text-slate-400 font-bold text-right">{filteredItems.length}件</p>
+                            <div className="flex items-center justify-between">
+                                <button
+                                    type="button"
+                                    onClick={() => setSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'))}
+                                    aria-label={sortOrder === 'asc' ? '登録日が古い順（クリックで新しい順に切替）' : '登録日が新しい順（クリックで古い順に切替）'}
+                                    title={sortOrder === 'asc' ? '登録日が古い順（クリックで新しい順に切替）' : '登録日が新しい順（クリックで古い順に切替）'}
+                                    className="flex items-center gap-1 text-xs font-bold text-slate-500 hover:text-emerald-600"
+                                >
+                                    <ArrowDownUp size={14} />
+                                    登録日{sortOrder === 'asc' ? '古い順' : '新しい順'}
+                                </button>
+                                <p className="text-xs text-slate-400 font-bold text-right">{filteredItems.length}件</p>
+                            </div>
                         </div>
 
                         {/* カードリスト */}
