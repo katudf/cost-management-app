@@ -861,6 +861,7 @@ const App = () => {
                             handleWorkerReorder={workerOps.handleWorkerReorder}
                             openEditWorkerModal={workerOps.openEditWorkerModal}
                             removeWorker={workerOps.removeWorker}
+                            showToast={showToast}
                         />
                     )}
 
