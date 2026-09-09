@@ -384,8 +384,8 @@ const RowToolbar = ({ item, onAddRowAfter, onDuplicateRow, onRemoveRow, onMoveRo
         borderRadius: 4,
         padding: '1px 3px',
         boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
-        opacity: 0,
-        pointerEvents: 'none',
+        opacity: 0.35,
+        pointerEvents: 'auto',
         transition: 'opacity 0.1s',
         zIndex: 5,
       }}
@@ -849,9 +849,11 @@ const SheetPaper = ({
       id={`paper-sheet-${sheetIndex}`}
       style={{ display: 'flex', flexDirection: 'column', gap: pt(18), alignItems: 'center' }}
     >
-      {/* ホバー時に行ツールバーを表示するためのスタイル */}
+      {/* 行ツールバーは常時薄く表示し、ホバー/タップ時にはっきり表示するためのスタイル
+          （タッチデバイスではホバーが効かないため、常時ある程度視認できるようにしている） */}
       <style>{`
-        #paper-sheet-${sheetIndex} .sheet-edit-row:hover .sheet-row-toolbar { opacity: 1 !important; pointer-events: auto !important; }
+        #paper-sheet-${sheetIndex} .sheet-edit-row:hover .sheet-row-toolbar,
+        #paper-sheet-${sheetIndex} .sheet-edit-row:focus-within .sheet-row-toolbar { opacity: 1 !important; pointer-events: auto !important; }
       `}</style>
       {pages.map((pageRows, pageIdx) => (
         <div

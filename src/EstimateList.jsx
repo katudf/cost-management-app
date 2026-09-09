@@ -271,28 +271,34 @@ const EstimateList = ({ onEdit }) => {
     <div className="p-4 md:p-6">
 
       {/* ヘッダー */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-5">
-        <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+      <div className="flex flex-col md:flex-row md:items-start justify-between gap-3 mb-5">
+        <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2 md:pt-2">
           <FileText size={22} className="text-blue-600" />
           見積書管理
         </h2>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => onEdit(null)}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold transition"
-          >
-            <Plus size={18} />
-            新規作成
-          </button>
-          <button
-            onClick={handleOpenTrash}
-            aria-label="ゴミ箱（削除済み見積書）"
-            title="ゴミ箱（削除済み見積書）"
-            className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-600 px-4 py-2 rounded-lg font-bold transition"
-          >
-            <Trash2 size={18} />
-            ゴミ箱
-          </button>
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => onEdit(null)}
+              title="まったく新しい見積書を白紙から作成します"
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold transition"
+            >
+              <Plus size={18} />
+              新規作成
+            </button>
+            <button
+              onClick={handleOpenTrash}
+              aria-label="ゴミ箱（削除済み見積書）"
+              title="ゴミ箱（削除済み見積書）"
+              className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-600 px-4 py-2 rounded-lg font-bold transition"
+            >
+              <Trash2 size={18} />
+              ゴミ箱
+            </button>
+          </div>
+          <p className="text-xs text-slate-400">
+            似た見積書がある場合は一覧の<Copy size={11} className="inline mx-0.5 -mt-0.5" />「複製」が早く作成できます
+          </p>
         </div>
       </div>
 
