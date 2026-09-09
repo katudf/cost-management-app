@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react';
-import { Users, Settings, Plus, Calendar, User, ChevronRight } from 'lucide-react';
+import { Users, Settings, Plus, Calendar, User, ChevronRight, FileText } from 'lucide-react';
 import { calculateAge } from '../../utils/dateUtils';
 import { WORKER_TYPE } from '../../utils/constants';
 import WorkerDetailsModal from '../WorkerDetailsModal';
+import { downloadWorkerCertificationsPDF } from '../../WorkerCertificationsPDF';
 
 const WorkersTab = ({
     isLoading,
@@ -11,14 +12,32 @@ const WorkersTab = ({
     handleWorkerReorder,
     openEditWorkerModal,
     removeWorker,
+    showToast,
 }) => {
     const [selectedWorkerForDetails, setSelectedWorkerForDetails] = useState(null);
     const [showResigned, setShowResigned] = useState(false);
+    const [isExporting, setIsExporting] = useState(false);
 
     const filteredWorkers = useMemo(() => {
         if (showResigned) return workers;
         return (workers || []).filter(w => !w.resignation_date);
     }, [workers, showResigned]);
+
+    const handleExportCertifications = async () => {
+        if (isExporting) return;
+        if (!filteredWorkers || filteredWorkers.length === 0) {
+            showToast?.('出力対象の作業員がいません。', 'error');
+            return;
+        }
+        setIsExporting(true);
+        try {
+            await downloadWorkerCertificationsPDF(filteredWorkers);
+        } catch (e) {
+            showToast?.(e?.message || '保有資格一覧のPDF出力に失敗しました。', 'error');
+        } finally {
+            setIsExporting(false);
+        }
+    };
 
     return (
         <div className={`p-6 bg-slate-50 min-h-[500px] ${isLoading ? 'opacity-50 pointer-events-none' : ''}`}>
@@ -31,16 +50,27 @@ const WorkersTab = ({
             />
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
                 <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Users className="text-blue-600" /> 作業員管理・稼働確認</h2>
-                <div className="bg-white px-4 py-2 rounded-lg border border-slate-200 shadow-sm flex items-center gap-2">
-                    <label className="flex items-center gap-2 cursor-pointer select-none">
-                        <input
-                            type="checkbox"
-                            checked={showResigned}
-                            onChange={(e) => setShowResigned(e.target.checked)}
-                            className="w-4 h-4 rounded accent-blue-600"
-                        />
-                        <span className="text-sm font-bold text-slate-600">退社済みの作業員を表示</span>
-                    </label>
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                    <button
+                        onClick={handleExportCertifications}
+                        disabled={isExporting}
+                        aria-label="保有資格一覧をPDF出力"
+                        title="表示中の作業員の保有資格一覧をPDFで出力します"
+                        className="text-white bg-emerald-600 px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                    >
+                        <FileText size={16} /> {isExporting ? '出力中...' : '保有資格一覧をPDF出力'}
+                    </button>
+                    <div className="bg-white px-4 py-2 rounded-lg border border-slate-200 shadow-sm flex items-center gap-2">
+                        <label className="flex items-center gap-2 cursor-pointer select-none">
+                            <input
+                                type="checkbox"
+                                checked={showResigned}
+                                onChange={(e) => setShowResigned(e.target.checked)}
+                                className="w-4 h-4 rounded accent-blue-600"
+                            />
+                            <span className="text-sm font-bold text-slate-600">退社済みの作業員を表示</span>
+                        </label>
+                    </div>
                 </div>
             </div>
 
