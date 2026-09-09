@@ -532,7 +532,7 @@ const App = () => {
                             </nav>
                             <div className="flex items-center gap-2 shrink-0">
                                 {currentStaff?.name && (
-                                    <span className="text-sm font-bold text-slate-500 whitespace-nowrap">{currentStaff.name} さん</span>
+                                    <span className="text-sm font-bold text-slate-500 whitespace-nowrap">{currentStaff.name} </span>
                                 )}
                                 <button
                                     onClick={signOut}

@@ -81,7 +81,7 @@ const CertificationManager = ({ workers = [], isLoading, setIsLoading, fetchAllD
                     c.name === trimmedName && c.id !== certForm.id
                 );
                 if (isDuplicate) {
-                    showToast(`「${targetWorker.name}」さんは既に「${trimmedName}」を登録済みです。`, 'error');
+                    showToast(`「${targetWorker.name}」は既に「${trimmedName}」を登録済みです。`, 'error');
                     setIsSaving(false);
                     setIsLoading(false);
                     return;

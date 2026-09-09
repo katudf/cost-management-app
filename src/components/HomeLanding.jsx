@@ -56,7 +56,7 @@ const HomeLanding = ({ onNavigate, staffName, onSignOut, systemName = 'CostNavi'
                     <div className="flex flex-col items-start sm:items-end gap-2">
                         <p className="text-sm font-bold text-slate-500 tabular-nums">{formatNow(now)}</p>
                         <div className="flex items-center gap-2 bg-white/70 rounded-lg px-3 py-1.5 border border-slate-200">
-                            {staffName && <span className="text-sm font-bold text-slate-600 whitespace-nowrap">{staffName} さん</span>}
+                            {staffName && <span className="text-sm font-bold text-slate-600 whitespace-nowrap">{staffName} </span>}
                             <button
                                 onClick={onSignOut}
                                 aria-label="ログアウト"

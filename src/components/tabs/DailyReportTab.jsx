@@ -126,7 +126,7 @@ const DailyReportTab = ({
                                                     target="_blank"
                                                     rel="noopener noreferrer"
                                                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 transition"
-                                                    title={`${data.name}さんの日報編集画面を開く`}
+                                                    title={`${data.name}の日報編集画面を開く`}
                                                 >
                                                     <Edit3 size={14} /> 日報編集
                                                 </a>

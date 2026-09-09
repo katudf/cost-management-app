@@ -34,7 +34,7 @@ const ExportReportModal = ({ isOpen, workerName, workerNames, exportWeekStart, s
                     </div>
                 ) : (
                     <p className="text-slate-600 mb-6 font-bold text-sm">
-                        対象作業員: <span className="text-blue-600 text-base">{names[0]}</span> さん
+                        対象作業員: <span className="text-blue-600 text-base">{names[0]}</span> 
                     </p>
                 )}
 
