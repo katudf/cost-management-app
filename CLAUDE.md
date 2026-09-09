@@ -114,3 +114,9 @@ src/
 - `public/fonts/` にNotoSansJPを格納。PDF生成時にフェッチして埋め込むため、devサーバー起動中でないとPDFプレビューが崩れる場合あり
 - Gemini APIキーのセキュリティ: クライアント側の漏洩を防ぐため、Supabase Edge Functions 経由の呼び出しに移行しました。キーは本番 Supabase の Secrets で設定します。
 - `system_settings` テーブルは `id=1` の固定1行で管理。INSERT不要、UPDATEのみ
+
+## 複数エージェントでの作業
+
+分担は `docs/AGENTS.md` を参照。
+**実装の書き込みはデスクトップ版 Claude Code に寄せる。** Herdr の検証役は
+`docs/handoff/` 内の自分のファイルだけを書く。
