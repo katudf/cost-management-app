@@ -7,7 +7,7 @@
  *   EXECUTE 権限を anon から剥奪し忘れると、未認証の第三者が
  *   /rest/v1/rpc/<関数名> から直接呼べてしまう。
  *   実際 restore_estimate / purge_expired_estimates がこの状態になっていた
- *   （20260910000000_fix_estimate_rpc_anon_bypass で修正）。
+ *   （20260910054306_fix_estimate_rpc_anon_bypass で修正）。
  *
  *   関数を追加するたびに手作業で確認するのは漏れるので、
  *   「anonから叩けてはいけないもの」を一覧で持ち、CIで毎回検証する。
@@ -87,8 +87,22 @@ const FORBIDDEN_READS = [
   { name: 'estimate_items', why: '見積明細' },
   { name: 'Customers', why: '顧客情報' },
   { name: 'PurchaseRecords', why: '仕入帳' },
+  // 塗料DB系13テーブル（全数を網羅する。
+  //   20260910055855_scope_paint_policies_to_authenticated で
+  //   ポリシーの対象ロールを authenticated に限定済み）
+  { name: 'paint_manufacturers', why: '塗料メーカマスタ' },
+  { name: 'paint_process_roles', why: '工程区分マスタ' },
   { name: 'paint_products', why: '塗料製品マスタ' },
+  { name: 'paint_classification_axes', why: '塗料分類軸マスタ' },
+  { name: 'paint_classification_tags', why: '塗料分類タグ値マスタ' },
+  { name: 'paint_product_tags', why: '製品×タグ中間テーブル' },
+  { name: 'paint_standards', why: '塗料規格マスタ' },
+  { name: 'paint_product_standards', why: '製品×規格中間テーブル' },
+  { name: 'paint_abbreviations', why: '塗料略記号マスタ' },
   { name: 'coating_systems', why: '塗装仕様マスタ' },
+  { name: 'coating_system_steps', why: '塗装仕様の構成行' },
+  { name: 'coating_system_variants', why: '塗装仕様のバリエーション' },
+  { name: 'coating_system_abbreviations', why: '塗装仕様略記号マスタ' },
 ];
 
 // 権限拒否とみなすステータス／エラーコード
