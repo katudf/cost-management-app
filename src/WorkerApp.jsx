@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { supabase } from './lib/supabase';
-import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2, PlusCircle, Clock, X, Wifi, WifiOff, FileText, CalendarDays, CopyPlus } from 'lucide-react';
+import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2, PlusCircle, Clock, X, Wifi, WifiOff, FileText, CalendarDays, CopyPlus, GripVertical } from 'lucide-react';
 import WorkerAssignmentView from './components/worker/WorkerAssignmentView';
 import { useAuth } from './hooks/useAuth';
 import LoginScreen from './components/auth/LoginScreen';
@@ -20,6 +20,52 @@ const formatDateLocal = (date) => {
     const m = String(date.getMonth() + 1).padStart(2, '0');
     const d = String(date.getDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
+};
+
+// 作業員ごとの作業項目タイル並び順を保存する localStorage キー（プロジェクト単位）
+const taskOrderStorageKey = (projectId) => `cost-app-worker-task-order-${projectId}`;
+
+// 保存済みの並び順（タスクidの配列）を読み込む。壊れていれば null。
+const loadSavedTaskOrder = (projectId) => {
+    if (!projectId) return null;
+    try {
+        const raw = localStorage.getItem(taskOrderStorageKey(projectId));
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed.map(String) : null;
+    } catch {
+        return null;
+    }
+};
+
+// タスク配列を保存済みの並び順で安定ソートする。
+// 保存順に無い項目（新規追加された作業など）は元の相対順を保ったまま末尾に回す。
+const applyTaskOrder = (tasksArr, projectId) => {
+    const savedOrder = loadSavedTaskOrder(projectId);
+    if (!savedOrder || savedOrder.length === 0) return tasksArr;
+    const rank = new Map(savedOrder.map((id, i) => [id, i]));
+    return tasksArr
+        .map((task, index) => ({ task, index }))
+        .sort((a, b) => {
+            const ra = rank.has(String(a.task.id)) ? rank.get(String(a.task.id)) : Number.MAX_SAFE_INTEGER;
+            const rb = rank.has(String(b.task.id)) ? rank.get(String(b.task.id)) : Number.MAX_SAFE_INTEGER;
+            if (ra !== rb) return ra - rb;
+            return a.index - b.index; // 同順位は元の順序を維持（安定ソート）
+        })
+        .map(({ task }) => task);
+};
+
+// 現在のタスク配列の並び順（idの配列）を localStorage に保存する。
+const saveTaskOrder = (tasksArr, projectId) => {
+    if (!projectId) return;
+    try {
+        localStorage.setItem(
+            taskOrderStorageKey(projectId),
+            JSON.stringify(tasksArr.map((t) => String(t.id)))
+        );
+    } catch {
+        // 保存に失敗しても並び替え自体は有効なので黙って無視する
+    }
 };
 
 const WorkerApp = () => {
@@ -209,7 +255,7 @@ const WorkerApp = () => {
                     };
                 });
 
-                setTasks(mappedTasks);
+                setTasks(applyTaskOrder(mappedTasks, selectedProjectId));
                 setSubcontractors(sData || []);
                 setDeletedSubcontractorIds([]);
                 setHasUnsavedChanges(false);
@@ -390,6 +436,192 @@ const WorkerApp = () => {
     const updateTaskField = (taskId, field, value) => {
         setHasUnsavedChanges(true);
         setTasks(prev => prev.map(t => t.id === taskId ? { ...t, [field]: value } : t));
+    };
+
+    // 作業項目タイルの並び替え（作業名を長押し＋ドラッグ）
+    // fromId のタイルを toId のタイルの位置へ移動する。並び順は作業員・現場ごとに localStorage へ保存。
+    const reorderTasks = useCallback((fromId, toId) => {
+        if (fromId == null || toId == null || String(fromId) === String(toId)) return;
+        setTasks(prev => {
+            const fromIndex = prev.findIndex(t => String(t.id) === String(fromId));
+            const toIndex = prev.findIndex(t => String(t.id) === String(toId));
+            if (fromIndex === -1 || toIndex === -1) return prev;
+            const next = [...prev];
+            const [moved] = next.splice(fromIndex, 1);
+            next.splice(toIndex, 0, moved);
+            saveTaskOrder(next, selectedProjectId);
+            return next;
+        });
+    }, [selectedProjectId]);
+
+    // ドラッグ状態（作業項目タイルの長押し並び替え用）
+    const [draggingTaskId, setDraggingTaskId] = useState(null);
+    const [dragOverTaskId, setDragOverTaskId] = useState(null);
+    // window に着脱するリスナーやタイマーを保持する。関数の同一性を固定するため ref に集約する。
+    const dragRef = useRef({
+        active: false,
+        fromId: null,
+        longPressTimer: null,
+        startX: 0,
+        startY: 0,
+        overId: null,
+        onMove: null,
+        onUp: null,
+        // 端部オートスクロール用
+        pointerX: 0,        // 直近のポインタ座標（clientX / clientY）
+        pointerY: 0,
+        scrollRaf: null,    // requestAnimationFrame のハンドル
+        scrollSpeed: 0,     // 現在のスクロール速度（px/frame）。正=下方向、負=上方向
+    });
+
+    // ドラッグ中、ポインタが画面の上端／下端に近いほど速く自動スクロールする。
+    const EDGE_SCROLL_ZONE = 90;      // 端からこの範囲(px)に入るとスクロール開始
+    const EDGE_SCROLL_MAX_SPEED = 18; // 端に密着したときの最大速度(px/frame)
+
+    const stopEdgeScroll = useCallback(() => {
+        const st = dragRef.current;
+        if (st.scrollRaf != null) {
+            cancelAnimationFrame(st.scrollRaf);
+            st.scrollRaf = null;
+        }
+        st.scrollSpeed = 0;
+    }, []);
+
+    // 現在のポインタ Y 座標から上端／下端への接近度合いを求め、必要ならスクロールループを回す。
+    const updateEdgeScroll = useCallback(() => {
+        const st = dragRef.current;
+        const vh = window.innerHeight;
+        const y = st.pointerY;
+        let speed = 0;
+        if (y < EDGE_SCROLL_ZONE) {
+            // 端に近いほど ratio が 1 に近づく → 速く上スクロール
+            const ratio = (EDGE_SCROLL_ZONE - y) / EDGE_SCROLL_ZONE;
+            speed = -Math.ceil(ratio * EDGE_SCROLL_MAX_SPEED);
+        } else if (y > vh - EDGE_SCROLL_ZONE) {
+            const ratio = (y - (vh - EDGE_SCROLL_ZONE)) / EDGE_SCROLL_ZONE;
+            speed = Math.ceil(ratio * EDGE_SCROLL_MAX_SPEED);
+        }
+        st.scrollSpeed = speed;
+
+        if (speed !== 0 && st.scrollRaf == null) {
+            const step = () => {
+                const s = dragRef.current;
+                if (!s.active || s.scrollSpeed === 0) {
+                    s.scrollRaf = null;
+                    return;
+                }
+                const before = window.scrollY;
+                window.scrollBy(0, s.scrollSpeed);
+                // これ以上スクロールできない（先頭／末尾に到達）なら停止
+                if (window.scrollY === before) {
+                    s.scrollRaf = null;
+                    s.scrollSpeed = 0;
+                    return;
+                }
+                // スクロールで下敷きのタイルが変わるのでドロップ先を再判定
+                const overId = findTaskIdAtPoint(s.pointerX, s.pointerY);
+                const nextOver = overId && overId !== String(s.fromId) ? overId : null;
+                if (nextOver !== s.overId) {
+                    s.overId = nextOver;
+                    setDragOverTaskId(nextOver);
+                }
+                s.scrollRaf = requestAnimationFrame(step);
+            };
+            st.scrollRaf = requestAnimationFrame(step);
+        }
+    }, []);
+
+    // 最新の reorderTasks を ref 経由で参照できるようにする（リスナー内から呼ぶため）
+    const reorderTasksRef = useRef(reorderTasks);
+    useEffect(() => { reorderTasksRef.current = reorderTasks; }, [reorderTasks]);
+
+    const teardownDragListeners = useCallback(() => {
+        const st = dragRef.current;
+        if (st.longPressTimer) { clearTimeout(st.longPressTimer); st.longPressTimer = null; }
+        if (st.onMove) { window.removeEventListener('pointermove', st.onMove); st.onMove = null; }
+        if (st.onUp) {
+            window.removeEventListener('pointerup', st.onUp);
+            window.removeEventListener('pointercancel', st.onUp);
+            st.onUp = null;
+        }
+        stopEdgeScroll();
+    }, [stopEdgeScroll]);
+
+    // タイル要素からタスクidを引く（ポインタ座標のヒットテスト用）
+    const findTaskIdAtPoint = (clientX, clientY) => {
+        const el = document.elementFromPoint(clientX, clientY);
+        if (!el) return null;
+        const tile = el.closest('[data-task-tile-id]');
+        return tile ? tile.getAttribute('data-task-tile-id') : null;
+    };
+
+    // アンマウント時にリスナーを確実に外す
+    useEffect(() => teardownDragListeners, [teardownDragListeners]);
+
+    const handleTaskHandlePointerDown = (e, taskId) => {
+        // 主ボタン（タッチ / 左クリック）のみ
+        if (e.button != null && e.button !== 0) return;
+        teardownDragListeners();
+        const st = dragRef.current;
+        st.active = false;
+        st.fromId = taskId;
+        st.startX = e.clientX;
+        st.startY = e.clientY;
+        st.pointerX = e.clientX;
+        st.pointerY = e.clientY;
+        st.overId = null;
+
+        const onMove = (ev) => {
+            const s = dragRef.current;
+            if (!s.active) {
+                // 長押し確定前に大きく動いたらスクロール意図とみなしてキャンセル
+                if (Math.abs(ev.clientX - s.startX) > 10 || Math.abs(ev.clientY - s.startY) > 10) {
+                    teardownDragListeners();
+                }
+                return;
+            }
+            ev.preventDefault();
+            s.pointerX = ev.clientX;
+            s.pointerY = ev.clientY;
+            const overId = findTaskIdAtPoint(ev.clientX, ev.clientY);
+            const next = overId && overId !== String(s.fromId) ? overId : null;
+            if (next !== s.overId) {
+                s.overId = next;
+                setDragOverTaskId(next);
+            }
+            // 上端／下端に近ければ自動スクロール（接近度合いで速度を段階変化）
+            updateEdgeScroll();
+        };
+        const onUp = () => {
+            const s = dragRef.current;
+            const wasActive = s.active;
+            const fromId = s.fromId;
+            const overId = s.overId;
+            teardownDragListeners();
+            s.active = false;
+            s.fromId = null;
+            s.overId = null;
+            setDraggingTaskId(null);
+            setDragOverTaskId(null);
+            if (wasActive && fromId != null && overId != null) {
+                reorderTasksRef.current(fromId, overId);
+            }
+        };
+
+        st.onMove = onMove;
+        st.onUp = onUp;
+        window.addEventListener('pointermove', onMove, { passive: false });
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onUp);
+
+        // 250ms 長押しでドラッグ開始
+        st.longPressTimer = setTimeout(() => {
+            const s = dragRef.current;
+            s.longPressTimer = null;
+            s.active = true;
+            setDraggingTaskId(String(taskId));
+            if (navigator.vibrate) { try { navigator.vibrate(15); } catch { /* noop */ } }
+        }, 250);
     };
 
     const updateSlotField = (taskId, slotId, field, value) => {
@@ -690,7 +922,7 @@ const WorkerApp = () => {
         if (!ok) return;
         setSelectedProjectId(draft.selectedProjectId);
         setSelectedDate(draft.selectedDate);
-        setTasks(draft.tasks || []);
+        setTasks(applyTaskOrder(draft.tasks || [], draft.selectedProjectId));
         setSubcontractors(draft.subcontractors || []);
         setDeletedSubcontractorIds(draft.deletedSubcontractorIds || []);
         setHasUnsavedChanges(true);
@@ -1459,12 +1691,37 @@ const WorkerApp = () => {
                         )}
 
                         {/* ========== 作業項目カード ========== */}
-                        {tasksWithCalculation.map((t) => (
-                            <div key={t.id} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                        {tasksWithCalculation.map((t) => {
+                            const isDragging = draggingTaskId === String(t.id);
+                            const isDragOver = dragOverTaskId === String(t.id);
+                            return (
+                            <div
+                                key={t.id}
+                                data-task-tile-id={String(t.id)}
+                                className={`bg-white rounded-2xl shadow-sm border overflow-hidden transition-shadow ${
+                                    isDragging
+                                        ? 'border-emerald-400 shadow-lg opacity-70 scale-[0.99]'
+                                        : isDragOver
+                                            ? 'border-emerald-400 ring-2 ring-emerald-200'
+                                            : 'border-slate-200'
+                                }`}
+                            >
                                 <div className="bg-slate-50 p-4 border-b border-slate-100 flex justify-between items-center">
-                                    <h3 className="font-bold text-slate-800 leading-snug">{t.name}</h3>
+                                    <h3
+                                        role="button"
+                                        tabIndex={0}
+                                        aria-label={`${t.name}：長押しでドラッグして並び替え`}
+                                        title="長押ししてドラッグすると並び替えできます"
+                                        onPointerDown={(e) => handleTaskHandlePointerDown(e, t.id)}
+                                        onContextMenu={(e) => e.preventDefault()}
+                                        className="font-bold text-slate-800 leading-snug flex items-center gap-1.5 select-none cursor-grab active:cursor-grabbing flex-1 min-w-0"
+                                        style={{ touchAction: 'none' }}
+                                    >
+                                        <GripVertical size={16} className="shrink-0 text-slate-400" aria-hidden="true" />
+                                        <span className="min-w-0">{t.name}</span>
+                                    </h3>
                                     {t.has_any_input && (
-                                        <span className="text-sm font-black text-emerald-600">{t.total_hours.toFixed(1)}h</span>
+                                        <span className="text-sm font-black text-emerald-600 shrink-0 ml-2">{t.total_hours.toFixed(1)}h</span>
                                     )}
                                 </div>
                                 <div className="p-4 flex flex-col gap-3">
@@ -1563,7 +1820,8 @@ const WorkerApp = () => {
                                     )}
                                 </div>
                             </div>
-                        ))}
+                            );
+                        })}
 
                         {/* 新規作業項目追加 */}
                         <button onClick={handleAddNewTask}
