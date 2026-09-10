@@ -75,6 +75,11 @@ const FORBIDDEN_RPCS = [
   { name: 'current_staff_role', body: {}, why: 'ロール判定ヘルパー' },
   { name: 'protect_estimate_approval_columns', body: {}, why: 'トリガー関数' },
   { name: 'protect_office_staff_privileged_columns', body: {}, why: 'トリガー関数' },
+  // 20260910231843_fix_function_search_path_and_anon_exec で anon/PUBLIC から EXECUTE を剥奪。
+  //   いずれも SECURITY INVOKER + RLS が唯一の防波堤だったもの。authenticated は残す。
+  { name: 'save_estimate_items_v2', body: { p_estimate_id: 1, p_sheets: [], p_items: [] }, why: '見積明細の一括保存' },
+  { name: 'overwrite_paste', body: { paste_data: [] }, why: '配置表の貼り付け上書き（サーバ側デッドコード）' },
+  { name: 'get_next_estimate_seq', body: { date_prefix: '20260911' }, why: '見積番号の採番' },
 ];
 
 // ---------------------------------------------------------
@@ -90,7 +95,7 @@ const FORBIDDEN_READS = [
   // 塗料DB系13テーブル（全数を網羅する。
   //   20260910055855_scope_paint_policies_to_authenticated で
   //   ポリシーの対象ロールを authenticated に限定済み）
-  { name: 'paint_manufacturers', why: '塗料メーカマスタ' },
+  { name: 'paint_manufacturers', why: '塗料メーカーマスタ' },
   { name: 'paint_process_roles', why: '工程区分マスタ' },
   { name: 'paint_products', why: '塗料製品マスタ' },
   { name: 'paint_classification_axes', why: '塗料分類軸マスタ' },
