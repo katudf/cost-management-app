@@ -56,7 +56,9 @@ export async function fetchWithCache(key, fetcher) {
     try {
         const { data, error } = await fetcher();
         if (error) throw error;
-        if (data) setCache(key, data);
+        // 空配列はキャッシュしない。未認証時に RLS が空を返すことがあり、
+        // それを保存すると再読込後も空データを配り続けてしまうため。
+        if (data && !(Array.isArray(data) && data.length === 0)) setCache(key, data);
         return { data, fromCache: false };
     } catch (e) {
         const cached = getCache(key);

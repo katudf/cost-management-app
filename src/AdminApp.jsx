@@ -272,9 +272,13 @@ const App = () => {
     }, [dashboardStats.displayProjects, dashboardSubTab]);
 
 
+    // 認証が確定し、ログイン済みになってからデータを取得する。
+    // （未認証のまま fetchAllData を走らせると RLS で空の結果が返り、
+    //   ログイン直後に一覧が空のまま表示されてしまうため）
     useEffect(() => {
+        if (isAuthLoading || !isAuthenticated) return;
         fetchAllData(null, setActiveProjectId);
-    }, [fetchAllData]);
+    }, [fetchAllData, isAuthLoading, isAuthenticated]);
 
     useEffect(() => {
         if (activeProjectId) {

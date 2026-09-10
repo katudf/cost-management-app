@@ -111,7 +111,11 @@ const WorkerApp = () => {
     const [approvingAllowanceId, setApprovingAllowanceId] = useState(null);
 
     // Initial load
+    // 認証が確定してログイン済みになるまでデータ取得を待つ。
+    // （未認証のまま実行すると RLS で空の結果が返り、さらに fetchWithCache が
+    //   その空データをキャッシュしてしまい、ログイン直後だけでなく再読込後も空になる）
     useEffect(() => {
+        if (isAuthLoading || !isAuthenticated) return;
         const init = async () => {
             setIsLoading(true);
             try {
@@ -170,7 +174,7 @@ const WorkerApp = () => {
             window.removeEventListener('online', handleOnline);
             window.removeEventListener('offline', handleOffline);
         };
-    }, []);
+    }, [isAuthLoading, isAuthenticated]);
 
     // Fetch worker daily records across ALL projects
     useEffect(() => {
