@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './lib/supabase';
-import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2, PlusCircle, Clock, X, Wifi, WifiOff, FileText, CalendarDays } from 'lucide-react';
+import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2, PlusCircle, Clock, X, Wifi, WifiOff, FileText, CalendarDays, CopyPlus } from 'lucide-react';
 import WorkerAssignmentView from './components/worker/WorkerAssignmentView';
 import { useAuth } from './hooks/useAuth';
 import LoginScreen from './components/auth/LoginScreen';
@@ -35,6 +35,7 @@ const WorkerApp = () => {
     const [tasks, setTasks] = useState([]);
     const [isSaving, setIsSaving] = useState(false);
     const [isExportingPDF, setIsExportingPDF] = useState(false);
+    const [isCopyingPreviousDay, setIsCopyingPreviousDay] = useState(false);
     const [saveMessage, setSaveMessage] = useState('');
 
     const [subcontractors, setSubcontractors] = useState([]);
@@ -419,6 +420,92 @@ const WorkerApp = () => {
                 deleted_record_ids: newDeleted,
             };
         }));
+    };
+
+    // 直前に入力実績がある日のこの現場のデータを、現在の日付にコピーする
+    const handleCopyPreviousDay = async () => {
+        if (!selectedProjectId || !loggedInWorker) {
+            showToast('先に現場を選択してください。', 'error');
+            return;
+        }
+        setIsCopyingPreviousDay(true);
+        try {
+            // 現在の日付より前で、この作業員・この現場に実績がある最新の日付を1件取得
+            const { data: latestRows, error: latestErr } = await supabase.from('TaskRecords')
+                .select('date')
+                .eq('project_id', selectedProjectId)
+                .eq('worker_name', loggedInWorker.name)
+                .lt('date', selectedDate)
+                .order('date', { ascending: false })
+                .limit(1);
+            if (latestErr) throw latestErr;
+            if (!latestRows || latestRows.length === 0) {
+                showToast('この現場で、これより前の入力データが見つかりませんでした。', 'warning');
+                return;
+            }
+            const sourceDate = latestRows[0].date;
+
+            // その日のこの作業員・この現場の全レコードを取得
+            const { data: srcRecords, error: srcErr } = await supabase.from('TaskRecords')
+                .select('*')
+                .eq('project_id', selectedProjectId)
+                .eq('worker_name', loggedInWorker.name)
+                .eq('date', sourceDate);
+            if (srcErr) throw srcErr;
+            if (!srcRecords || srcRecords.length === 0) {
+                showToast('コピー元のデータが見つかりませんでした。', 'warning');
+                return;
+            }
+
+            const ok = await confirm({
+                title: '前日の作業をコピー',
+                message: `${sourceDate} の入力内容を現在の入力欄にコピーします。${hasUnsavedChanges ? '未送信の入力内容は上書きされます。' : ''}よろしいですか？`,
+                confirmText: 'コピーする',
+                variant: hasUnsavedChanges ? 'danger' : 'primary',
+            });
+            if (!ok) return;
+
+            // 現在表示中の作業項目のうち、コピー元に実績があるものだけを対象にする
+            const matchedTaskIds = new Set(
+                tasks
+                    .filter(t => srcRecords.some(r => r.project_task_id === t.id))
+                    .map(t => t.id)
+            );
+            if (matchedTaskIds.size === 0) {
+                showToast(`${sourceDate} の実績はありましたが、現在の作業項目と一致するものがありませんでした。`, 'warning');
+                return;
+            }
+
+            setTasks(prev => prev.map(t => {
+                if (!matchedTaskIds.has(t.id)) return t;
+                const srcForTask = srcRecords.filter(r => r.project_task_id === t.id);
+                const time_slots = srcForTask.map((r, i) => {
+                    const start = formatTimeDisplay(r.start_time) || '';
+                    const end = formatTimeDisplay(r.end_time) || '';
+                    return {
+                        slot_id: `copy-${Date.now()}-${t.id}-${i}`,
+                        record_id: null,
+                        start_time: start,
+                        end_time: end,
+                        is_overnight: start > end && end !== '',
+                    };
+                });
+                return {
+                    ...t,
+                    time_slots,
+                    today_note: srcForTask[0].note || '',
+                    work_allowance: srcForTask[0].work_allowance || false,
+                };
+            }));
+
+            setHasUnsavedChanges(true);
+            showToast(`${sourceDate} の作業を${matchedTaskIds.size}件コピーしました。内容を確認して送信してください。`, 'success');
+        } catch (e) {
+            console.error('Copy previous day error:', e);
+            showToast('前日の作業のコピーに失敗しました。', 'error');
+        } finally {
+            setIsCopyingPreviousDay(false);
+        }
     };
 
     const addSubcontractor = () => { setHasUnsavedChanges(true); setSubcontractors(prev => [...prev, { id: 'temp-' + Date.now(), company_name: '', worker_count: 1 }]); };
@@ -981,6 +1068,15 @@ const WorkerApp = () => {
             <header className="bg-blue-600 text-white p-4 shadow-md sticky top-0 z-40 flex items-center justify-between">
                 <div className="flex items-center gap-2"><HardHat size={20} /><span className="font-bold text-lg leading-none">{loggedInWorker.name}</span></div>
                 <div className="flex items-center gap-2">
+                    <button
+                        onClick={handleCopyPreviousDay}
+                        disabled={isCopyingPreviousDay}
+                        aria-label="前日の作業をコピー"
+                        title="直前に入力実績がある日の作業をコピー"
+                        className="flex items-center gap-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 px-3 py-1.5 rounded-lg text-sm font-bold transition"
+                    >
+                        {isCopyingPreviousDay ? <Loader2 size={16} className="animate-spin" /> : <CopyPlus size={16} />} 前日の作業をコピー
+                    </button>
                     <button
                         onClick={() => setShowAssignmentChart(true)}
                         aria-label="配置表を表示"
