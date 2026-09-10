@@ -11,22 +11,14 @@ const DailyReportTab = ({
     const [showResigned, setShowResigned] = useState(false);
     const [checkedWorkers, setCheckedWorkers] = useState({});
 
-    // 作業員マスターの順序に同期しつつ、退社済みフィルターを適用
+    // 従業員マスターに登録されている従業員すべてを対象にする。
+    // 作業実績の有無にかかわらず一覧へ表示し、実績データがあればマージする。
     const filteredSummaryData = useMemo(() => {
-        const base = showResigned
-            ? (workerSummaryData || [])
-            : (workerSummaryData || []).filter(data => {
-                const worker = workers.find(w => w.name === data.name);
-                return !worker || !worker.resignation_date;
-            });
+        const summaryByName = new Map((workerSummaryData || []).map(d => [d.name, d]));
 
-        return [...base].sort((a, b) => {
-            const idxA = workers.findIndex(w => w.name === a.name);
-            const idxB = workers.findIndex(w => w.name === b.name);
-            const orderA = idxA === -1 ? Infinity : idxA;
-            const orderB = idxB === -1 ? Infinity : idxB;
-            return orderA - orderB;
-        });
+        return (workers || [])
+            .filter(w => showResigned || !w.resignation_date)
+            .map(w => summaryByName.get(w.name) || { name: w.name, totalHours: 0, projects: [] });
     }, [workerSummaryData, workers, showResigned]);
 
     const allChecked = filteredSummaryData.length > 0 && filteredSummaryData.every(d => checkedWorkers[d.name]);
@@ -56,7 +48,7 @@ const DailyReportTab = ({
         <div className={`p-6 bg-slate-50 min-h-[500px] ${isLoading ? 'opacity-50 pointer-events-none' : ''}`}>
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
                 <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                    <FileText className="text-blue-600" /> 作業員別 日報出力
+                    <FileText className="text-blue-600" /> 従業員別 日報出力
                 </h2>
                 <div className="flex items-center gap-3">
                     <button
@@ -65,7 +57,7 @@ const DailyReportTab = ({
                         className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-blue-700 transition disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                         <FileText size={16} />
-                        {checkedCount > 0 ? `${checkedCount}名分を出力` : '出力する作業員を選択'}
+                        {checkedCount > 0 ? `${checkedCount}名分を出力` : '出力する従業員を選択'}
                     </button>
                 </div>
             </div>
@@ -83,14 +75,14 @@ const DailyReportTab = ({
                                     title="全選択/全解除"
                                 />
                             </th>
-                            <th className="p-3 font-bold">作業員名</th>
+                            <th className="p-3 font-bold">従業員名</th>
                             <th className="p-3 font-bold rounded-r-lg w-32"></th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                         {filteredSummaryData.length === 0 ? (
                             <tr>
-                                <td colSpan="3" className="p-8 text-center text-slate-400 font-bold">まだ作業実績がありません</td>
+                                <td colSpan="3" className="p-8 text-center text-slate-400 font-bold">従業員が登録されていません</td>
                             </tr>
                         ) : (
                             filteredSummaryData.map((data, idx) => {

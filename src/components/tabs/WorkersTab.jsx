@@ -49,7 +49,7 @@ const WorkersTab = ({
                 onDelete={removeWorker}
             />
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Users className="text-blue-600" /> 作業員管理・稼働確認</h2>
+                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Users className="text-blue-600" /> 従業員管理・稼働確認</h2>
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
                     <button
                         onClick={handleExportCertifications}
@@ -68,7 +68,7 @@ const WorkersTab = ({
                                 onChange={(e) => setShowResigned(e.target.checked)}
                                 className="w-4 h-4 rounded accent-blue-600"
                             />
-                            <span className="text-sm font-bold text-slate-600">退社済みの作業員を表示</span>
+                            <span className="text-sm font-bold text-slate-600">退社済み社員を表示</span>
                         </label>
                     </div>
                 </div>
@@ -80,7 +80,7 @@ const WorkersTab = ({
                     <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-100">
                         <h3 className="font-bold text-slate-700 flex items-center gap-2">
                             <Settings size={18} className="text-slate-400" />
-                            作業員マスター設定
+                            従業員マスター設定
                         </h3>
                         <button
                             onClick={addWorker}
@@ -90,10 +90,12 @@ const WorkersTab = ({
                         </button>
                     </div>
                     <div className="space-y-2">
-                        {filteredWorkers.map((worker, idx) => (
-                            <div 
+                        {filteredWorkers.map((worker, idx) => {
+                            const isResigned = !!worker.resignation_date;
+                            return (
+                            <div
                                 key={worker.id}
-                                className="flex flex-col sm:flex-row items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-lg hover:border-blue-300 hover:bg-white transition group gap-2 cursor-grab active:cursor-grabbing"
+                                className={`flex flex-col sm:flex-row items-center justify-between p-3 border rounded-lg transition group gap-2 cursor-grab active:cursor-grabbing ${isResigned ? 'bg-rose-50 border-rose-200 hover:border-rose-300 hover:bg-rose-100/60' : 'bg-slate-50 border-slate-200 hover:border-blue-300 hover:bg-white'}`}
                                 draggable={true}
                                 onDragStart={(e) => {
                                     e.dataTransfer.setData('workerid', worker.id.toString());
@@ -121,11 +123,16 @@ const WorkersTab = ({
                                     <span className="text-xs text-slate-400 font-mono w-4">{idx + 1}</span>
                                     <div className="flex flex-col min-w-[150px]">
                                         <span className="text-[10px] text-slate-400 font-bold">{worker.kana || 'フリガナ未設定'}</span>
-                                        <span className="font-bold text-lg text-slate-800 group-hover:text-blue-700 transition">{worker.name}</span>
+                                        <span className={`font-bold text-lg transition ${isResigned ? 'text-rose-800 group-hover:text-rose-900' : 'text-slate-800 group-hover:text-blue-700'}`}>{worker.name}</span>
                                     </div>
                                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${worker.worker_type === WORKER_TYPE.OFFICE ? 'bg-purple-100 text-purple-700' : worker.worker_type === WORKER_TYPE.MANAGER ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
                                         {worker.worker_type || WORKER_TYPE.WORKER}
                                     </span>
+                                    {isResigned && (
+                                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-200 text-rose-800">
+                                            退社済み
+                                        </span>
+                                    )}
                                     <div className="flex flex-col text-sm text-slate-600 ml-4 hidden md:flex">
                                         <div className="flex items-center gap-1"><Calendar size={14} className="text-slate-400" /> {worker.birthDate ? `${calculateAge(worker.birthDate)}歳` : '年齢未定'}</div>
                                     </div>
@@ -138,7 +145,8 @@ const WorkersTab = ({
                                     <ChevronRight size={18} />
                                 </div>
                             </div>
-                        ))}
+                            );
+                        })}
                         {filteredWorkers.length === 0 && (
                             <div className="text-center py-8 text-slate-400 font-bold text-sm">作業員が登録されていません</div>
                         )}

@@ -519,7 +519,7 @@ const App = () => {
                                     { key: 'assignment', label: '配置表', Icon: Calendar },
                                     { key: 'daily_report', label: '日報', Icon: FileText },
                                     { key: 'estimate', label: '見積', Icon: Clipboard },
-                                    { key: 'workers', label: '作業員', Icon: Users },
+                                    { key: 'workers', label: '従業員', Icon: Users },
                                     { key: 'paint_db', label: 'データベース', Icon: Database },
                                     { key: 'settings', label: '設定', Icon: Settings },
                                 ].map(({ key, label, Icon }) => (

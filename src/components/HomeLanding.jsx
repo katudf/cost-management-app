@@ -10,7 +10,7 @@ const TILES = [
     { key: 'assignment', label: '工程表', Icon: Calendar },
     { key: 'estimate', label: '見積', Icon: Clipboard },
     { key: 'daily_report', label: '日報管理', Icon: FileText },
-    { key: 'workers', label: '作業員管理', Icon: Users },
+    { key: 'workers', label: '従業員管理', Icon: Users },
     { key: 'paint_db', label: 'データベース', Icon: Database },
 ];
 
