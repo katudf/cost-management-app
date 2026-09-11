@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { calculateProjectsSummary } from '../utils/projectUtils';
+import { calculateNinku, getSeasonConfig } from '../utils/workTimeUtils';
 
 export function useDashboardStats({ projects, activeProject, hourlyWage }) {
     const [searchQuery, setSearchQuery] = useState('');
@@ -33,9 +34,12 @@ export function useDashboardStats({ projects, activeProject, hourlyWage }) {
     }, [projects]);
 
     const summaryData = useMemo(() => {
-        if (!activeProject || !activeProject.masterData) return { items: [], totalActual: 0, totalTarget: 0, totalPredictedProfitLoss: 0, subcontractorCost: 0 };
+        if (!activeProject || !activeProject.masterData) return { items: [], totalActual: 0, totalTarget: 0, totalActualNinku: 0, totalTargetNinku: 0, totalPredictedProfitLoss: 0, subcontractorCost: 0 };
         const items = activeProject.masterData.map(m => {
-            const actual = activeProject.records.filter(r => r.taskId === m.id).reduce((sum, r) => sum + Number(r.hours), 0);
+            const taskRecords = activeProject.records.filter(r => r.taskId === m.id);
+            const actual = taskRecords.reduce((sum, r) => sum + Number(r.hours), 0);
+            // 人工はレコードごとの日付で季節判定して計算し、合算する（実労働時間の合計を季節共通の定数で割らない）
+            const actualNinku = taskRecords.reduce((sum, r) => sum + calculateNinku(Number(r.hours) || 0, r.date), 0);
             const progress = activeProject.progressData[m.id] || 0;
             const consumptionRate = m.target > 0 ? (actual / m.target) * 100 : 0;
             const variance = progress - consumptionRate;
@@ -43,11 +47,14 @@ export function useDashboardStats({ projects, activeProject, hourlyWage }) {
             const predictedFinal = progress > 0 ? (actual / (progress / 100)) : 0;
             const predictedProfitLoss = progress > 0 ? (m.target - predictedFinal) * hourlyWage : 0;
 
-            return { ...m, actual, progress, variance, predictedProfitLoss, status: variance < -5 ? 'danger' : variance < 0 ? 'warning' : 'ok' };
+            return { ...m, actual, actualNinku, progress, variance, predictedProfitLoss, status: variance < -5 ? 'danger' : variance < 0 ? 'warning' : 'ok' };
         });
 
         const totalActual = items.reduce((sum, i) => sum + i.actual, 0);
         const totalTarget = items.reduce((sum, i) => sum + i.target, 0);
+        const totalActualNinku = items.reduce((sum, i) => sum + i.actualNinku, 0);
+        // 目標(target)は見積/計画上の合計時間であり日付を持たないため、季節デフォルト(getSeasonConfig(null))で換算する
+        const totalTargetNinku = calculateNinku(totalTarget, null);
         const totalPredictedProfitLoss = items.reduce((sum, i) => sum + i.predictedProfitLoss, 0);
         const subcontractorCost = (activeProject.subcontractors || []).reduce((sum, s) => sum + (Number(s.worker_count) * Number(s.unit_price || 0)), 0);
 
@@ -55,6 +62,8 @@ export function useDashboardStats({ projects, activeProject, hourlyWage }) {
             items,
             totalActual,
             totalTarget,
+            totalActualNinku,
+            totalTargetNinku,
             totalPredictedProfitLoss: totalPredictedProfitLoss - subcontractorCost,
             subcontractorCost
         };

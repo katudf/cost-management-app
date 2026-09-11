@@ -157,40 +157,41 @@ export const exportToExcel = (activeProject, summaryData) => {
     applyStyleToSheet(ws1, 7);
     applyStyleToSheet(ws2, 8);
 
-    // 作業員別の集計データ作成（季節別の定時労働時間で人工数を算出）
+    // 作業員別の集計データ作成（レコードごとの日付で季節別に人工数を算出し合算）
     const workerHours = {};
     activeProject.records.forEach(r => {
         const workerName = r.worker || '未設定';
         if (!workerHours[workerName]) {
-            workerHours[workerName] = { hours: 0, overtime: 0 };
+            workerHours[workerName] = { hours: 0, overtime: 0, ninku: 0 };
         }
         workerHours[workerName].hours += Number(r.hours || 0);
         workerHours[workerName].overtime += Number(r.overtime_hours || 0);
+        workerHours[workerName].ninku += calculateNinku(Number(r.hours || 0), r.date);
     });
 
     const ws3Data = [
         siteNameRow,
-        ["作業員名", "延べ実労働時間 (h)", "うち時間外 (h)", "延べ人工 (7.5h/人工)"]
+        ["作業員名", "延べ実労働時間 (h)", "うち時間外 (h)", "延べ人工"]
     ];
 
     let totalWorkerHours = 0;
     let totalWorkerOvertime = 0;
+    let totalWorkerNinku = 0;
     const sortedWorkers = Object.keys(workerHours).sort((a, b) => workerHours[b].hours - workerHours[a].hours);
 
     sortedWorkers.forEach(worker => {
-        const { hours, overtime } = workerHours[worker];
+        const { hours, overtime, ninku } = workerHours[worker];
         totalWorkerHours += hours;
         totalWorkerOvertime += overtime;
-        // 人工数は季節のデフォルト（7.5h）で算出
-        const ninku = parseFloat((hours / 7.5).toFixed(2));
-        ws3Data.push([worker, parseFloat(hours.toFixed(1)), parseFloat(overtime.toFixed(1)), ninku]);
+        totalWorkerNinku += ninku;
+        ws3Data.push([worker, parseFloat(hours.toFixed(1)), parseFloat(overtime.toFixed(1)), parseFloat(ninku.toFixed(2))]);
     });
 
     ws3Data.push([
         "【合計】",
         parseFloat(totalWorkerHours.toFixed(1)),
         parseFloat(totalWorkerOvertime.toFixed(1)),
-        parseFloat((totalWorkerHours / 7.5).toFixed(2))
+        parseFloat(totalWorkerNinku.toFixed(2))
     ]);
 
     const ws3 = xlsx.utils.aoa_to_sheet(ws3Data);
