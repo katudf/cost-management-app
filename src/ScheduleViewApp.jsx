@@ -1,23 +1,21 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Calendar, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
-import { supabase } from './lib/supabase';
 import { toDateStr, addDays, getDayOfWeek, getMonday } from './utils/dateUtils';
-import { DEFAULT_COLORS, SCHEDULE_TYPES, WORKER_TYPE } from './utils/constants';
+import { DEFAULT_COLORS, SCHEDULE_TYPES } from './utils/constants';
 import { useAuth } from './hooks/useAuth';
+import { useScheduleViewData } from './hooks/useScheduleViewData';
 import LoginScreen from './components/auth/LoginScreen';
 import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
 
 
 const ScheduleViewApp = () => {
     const { isAuthenticated, isLoading: isAuthLoading, isPasswordRecovery } = useAuth();
-    const [isLoading, setIsLoading] = useState(true);
-    const [workers, setWorkers] = useState([]);
-    const [assignments, setAssignments] = useState([]);
-    const [barProjects, setBarProjects] = useState([]);
 
     // 表示期間: 2週間
     const [startDate, setStartDate] = useState(() => getMonday(new Date()));
     const totalDays = 14;
+
+    const { workers, assignments, barProjects, isLoading } = useScheduleViewData(startDate, totalDays);
 
     const dateColumns = useMemo(() => {
         const cols = [];
@@ -46,38 +44,6 @@ const ScheduleViewApp = () => {
         }
         return groups;
     }, [dateColumns]);
-
-    // データ取得
-    const fetchData = useCallback(async () => {
-        setIsLoading(true);
-        try {
-            const startStr = toDateStr(startDate);
-            const endStr = toDateStr(addDays(startDate, totalDays - 1));
-
-            const [aRes, pRes, wRes] = await Promise.all([
-                supabase.from('Assignments').select('*').gte('date', startStr).lte('date', endStr),
-                supabase.from('Projects').select('id, name, startDate, endDate, bar_color, status')
-                    .not('startDate', 'is', null).not('endDate', 'is', null)
-                    .order('created_at', { ascending: true }),
-                // viewer/workerロールはWorkers基表を直接読めない（機微カラム遮蔽）ため安全カラムのみのビューを使う
-                supabase.from('workers_directory').select('id, name, display_order, worker_type')
-                    .order('display_order', { ascending: true, nullsFirst: false })
-            ]);
-
-            setAssignments(aRes.data || []);
-            setBarProjects((pRes.data || []).map((p, idx) => ({
-                ...p,
-                color: p.bar_color || DEFAULT_COLORS[idx % DEFAULT_COLORS.length]
-            })));
-            setWorkers((wRes.data || []).filter(w => w.name && w.name.trim() !== '' && w.worker_type !== WORKER_TYPE.OFFICE));
-        } catch (e) {
-            console.error('データ取得エラー:', e);
-        } finally {
-            setIsLoading(false);
-        }
-    }, [startDate]);
-
-    useEffect(() => { fetchData(); }, [fetchData]);
 
     // ルックアップ
     const assignmentLookup = useMemo(() => {
