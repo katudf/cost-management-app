@@ -1,42 +1,23 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Search, Plus, Edit3, Trash2, Save, X, User, MapPin, Phone, UserCheck, Loader2 } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
 import { useToast } from '../../components/Toast';
 import ConfirmModal from '../ConfirmModal';
+import { useCustomerSettingsData } from '../../hooks/useCustomerSettingsData';
 
 const CustomerSettings = () => {
     const { showToast } = useToast();
-    const [customers, setCustomers] = useState([]);
-    const [staffList, setStaffList] = useState([]);
-    const [isLoading, setIsLoading] = useState(true);
+    const { customers, staffList, isLoading, refetch, createCustomer, updateCustomer, deleteCustomer } = useCustomerSettingsData();
     const [isSaving, setIsSaving] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [form, setForm] = useState({ id: null, name: '', address: '', contactPerson: '', phone: '' });
     const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
-    const fetchCustomers = useCallback(async () => {
-        setIsLoading(true);
-        try {
-            const [{ data: cData, error: cErr }, { data: sData, error: sErr }] = await Promise.all([
-                supabase.from('Customers').select('*').order('name', { ascending: true }),
-                supabase.from('office_staff').select('id, name').order('name', { ascending: true }),
-            ]);
-
-            if (cErr) throw cErr;
-            if (sErr) throw sErr;
-            setCustomers(cData || []);
-            setStaffList(sData || []);
-        } catch (error) {
+    useEffect(() => {
+        refetch().catch((error) => {
             console.error('顧客情報取得エラー:', error);
             showToast('顧客情報の取得に失敗しました', 'error');
-        } finally {
-            setIsLoading(false);
-        }
-    }, [showToast]);
-
-    useEffect(() => {
-        fetchCustomers();
-    }, [fetchCustomers]);
+        });
+    }, [refetch, showToast]);
 
     const handleSave = async () => {
         if (!form.name.trim()) {
@@ -54,17 +35,15 @@ const CustomerSettings = () => {
             };
 
             if (form.id) {
-                const { error } = await supabase.from('Customers').update(payload).eq('id', form.id);
-                if (error) throw error;
+                await updateCustomer(form.id, payload);
                 showToast('顧客情報を更新しました', 'success');
             } else {
-                const { error } = await supabase.from('Customers').insert([payload]);
-                if (error) throw error;
+                await createCustomer(payload);
                 showToast('顧客情報を追加しました', 'success');
             }
 
             setForm({ id: null, name: '', address: '', contactPerson: '', phone: '' });
-            fetchCustomers();
+            refetch();
         } catch (error) {
             console.error('顧客情報保存エラー:', error);
             showToast('保存に失敗しました', 'error');
@@ -76,10 +55,9 @@ const CustomerSettings = () => {
     const handleDelete = async (id) => {
         setIsSaving(true);
         try {
-            const { error } = await supabase.from('Customers').delete().eq('id', id);
-            if (error) throw error;
+            await deleteCustomer(id);
             showToast('顧客情報を削除しました', 'success');
-            fetchCustomers();
+            refetch();
         } catch (error) {
             console.error('顧客情報削除エラー:', error);
             showToast('削除に失敗しました', 'error');

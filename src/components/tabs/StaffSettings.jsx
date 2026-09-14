@@ -1,14 +1,13 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Search, Plus, Edit3, Trash2, Save, X, User, Shield, UserCheck, Loader2, Mail, Send, CheckCircle2 } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
 import { useToast } from '../../components/Toast';
 import ConfirmModal from '../ConfirmModal';
 import { STAFF_ROLE, STAFF_ROLE_LABEL, STAFF_ROLE_LIST } from '../../utils/constants';
+import { useStaffSettingsData } from '../../hooks/useStaffSettingsData';
 
 const StaffSettings = () => {
     const { showToast } = useToast();
-    const [staffList, setStaffList] = useState([]);
-    const [isLoading, setIsLoading] = useState(true);
+    const { staffList, isLoading, refetch, createStaff, updateStaff, deleteStaff, inviteStaff } = useStaffSettingsData();
     const [isSaving, setIsSaving] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [form, setForm] = useState({ id: null, name: '', role: STAFF_ROLE.WORKER, is_approver: false });
@@ -17,27 +16,12 @@ const StaffSettings = () => {
     const [inviteEmail, setInviteEmail] = useState('');
     const [isInviting, setIsInviting] = useState(false);
 
-    const fetchStaff = useCallback(async () => {
-        setIsLoading(true);
-        try {
-            const { data, error } = await supabase
-                .from('office_staff')
-                .select('*')
-                .order('name', { ascending: true });
-            
-            if (error) throw error;
-            setStaffList(data || []);
-        } catch (error) {
+    useEffect(() => {
+        refetch().catch((error) => {
             console.error('担当者情報取得エラー:', error);
             showToast('担当者情報の取得に失敗しました', 'error');
-        } finally {
-            setIsLoading(false);
-        }
-    }, [showToast]);
-
-    useEffect(() => {
-        fetchStaff();
-    }, [fetchStaff]);
+        });
+    }, [refetch, showToast]);
 
     const handleSave = async () => {
         if (!form.name.trim()) {
@@ -54,17 +38,15 @@ const StaffSettings = () => {
             };
 
             if (form.id) {
-                const { error } = await supabase.from('office_staff').update(payload).eq('id', form.id);
-                if (error) throw error;
+                await updateStaff(form.id, payload);
                 showToast('担当者情報を更新しました', 'success');
             } else {
-                const { error } = await supabase.from('office_staff').insert([payload]);
-                if (error) throw error;
+                await createStaff(payload);
                 showToast('担当者情報を追加しました', 'success');
             }
 
             setForm({ id: null, name: '', role: STAFF_ROLE.WORKER, is_approver: false });
-            fetchStaff();
+            refetch();
         } catch (error) {
             console.error('担当者情報保存エラー:', error);
             showToast('保存に失敗しました', 'error');
@@ -76,10 +58,9 @@ const StaffSettings = () => {
     const handleDelete = async (id) => {
         setIsSaving(true);
         try {
-            const { error } = await supabase.from('office_staff').delete().eq('id', id);
-            if (error) throw error;
+            await deleteStaff(id);
             showToast('担当者情報を削除しました', 'success');
-            fetchStaff();
+            refetch();
         } catch (error) {
             console.error('担当者情報削除エラー:', error);
             showToast('削除に失敗しました', 'error');
@@ -93,15 +74,12 @@ const StaffSettings = () => {
 
         setIsInviting(true);
         try {
-            const { error } = await supabase.functions.invoke('invite-staff', {
-                body: { staffId: inviteTargetId, email: inviteEmail.trim() },
-            });
-            if (error) throw error;
+            await inviteStaff(inviteTargetId, inviteEmail.trim());
 
             showToast('招待メールを送信しました', 'success');
             setInviteTargetId(null);
             setInviteEmail('');
-            fetchStaff();
+            refetch();
         } catch (error) {
             console.error('招待エラー:', error);
             showToast('招待の送信に失敗しました', 'error');

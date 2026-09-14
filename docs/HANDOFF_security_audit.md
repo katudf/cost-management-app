@@ -1,6 +1,6 @@
 # HANDOFF — 全体検証（監査）の引き継ぎ
 
-最終更新: 2026-09-11 / 対象コミット: `430a323`（`52b6a19` → `84faa00` → `46dab48` → `430a323`）
+最終更新: 2026-09-11 / 対象コミット: `8d17193`（`430a323` → `2bb434b` → `bc6b210` → `8d17193`）
 
 この文書だけで、文脈ゼロの新規チャットが監査を再開できることを目的とする。
 
@@ -9,8 +9,9 @@
 ## 0. 最初に読む人へ（3行）
 
 - 目的は **「Vibeコーディングで積み上げた本プロジェクトの、雑さ・非整合・脆弱性を一度全部洗う」** こと。
-- 進捗は **フェーズ0・フェーズ1 完了 / フェーズ2・3 未着手**。
-- **次にやるのは「§8 フェーズ2」から。** レイヤ違反・マジック文字列・死んだコードの整理。
+- 進捗は **フェーズ0・フェーズ1 完了 / フェーズ2 進行中 / フェーズ3 未着手**。
+- **次にやるのは「§8 フェーズ2」の続き。** `ScheduleViewApp.jsx`・`CustomerSettings.jsx`・`StaffSettings.jsx` は解決済みだが、
+  **2026-09-15の全ファイル再スキャンでレイヤ違反が新たに42箇所/8ファイル見つかった**（§8.1の表を見ること）。最大は`WorkerApp.jsx`の24箇所。
 
 ### ⚠️ 名前がぶつかっているので必ず区別すること
 
@@ -49,7 +50,7 @@
 |---|---|---|
 | フェーズ0 | 足場固め（DB実態とマイグレーションの一致、型再生成、残骸整理） | ✅ 完了 `d7ffed0` |
 | フェーズ1 | セキュリティ検証（RLS・RPC・匿名到達性） | ✅ 完了 `430a323` |
-| フェーズ2 | 凝集度・整合性（レイヤ違反、マジック文字列、死んだコード） | ⬜ 未着手 |
+| フェーズ2 | 凝集度・整合性（レイヤ違反、マジック文字列、死んだコード） | 🔶 進行中 |
 | フェーズ3 | 構造改善（巨大コンポーネントの分割） | ⬜ 未着手 |
 
 ### コミット履歴
@@ -62,7 +63,10 @@
 | `52b6a19` | 塗料DB系26ポリシーのTO句欠落を修正（指摘B） |
 | `84faa00` | 本監査の引き継ぎドキュメントを追加 |
 | `46dab48` | `search_path` 可変性を解消しanon実行権限3件を剥奪（指摘E） |
-| `430a323` | `Workers` テーブルのworkerロール書き込み権限を剥奪（指摘F）← **現在のHEAD** |
+| `430a323` | `Workers` テーブルのworkerロール書き込み権限を剥奪（指摘F）フェーズ1完了 |
+| `2bb434b` | HANDOFF_security_audit.mdをフェーズ0・1完了の状態に更新 |
+| `bc6b210` | `ScheduleViewApp.jsx` のSupabase直接呼び出しを `useScheduleViewData.js` フックに分離（フェーズ2 §8.1 レイヤ違反1件目を解決） |
+| `8d17193` | 人工数計算を季節・日付ごとの換算に統一（フェーズ2 §8.2 重複計算ロジック1件目を解決）← **現在のHEAD** |
 
 ### フェーズ1の指摘一覧
 
@@ -183,7 +187,10 @@ anonキーでRPCを叩いたときの返り値の意味。**これを取り違�
 
 ---
 
-## 5. 🎯 次にやること — 指摘E
+## 5. 📜 【完了済み・過去ログ】指摘Eの調査・対応記録
+
+> ⚠️ この節は**過去の作業記録**。指摘Eは `46dab48` で解決済み（§0/§2参照）。
+> 「次にやること」ではなく、対応の経緯を残すための履歴として残置している。
 
 調査は **完了済み**。書くべきものは決まっている。以下をそのまま実行する。
 
@@ -343,26 +350,72 @@ Advisor の `auth_leaked_password_protection` はSQL上の対象を持たない
 
 ---
 
-## 8. フェーズ2のスコープ（凝集度・整合性）— 未着手
+## 8. フェーズ2のスコープ（凝集度・整合性）— 🔶 進行中
 
 「まとまりが無い」を **数字で測る** 方針。
 
 ### 8.1 レイヤ違反（CLAUDE.md「UIから直接 `supabase.from()` を呼ばない」違反）
 
-- `src/ScheduleViewApp.jsx:58`（`Assignments`）, `:59`（`Projects`）, `:63`（`workers_directory`）
-  — **未認証画面からの直接呼び出し3件**
-- `src/components/tabs/CustomerSettings.jsx`
-- `src/components/tabs/StaffSettings.jsx`
+- ~~`src/ScheduleViewApp.jsx:58`（`Assignments`）, `:59`（`Projects`）, `:63`（`workers_directory`）~~
+  — ✅ **解決済み `bc6b210`**。`src/hooks/useScheduleViewData.js` に抽出し `Promise.all` で並列化。
+  `grep supabase\.from\( src/ScheduleViewApp.jsx` でヒット0件を確認済み（2026-09-11）。
+- ~~`src/components/tabs/CustomerSettings.jsx` L21/L22/L57/L61/L79（直接呼び出し5箇所）~~
+  — ✅ **解決済み（2026-09-15）**。`src/hooks/useCustomerSettingsData.js` に抽出。
+  `refetch` は `Customers` と `office_staff` を `Promise.all` で並列取得。
+  CRUDは `createCustomer` / `updateCustomer` / `deleteCustomer` として公開。
+- ~~`src/components/tabs/StaffSettings.jsx` L57/L61/L79（直接呼び出し3箇所）~~
+  — ✅ **解決済み（2026-09-15）**。`src/hooks/useStaffSettingsData.js` に抽出。
+  `refetch` / `createStaff` / `updateStaff` / `deleteStaff` を公開。
+  - あわせて **L96 の `supabase.functions.invoke('invite-staff')` も `inviteStaff` としてフックへ移動**した。
+    これは厳密にはCLAUDE.mdの言う `supabase.from()` 違反ではないが、
+    Edge Functionを叩くためだけにコンポーネントへ `supabase` importを残すとルールの趣旨が崩れるため、
+    コンポーネントからimportごと削除する方を選んだ。
+- **検証（2026-09-15）**: 上記2ファイルに対する
+  `grep -E 'supabase|fetchStaff|fetchCustomers|useCallback'` でヒット **0件**。
+  `npm run build` 成功（既存のチャンクサイズ警告のみ）、`npm test` 26件全パス。
+#### ⚠️ 全ファイル再スキャンの結果、レイヤ違反は「残り2ファイル」ではなかった（2026-09-15）
+
+§8.1 はこれまで `ScheduleViewApp` / `CustomerSettings` / `StaffSettings` の3ファイルだけを
+対象にしていたが、**それは初期調査の見落としで、実際にはUI層に42箇所残っている。**
+
+| ファイル | `supabase.from()` 箇所数 |
+|---|---|
+| `src/WorkerApp.jsx` | 24 |
+| `src/AdminApp.jsx` | 5 |
+| `src/components/tabs/settings/CertificationManager.jsx` | 5 |
+| `src/components/tabs/MasterTab.jsx` | 3 |
+| `src/components/tabs/SystemSettingsTab.jsx` | 2 |
+| `src/components/HolidayCalendar.jsx` | 1 |
+| `src/components/tabs/InputTab.jsx` | 1 |
+| `src/components/tabs/PurchaseLedgerTab.jsx` | 1 |
+| **合計** | **42箇所 / 8ファイル** |
+
+**スキャン方法の注意**: 1行正規表現 `supabase\.(from|functions|rpc|storage)\(` では
+`await supabase` で改行してから `.from(...)` と続く書き方を取りこぼす
+（`SystemSettingsTab.jsx` / `MasterTab.jsx` がこれで漏れた）。
+**ファイル単位で `supabase` をgrepしてから中身を見ること。**
+
+`src/hooks/` `src/lib/` `src/utils/` `src/features/` `src/supabaseEstimates.js` の
+ヒットは設計どおり（レイヤ境界の内側）なので違反ではない。
+
+**次の担当者へ**: `WorkerApp.jsx`（24箇所）は §9 フェーズ3の分割対象でもあるので、
+フックへの抽出とコンポーネント分割を**二重作業にしない**よう、
+フェーズ3と合わせて進めるか順序を決めてから着手すること。
+小さい4ファイル（`HolidayCalendar` / `InputTab` / `PurchaseLedgerTab` / `SystemSettingsTab`）は
+単独で片付けられる。
 
 ### 8.2 その他の観点
 
-- マジック文字列（`'施工中'` 直書き vs `PROJECT_STATUS.IN_PROGRESS`）
-- 原価・人工の計算ロジックの重複
+- マジック文字列（`'施工中'` 直書き vs `PROJECT_STATUS.IN_PROGRESS`）— 未調査
+- 原価・人工の計算ロジックの重複 — **ダッシュボード/Excel出力の人工数計算（総時間÷7.5のショートカット）は
+  `8d17193` で `workTimeUtils.ts` の季節対応 `calculateNinku`/`getSeasonConfig` に統一済み ✅**
+  （`DashboardTab.jsx` / `useDashboardStats.js` / `excelExportUtils.js` 修正）。
+  他に同種の重複が残っていないかは未調査。
 - **死んだコード** — `docs/archive/` に45以上のフォルダがある。
-  加えて **`overwrite_paste` はDB側に残っているが呼び出し元が無い**（§5.1で判明）
+  加えて **`overwrite_paste` はDB側に残っているが呼び出し元が無い**（§5.1で判明）— 未対応
 - **`Workers` にだけ worker/viewer 用のSELECTポリシーが無い**
   （`Projects` / `Assignments` にはある）。より厳しい方向の非対称なので穴ではないが、
-  意図的かどうか要確認。
+  意図的かどうか要確認。— 未調査
 
 ---
 
