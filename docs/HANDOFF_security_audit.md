@@ -1,6 +1,6 @@
 # HANDOFF — 全体検証（監査）の引き継ぎ
 
-最終更新: 2026-09-15 / 対象コミット: `dba39b5`（`430a323` → `2bb434b` → `bc6b210` → `8d17193` → `dba39b5`）
+最終更新: 2026-09-15 / 対象コミット: `5dddd9e`（`430a323` → `2bb434b` → `bc6b210` → `8d17193` → `dba39b5` → `5dddd9e`）
 
 この文書だけで、文脈ゼロの新規チャットが監査を再開できることを目的とする。
 
@@ -11,7 +11,7 @@
 - 目的は **「Vibeコーディングで積み上げた本プロジェクトの、雑さ・非整合・脆弱性を一度全部洗う」** こと。
 - 進捗は **フェーズ0・フェーズ1 完了 / フェーズ2 進行中 / フェーズ3 未着手**。
 - **次にやるのは「§8 フェーズ2」の続き。** `ScheduleViewApp.jsx`・`CustomerSettings.jsx`・`StaffSettings.jsx` は解決済みだが、
-  **2026-09-15の全ファイル再スキャンでレイヤ違反が新たに42箇所/8ファイル見つかった**（§8.1の表を見ること）。最大は`WorkerApp.jsx`の24箇所。
+  **2026-09-15の全ファイル再スキャンでレイヤ違反が新たに52箇所/8ファイル見つかった**（§8.1の表を見ること）。最大は`WorkerApp.jsx`の26箇所。
 
 ### ⚠️ 名前がぶつかっているので必ず区別すること
 
@@ -22,7 +22,7 @@
 |---|---|---|
 | 中身 | RLS権限モデルの構築そのもの | 構築済みの実物を検証し直す |
 | 時期 | 2026-07-09〜10 | 2026-09 |
-| 状態 | Phase 0〜3 すべて完了 | フェーズ0完了、フェーズ1が進行中 |
+| 状態 | Phase 0〜3 すべて完了 | フェーズ0・1完了、フェーズ2が進行中 |
 
 旧計画のPhase番号を本監査の進捗と読み違えないこと。
 
@@ -66,7 +66,9 @@
 | `430a323` | `Workers` テーブルのworkerロール書き込み権限を剥奪（指摘F）フェーズ1完了 |
 | `2bb434b` | HANDOFF_security_audit.mdをフェーズ0・1完了の状態に更新 |
 | `bc6b210` | `ScheduleViewApp.jsx` のSupabase直接呼び出しを `useScheduleViewData.js` フックに分離（フェーズ2 §8.1 レイヤ違反1件目を解決） |
-| `8d17193` | 人工数計算を季節・日付ごとの換算に統一（フェーズ2 §8.2 重複計算ロジック1件目を解決）← **現在のHEAD** |
+| `8d17193` | 人工数計算を季節・日付ごとの換算に統一（フェーズ2 §8.2 重複計算ロジック1件目を解決） |
+| `dba39b5` | 顧客・担当者設定のSupabase直接呼び出しをフックに分離（`useCustomerSettingsData` / `useStaffSettingsData`） |
+| `5dddd9e` | HANDOFF_security_audit.mdのヘッダを最新コミットに更新 ← **現在のHEAD** |
 
 ### フェーズ1の指摘一覧
 
@@ -376,19 +378,20 @@ Advisor の `auth_leaked_password_protection` はSQL上の対象を持たない
 #### ⚠️ 全ファイル再スキャンの結果、レイヤ違反は「残り2ファイル」ではなかった（2026-09-15）
 
 §8.1 はこれまで `ScheduleViewApp` / `CustomerSettings` / `StaffSettings` の3ファイルだけを
-対象にしていたが、**それは初期調査の見落としで、実際にはUI層に42箇所残っている。**
+対象にしていたが、**それは初期調査の見落としで、実際にはUI層に52箇所残っている。**
 
 | ファイル | `supabase.from()` 箇所数 |
 |---|---|
-| `src/WorkerApp.jsx` | 24 |
+| `src/WorkerApp.jsx` | 26 |
 | `src/AdminApp.jsx` | 5 |
 | `src/components/tabs/settings/CertificationManager.jsx` | 5 |
+| `src/components/tabs/PurchaseLedgerTab.jsx` | 6 |
+| `src/components/HolidayCalendar.jsx` | 4 |
 | `src/components/tabs/MasterTab.jsx` | 3 |
 | `src/components/tabs/SystemSettingsTab.jsx` | 2 |
-| `src/components/HolidayCalendar.jsx` | 1 |
+| `src/components/tabs/settings/CompanyInfoSettings.jsx` | 3 |
 | `src/components/tabs/InputTab.jsx` | 1 |
-| `src/components/tabs/PurchaseLedgerTab.jsx` | 1 |
-| **合計** | **42箇所 / 8ファイル** |
+| **合計** | **55箇所 / 9ファイル** |
 
 **スキャン方法の注意**: 1行正規表現 `supabase\.(from|functions|rpc|storage)\(` では
 `await supabase` で改行してから `.from(...)` と続く書き方を取りこぼす
@@ -398,15 +401,232 @@ Advisor の `auth_leaked_password_protection` はSQL上の対象を持たない
 `src/hooks/` `src/lib/` `src/utils/` `src/features/` `src/supabaseEstimates.js` の
 ヒットは設計どおり（レイヤ境界の内側）なので違反ではない。
 
-**次の担当者へ**: `WorkerApp.jsx`（24箇所）は §9 フェーズ3の分割対象でもあるので、
-フックへの抽出とコンポーネント分割を**二重作業にしない**よう、
-フェーズ3と合わせて進めるか順序を決めてから着手すること。
-小さい4ファイル（`HolidayCalendar` / `InputTab` / `PurchaseLedgerTab` / `SystemSettingsTab`）は
-単独で片付けられる。
+#### 🔧 上の表の訂正（2026-09-15・着手前の精査で判明）
+
+**この表は当初「42箇所」としていたが、それも過小だった。** 直上に「ファイル単位でgrepしろ」と
+書いておきながら、表そのものは古い1行正規表現の結果のまま残っていた。
+
+**さらにその訂正自体も過小だった（2026-09-15・2回目の全数確認）。実数は 55箇所 / 9ファイル。**
+上の表は訂正済み。過小の履歴: **42 → 50 → 52 → 55**。
+
+| ファイル | 旧記載 | 実数 | 内訳 |
+|---|---|---|---|
+| `PurchaseLedgerTab.jsx` | 1 | **6** | L182 / L539 / L658 / L731 / L755 / L808 |
+| `HolidayCalendar.jsx` | 1 | **4** | L31 / L62 / L67(継続行) / L77(継続行) |
+| `WorkerApp.jsx` | 24 | **26** | 全数列挙で確定（下記）。~~件数は偶然一致~~ ← **この記述は誤り。撤回する** |
+| `CompanyInfoSettings.jsx` | **記載なし** | **3** | L46 SELECT / L75 UPDATE（ともに `system_settings`）/ L104 `supabase.storage.from('stamps')` |
+
+**`WorkerApp.jsx` = 26 の全数内訳**（複数行形を1文として数えた後の値）:
+L129 / L147 / **L152** / L186 / L205 / L224 / L231 / L234 / L275 / L279 /
+**L392** / **L394** / **L403** / L670 / L685 / L776 / L959-960 / L968-969 /
+L1088 / L1094 / L1098 / L1109 / L1119 / L1129 / L1133 / L1175
+
+**⚠️ 複数行grepの落とし穴（件数を数えるときの必須知識）**:
+`supabase\s*\n?\s*\.(from|rpc|functions|storage)` で引くと、`await supabase` で改行している箇所は
+**`supabase` の行と `.from(` の行の2行が出力される**。つまり **出力行数 ≠ 箇所数**。
+`WorkerApp.jsx` の L959+L960 / L968+L969 は **4行出力されるが2箇所**。
+**必ず「文」に畳んでから数えること。** 26 と 24 の食い違いはこれが原因。
+
+**⚠️ 逆方向の誤検知もある — `Array.from` に注意。**
+`\.from\(` を素で引くと JavaScript の `Array.from({ length: 7 }, ...)` が混じる。
+以下の4箇所は **Supabaseではない**。違反として数えないこと。
+
+- `src/WorkerApp.jsx:385`
+- `src/AdminApp.jsx:315`
+- `src/AdminApp.jsx:393`
+- `src/components/tabs/InputTab.jsx:45` ← 2026-09-15に追加で発見
+
+#### ❌ 旧「次の担当者へ」の撤回（2026-09-15）
+
+以前ここには次のように書いてあったが、**両方とも誤りなので撤回する。**
+
+> 小さい4ファイル（`HolidayCalendar` / `InputTab` / `PurchaseLedgerTab` / `SystemSettingsTab`）は
+> 単独で片付けられる。
+
+1. **`PurchaseLedgerTab.jsx` は「小さい」ではない** — 1,416行・6箇所。§9 フェーズ3の分割対象でもある。
+2. **`HolidayCalendar.jsx` は「単独」ではない** — `CompanyHolidays` は既に
+   `useAssignmentState.js` が完全なCRUDを持っている（下の重複マップ参照）。
+   ファイル単位で抽出すると**5つ目のコピー**を作ることになる。
+
+#### 📍 `CompanyHolidays` の重複マップ（6箇所・うち2箇所は既にフック層）
+
+| 場所 | 種別 | 内容 |
+|---|---|---|
+| `src/hooks/useAssignmentState.js` L169 | ✅ フック内 | SELECT |
+| `src/hooks/useAssignmentState.js` L1025/L1035/L1039 | ✅ フック内 | DELETE / UPDATE / INSERT ＝**完全なCRUD** |
+| `src/hooks/useWorkerAssignments.js` L39 | ✅ フック内 | SELECT |
+| `src/components/HolidayCalendar.jsx` L31/L62/L67/L77 | ❌ UI層 | **CRUDの丸ごと再実装（4つ目のコピー）** |
+| `src/components/tabs/InputTab.jsx` L35 | ❌ UI層 | SELECT |
+| `src/AdminApp.jsx` L401 / `src/WorkerApp.jsx` L392 | ❌ UI層 | SELECT（いずれも週報出力の中） |
+
+#### 📍 `system_settings` の重複マップ（5箇所・うち2箇所は既にフック層）— 2026-09-15に判明
+
+**`CompanyHolidays` と同じ形の重複。手順1の前提が変わるので必読。**
+
+| 場所 | 種別 | 内容 |
+|---|---|---|
+| `src/hooks/useSupabaseData.js` L86 | ✅ フック内 | SELECT `hourly_wage` `.eq('id',1).single()` |
+| `src/hooks/useCompanyInfo.js` L20付近 | ✅ フック内 | SELECT（`columns` 引数で列を選べる・**読み取り専用**） |
+| `src/components/tabs/SystemSettingsTab.jsx` L36/L51 | ❌ UI層 | SELECT `est_default_valid_days` / UPDATE `hourly_wage`+`est_default_valid_days` |
+| `src/components/tabs/settings/CompanyInfoSettings.jsx` L46/L75 | ❌ UI層 | SELECT 自社情報7列 / UPDATE 同7列 |
+| `src/WorkerApp.jsx` L152 | ❌ UI層 | SELECT `hourly_wage` |
+
+**つまり `system_settings`（id=1の単一行）は既に5箇所から読み書きされている。**
+ここで手順1の記述どおり「新規 `useSystemSettings`」を作ると、
+`CompanyInfoSettings` と `WorkerApp:152` が自前のコピーを持ったまま **6つ目の入口**になる。
+これは §8.1.1 の大原則が警告している失敗そのもの。→ 手順1の対象を再検討すること（下記）。
+
+**補足**: `useCompanyInfo` の利用者は `src/components/HomeLanding.jsx:27`（`useCompanyInfo('company_name')`）
+**の1箇所だけ**。文字列リテラル渡しなので、このフックを拡張・統合しても影響範囲は極小。
+
+`grep -n "Holiday\|holiday" src/hooks/useSupabaseData.js` は **ヒット0件**。
+つまり集約先は `useSupabaseData` の拡張ではなく、**新規 `useCompanyHolidays`** になる。
+
+#### ⚠️ E2Eは「挙動の固定」には使えない（2026-09-15に実物を読んで確認）
+
+E2Eは2本しかなく、どちらも **AdminAppしか触らない**。
+
+| ファイル | 問題 |
+|---|---|
+| `tests/e2e/settings_flow.spec.ts` | タブを `nth(4)` `nth(2)` `nth(5)` と**位置指定**で辿る。タブ並べ替えで即壊れる |
+| `tests/e2e/lazy_load.spec.ts` | **本番データ依存**（`taskCount > 0` を前提）。データが変われば結果が変わる |
+
+WorkerApp・週報出力・在庫・工程表は **E2Eの射程外**。
+したがって §9 の前提「E2Eで挙動を固定してから分割」は、WorkerAppに限らず**ほぼ全域で未達**。
+→ **フェーズ2ではコンポーネント分割をしない**（下の方針(B)）。
+
+---
+
+### 8.1.1 ✅ 着手順の決定（2026-09-15・ユーザー承認済み）
+
+ユーザーの承認: 「この順で（B)を進めてください」
+
+**大原則: 「ファイル単位」ではなく「テーブル・責務単位」で片付ける。**
+ファイル単位で潰すと、上の `CompanyHolidays` のように**重複を別々のフックに焼き付けてしまう**。
+
+| 順 | 対象 | 中身 | 理由 |
+|---|---|---|---|
+| **1** | ⚠️ **要再判断** `SystemSettingsTab`(2) + `CompanyInfoSettings`(2) + `WorkerApp:152`(1) | `system_settings` を1フックに集約 | 下記「手順1の再スコープ」参照。`InputTab`(1) は手順4へ移す |
+| **2** | `MasterTab`(3) | 新規 `useProjectSuspensions` | 完全に独立したCRUD。重複ゼロ |
+| **3** | `CertificationManager`(5) | 新規 `useCertifications` | 全部単一行。`settings_flow` E2Eが（弱いが）通る唯一の画面 |
+| **4** | **休日CRUDの統合** | `useCompanyHolidays` に一本化 | `HolidayCalendar`(4) + `InputTab`の読み + `useAssignmentState` L1025-1041 + `useWorkerAssignments` L39 を集約。§8.1と§8.2を同時解消 |
+| **5** | **週報フックの新設** | `useWeeklyReportData` | `AdminApp`(5) + `WorkerApp` L392-419 を同時解消。**3コピー→1つ** |
+| **6** | `WorkerApp` 残り（**23**） | 日報CRUDのフック化 | 5で週報が抜けた後なので見通しが良い |
+| **7** | `PurchaseLedgerTab`(6) | 単独 | 1,416行。フェーズ3対象でもあるので最後 |
+
+**採用した方針 = (B)**
+
+- **E2Eは新規に書かない。** 既存E2Eの品質が上記のとおり低く、
+  今この土台の上に書き足しても**偽の安心**にしかならないため。
+- **手順6は「フック抽出のみ」に限定する。コンポーネント分割はしない。**
+- 分割は **フェーズ3へ完全に先送り**。
+- 根拠: フック抽出は**挙動を変えない機械的変換**であり、差分が読める形になるので
+  レビューで担保できる。分割はそうではない。
+
+**各手順の完了条件**（毎回これを満たしてからコミットする）:
+1. 対象ファイルの `grep -n "supabase"` が **0件**（＝ `import` ごと消えている）
+2. `npm run build` 成功（既存のチャンクサイズ警告のみ）
+3. `npm test` 全パス
+4. 本ファイル（§8.1.1の進捗）を更新
+
+**⚠️ 過去に踏んだ地雷（同じことを繰り返さないこと）**:
+`CustomerSettings.jsx` でフック化した際、`handleSave`/`handleDelete` が
+削除済みの `supabase` import と削除済みの `fetchCustomers()` を参照したままでビルドが壊れた。
+**`import` を消すのは、そのファイル内の呼び出しを全部移し終えた後。**
+
+**進捗**:
+
+| 手順 | 状態 |
+|---|---|
+| 1 | ⬜ 未着手 |
+| 2 | ⬜ 未着手 |
+| 3 | ⬜ 未着手 |
+| 4 | ⬜ 未着手 |
+| 5 | ⬜ 未着手 |
+| 6 | ⬜ 未着手 |
+| 7 | ⬜ 未着手 |
+
+#### ⚠️ 手順1の再スコープ提案（2026-09-15・**ユーザー判断待ち**）
+
+**承認済みの手順1は「`InputTab`(1) + `SystemSettingsTab`(2)、`system_settings` は新規 `useSystemSettings`」だった。**
+着手前の精査で前提が崩れたので、**勝手に変更せず**ここに記録する。決めるのはユーザー。
+
+**崩れた前提は2つ:**
+
+1. **`system_settings` は「重複なし」ではなかった。** 上の重複マップのとおり **5箇所 / 4ファイル**から
+   触られており、うち2箇所（`useSupabaseData.js:86` / `useCompanyInfo.js`）は**既にフック層**。
+   新規 `useSystemSettings` を足すと **3つ目のフック**かつ **6つ目の入口**になる。
+   §8.1.1 の大原則「ファイル単位で潰すと重複を別々のフックに焼き付けてしまう」に正面から抵触する。
+
+2. **`InputTab`(1) は手順1では片付かない。** その1箇所（L35）は `CompanyHolidays` の SELECT であり、
+   **手順4が統合する対象そのもの**。ここで別フックに出すと `CompanyHolidays` の**5つ目のコピー**になる。
+
+**提案（A）テーブル単位に揃える** ← 大原則に忠実
+- 手順1 = `system_settings` を1フックに集約。`SystemSettingsTab`(2) + `CompanyInfoSettings`(2)
+  + `WorkerApp:152`(1) を移し、`useCompanyInfo` を吸収、`useSupabaseData.js:86` はそのフックに委譲。
+- `InputTab`(1) は手順4（`useCompanyHolidays`）へ移動。
+- 短所: 手順1が「小さく安全な足慣らし」ではなくなる。`CompanyInfoSettings` の
+  `supabase.storage.from('stamps')`（L104）の置き場所も決める必要が出る。
+
+**提案（B）承認どおり進める**
+- 短所: `system_settings` の入口が6つになり、手順1完了時点で**新しい重複を作った状態**になる。
+  後で必ず統合し直すことになる。
+
+**未決の付随論点**: `CompanyInfoSettings` の印影アップロード（Storage・privateバケット `stamps`）は
+`system_settings` フックに同居させるか、`useStampStorage` として分けるか。
+（現状は `src/utils/stampStorage` の `getStampSignedUrl` が署名URL変換を担当している）
+
+**→ ユーザーの判断があるまで手順1には着手しない。** 判断が出たらこの節を結論で置き換えること。
 
 ### 8.2 その他の観点
 
-- マジック文字列（`'施工中'` 直書き vs `PROJECT_STATUS.IN_PROGRESS`）— 未調査
+- ~~マジック文字列（`'施工中'` 直書き vs `PROJECT_STATUS.IN_PROGRESS`）— 未調査~~
+  **✅ 調査済み（2026-09-15）。この懸念は存在しなかった。**
+  `'施工中'` の直書きは `src/utils/constants.js:10`（定義そのもの）以外に **0件**。
+  `AdminApp.jsx:521/587/588` と `HomeLanding.jsx:11` は `label: '見積'` / `label: '完了'` の形だが、
+  これは**タブ定義オブジェクトの表示文字列**でありステータス比較ではない。値がたまたま一致しているだけ。
+  → **ステータス定数については是正不要。**
+
+- **⚠️ 本当のマジック文字列問題は「休日判定」だった — `'会議'` / `'社員旅行'`（17箇所 / 7ファイル）**
+  （`grep -n "会議\|社員旅行" src` の生出力は **24行**。是正対象は17箇所。差の7行の内訳は下記）
+  「登録された休日のうち `会議`・`社員旅行` は*実質的な休日ではない*」という業務ルールが、
+  定数化されないまま各所にコピーされている。**性質の異なる3種類が混在しているので、対策も3種類必要。**
+
+  **(a) 判定ロジックの再実装（7箇所）** — 同一の述語の写し:
+  `useAssignmentState.js:98`（**これが正典**）/ `ProjectBarRow.jsx:74` /
+  `HolidayCalendar.jsx:165` / `HolidayCalendar.jsx:233` / `AssignmentChartTab.jsx:91` /
+  `InputTab.jsx:52` / `WorkerAssignmentView.jsx:62`
+  → `isActualHoliday(holiday)` として1箇所に出し、全員がそれを呼ぶ形にする。
+
+  **(b) 表示マッピングの重複（8箇所）** — リテラル→色/ラベルの対応表が2画面に二重化:
+  `AssignmentChartTab.jsx:353-354`（背景色 `#BAE6FD` / `#DDD6FE`）/
+  `:360-361`（表示名 `'会議'` / `'旅行'`）/ `:364-365`（文字色 `text-sky-700` / `text-violet-700`）/
+  `WorkerAssignmentView.jsx:209-210`（同じ背景色の再掲）
+  → 色・表示名を持つ定義テーブルを共有する。
+
+  **(c) 書き込み側（2箇所）** — DBへリテラルを書いている:
+  `EditHolidayPopup.jsx:36`（`'会議'`）/ `:42`（`'社員旅行'`）
+  → 定数を参照する形にする。**(a)(c)が食い違うと無言でバグる**ので同時に直すこと。
+
+  **除外した7行（違反ではない）**:
+  - **定義側（3）**: `constants.js:159`（カレンダー予定種別の定義）/
+    `HolidayCalendar.jsx:11` / `:12`（`description` に保存値そのものを持つ選択肢定義）
+  - **ボタンの表示ラベル（2）**: `EditHolidayPopup.jsx:39` / `:45`
+    （`:36`/`:42` の `onClick` が渡す値とは別物。**表示文字列なので比較ではない**）
+  - **コメント（2）**: `HolidayCalendar.jsx:158` / `WorkerAssignmentView.jsx:58`
+
+  **検算: 7 + 8 + 2（是正対象17） + 3 + 2 + 2（除外7） = 24行。生出力と一致。**
+
+> **⚠️ この節の数字は3回間違えた。同じ壊れ方を3回している。**
+> 18→17→(24行の実数確認) と訂正した。原因は毎回同じで、
+> **「grepの生出力を数える」のではなく「分類した小計を足して総数を名乗った」こと。**
+> 小計（7 / 8 / 2）は最初から正しく、**壊れるのは必ず総数と検算行のほうだった。**
+> §8.1 の 42→50→52→55 のカスケードと**まったく同じ失敗**である。
+> **教訓: 総数を書くときは必ず生出力の行数から引き算で導き、内訳の足し算で導かないこと。**
+> この文書内の「合計」「N箇所」は、**書いた本人（Claude）の算術を信用せず**、
+> 着手前に必ず grep で数え直すこと。
+
+  **手順4（`useCompanyHolidays` への統合）と同時に片付けるのが自然。**
 - 原価・人工の計算ロジックの重複 — **ダッシュボード/Excel出力の人工数計算（総時間÷7.5のショートカット）は
   `8d17193` で `workTimeUtils.ts` の季節対応 `calculateNinku`/`getSeasonConfig` に統一済み ✅**
   （`DashboardTab.jsx` / `useDashboardStats.js` / `excelExportUtils.js` 修正）。
