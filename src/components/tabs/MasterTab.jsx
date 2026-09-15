@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import { Settings, Loader2, Upload, Trash, PlusCircle, Trash2, Clipboard, Table as TableIcon, PauseCircle, X, GripVertical } from 'lucide-react';
 import { DEFAULT_COLORS, PROJECT_STATUS, PROJECT_STATUS_LIST } from '../../utils/constants';
-import { supabase } from '../../lib/supabase';
+import { useProjectSuspensions } from '../../hooks/useProjectSuspensions';
 import { useToast } from '../Toast';
 import DashboardTab from './DashboardTab';
 import InputTab from './InputTab';
@@ -44,7 +44,7 @@ const MasterTab = ({
 }) => {
     const [subActiveTab, setSubActiveTab] = useState('settings');
     const { showToast } = useToast();
-    const [suspensions, setSuspensions] = useState([]);
+    const { suspensions, addSuspension: createSuspension, removeSuspension: deleteSuspension } = useProjectSuspensions(activeProject?.id);
     const [newSuspension, setNewSuspension] = useState({ start_date: '', end_date: '', reason: '' });
 
     // ドラッグ＆ドロップ関連の状態
@@ -88,21 +88,6 @@ const MasterTab = ({
         setDragOverIndex(null);
     };
 
-    // 休工期間データの取得
-    const fetchSuspensions = useCallback(async () => {
-        if (!activeProject?.id) return;
-        const { data, error } = await supabase
-            .from('ProjectSuspensions')
-            .select('*')
-            .eq('project_id', activeProject.id)
-            .order('start_date', { ascending: true });
-        if (!error) setSuspensions(data || []);
-    }, [activeProject?.id]);
-
-    useEffect(() => {
-        fetchSuspensions();
-    }, [fetchSuspensions]);
-
     // 休工期間の追加
     const addSuspension = async () => {
         if (!newSuspension.start_date || !newSuspension.end_date) {
@@ -113,34 +98,24 @@ const MasterTab = ({
             showToast('終了日は開始日以降にしてください', 'error');
             return;
         }
-        const { error } = await supabase
-            .from('ProjectSuspensions')
-            .insert({
-                project_id: activeProject.id,
-                start_date: newSuspension.start_date,
-                end_date: newSuspension.end_date,
-                reason: newSuspension.reason || ''
-            });
-        if (error) {
-            showToast('休工期間の追加に失敗しました', 'error');
-        } else {
+        try {
+            await createSuspension(newSuspension);
             showToast('休工期間を追加しました', 'success');
             setNewSuspension({ start_date: '', end_date: '', reason: '' });
-            fetchSuspensions();
+        } catch (e) {
+            console.error('休工期間の追加エラー:', e);
+            showToast('休工期間の追加に失敗しました', 'error');
         }
     };
 
     // 休工期間の削除
     const removeSuspension = async (id) => {
-        const { error } = await supabase
-            .from('ProjectSuspensions')
-            .delete()
-            .eq('id', id);
-        if (error) {
-            showToast('削除に失敗しました', 'error');
-        } else {
+        try {
+            await deleteSuspension(id);
             showToast('休工期間を削除しました', 'success');
-            fetchSuspensions();
+        } catch (e) {
+            console.error('休工期間の削除エラー:', e);
+            showToast('削除に失敗しました', 'error');
         }
     };
 

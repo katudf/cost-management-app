@@ -500,13 +500,16 @@ WorkerApp・週報出力・在庫・工程表は **E2Eの射程外**。
 ### 8.1.1 ✅ 着手順の決定（2026-09-15・ユーザー承認済み）
 
 ユーザーの承認: 「この順で（B)を進めてください」
+※ この「(B)」は**下の「採用した方針 = (B)」（E2Eを新規に書かない／手順6は分割しない）**を指す。
+　**「手順1の再スコープ」の (A)/(B) とは別の選択肢**なので混同しないこと。
+※ **表の並び順は当初案。実施順は後述のとおり 2 → 3 → 1 → 4 → 5 → 6 → 7 に変更済み。**
 
 **大原則: 「ファイル単位」ではなく「テーブル・責務単位」で片付ける。**
 ファイル単位で潰すと、上の `CompanyHolidays` のように**重複を別々のフックに焼き付けてしまう**。
 
 | 順 | 対象 | 中身 | 理由 |
 |---|---|---|---|
-| **1** | ⚠️ **要再判断** `SystemSettingsTab`(2) + `CompanyInfoSettings`(2) + `WorkerApp:152`(1) | `system_settings` を1フックに集約 | 下記「手順1の再スコープ」参照。`InputTab`(1) は手順4へ移す |
+| **1** | `SystemSettingsTab`(2) + `CompanyInfoSettings`(2) + `WorkerApp:152`(1) | `system_settings` を1フックに集約（`useCompanyInfo` を吸収・`useSupabaseData.js:86` は委譲） | 下記「手順1の再スコープ」で **(A)に確定**。`InputTab`(1) は手順4へ移す |
 | **2** | `MasterTab`(3) | 新規 `useProjectSuspensions` | 完全に独立したCRUD。重複ゼロ |
 | **3** | `CertificationManager`(5) | 新規 `useCertifications` | 全部単一行。`settings_flow` E2Eが（弱いが）通る唯一の画面 |
 | **4** | **休日CRUDの統合** | `useCompanyHolidays` に一本化 | `HolidayCalendar`(4) + `InputTab`の読み + `useAssignmentState` L1025-1041 + `useWorkerAssignments` L39 を集約。§8.1と§8.2を同時解消 |
@@ -514,7 +517,7 @@ WorkerApp・週報出力・在庫・工程表は **E2Eの射程外**。
 | **6** | `WorkerApp` 残り（**23**） | 日報CRUDのフック化 | 5で週報が抜けた後なので見通しが良い |
 | **7** | `PurchaseLedgerTab`(6) | 単独 | 1,416行。フェーズ3対象でもあるので最後 |
 
-**採用した方針 = (B)**
+**採用した方針 = (B)**（＝**進め方**の選択。手順1のスコープの (A)/(B) とは無関係）
 
 - **E2Eは新規に書かない。** 既存E2Eの品質が上記のとおり低く、
   今この土台の上に書き足しても**偽の安心**にしかならないため。
@@ -534,22 +537,69 @@ WorkerApp・週報出力・在庫・工程表は **E2Eの射程外**。
 削除済みの `supabase` import と削除済みの `fetchCustomers()` を参照したままでビルドが壊れた。
 **`import` を消すのは、そのファイル内の呼び出しを全部移し終えた後。**
 
-**進捗**:
+**進捗**（実施順は **2 → 3 → 1 → 4 → 5 → 6 → 7**。理由は下の「手順1の再スコープ」）:
 
-| 手順 | 状態 |
-|---|---|
-| 1 | ⬜ 未着手 |
-| 2 | ⬜ 未着手 |
-| 3 | ⬜ 未着手 |
-| 4 | ⬜ 未着手 |
-| 5 | ⬜ 未着手 |
-| 6 | ⬜ 未着手 |
-| 7 | ⬜ 未着手 |
+| 手順 | 状態 | 記録 |
+|---|---|---|
+| 1 | ⬜ 未着手 | スコープは(A)で確定済み。印影アップロードの置き場所だけ着手時に決める |
+| 2 | ✅ **完了（2026-09-15）** | 下記「手順2の完了記録」 |
+| 3 | ⬜ 未着手 | 次にやる |
+| 4 | ⬜ 未着手 | |
+| 5 | ⬜ 未着手 | |
+| 6 | ⬜ 未着手 | |
+| 7 | ⬜ 未着手 | |
 
-#### ⚠️ 手順1の再スコープ提案（2026-09-15・**ユーザー判断待ち**）
+#### ✅ 手順2の完了記録（2026-09-15）
+
+- 新規 `src/hooks/useProjectSuspensions.js`（63行）を作成し、`MasterTab.jsx` の
+  `ProjectSuspensions` 直接呼び出し**3箇所**（SELECT / INSERT / DELETE）を全部移設。
+- **完了条件の実測**:
+  1. `grep -n "supabase" src/components/tabs/MasterTab.jsx` → **0件** ✅
+     （`useEffect` / `useCallback` / `setSuspensions` / `fetchSuspensions` の残骸も0件を別途確認）
+  2. `npm run build` → ✅ 成功（1962 modules / 19.03s・既存のチャンクサイズ警告のみ）
+  3. `npm test` → ✅ 2ファイル26テスト全パス
+  4. 本節 ← これ
+
+**採用したフックの形（ハイブリッド）**:
+- **読み**（`refetch`）は `useEffect` で自動実行。呼び出し元がいないので
+  エラーは `console.error` で握りつぶす（`useCompanyInfo` と同じ読み取り専用パターン）。
+- **書き**（`addSuspension` / `removeSuspension`）は `useCustomerSettingsData` のCRUD雛形どおり
+  `if (error) throw error;`。**フックは `useToast` を import しない**（通知は呼び出し側の責務）。
+  内部で `await refetch()` して、MasterTab元来の「書いたら読み直す」挙動を保つ。
+- `MasterTab` 側はフックのメソッドを `createSuspension` / `deleteSuspension` に**別名で受ける**。
+  コンポーネント自身のラッパー（バリデーション＋トースト）が `addSuspension` /
+  `removeSuspension` という名前を使い続けており、JSX側の呼び出しを一切触らずに済むため。
+  元のトースト文言4つはそのまま維持。
+
+**⚠️ この手順で新たに踏んだ地雷（上の `CustomerSettings.jsx` の地雷の裏返し）**:
+import削除・state削除・本体移設を**1回のバッチで並行実行**したところ、本体移設だけが
+`old_string` の誤字（`休日` と `休工`）で失敗し、**import だけ先に消えた壊れた状態**が一瞬できた。
+- **教訓1: import を消す編集は、同じバッチの中で必ず「最後」に置くか、バッチを分けること。**
+- **教訓2: Edit の `old_string` は必ず「その場で Read した実物」から作ること。**
+  要約や記憶から復元したスニペットで Edit を組むと、この種の1文字違いで落ちる。
+  （§3の鉄則「ローカルの記録を信用せず実物を見る」のソースコード版）
+
+#### ✅ 手順1の再スコープ（2026-09-15・**ユーザー承認済み → (A)採用**）
+
+> **ユーザーの判断: 「(A) テーブル単位に統合」を採用。**
+> あわせて **「手順2・3を先に進めてよい」** との承認を得た。
+> → **着手順を 2 → 3 → 1 → 4 → 5 → 6 → 7 に変更する。**
+> 手順2・3は完全に独立したCRUDで、手順1の方針に影響されないため。
+
+**確定した手順1のスコープ（(A)）**:
+- `system_settings` を **1フック**に集約する。
+- 移設対象: `SystemSettingsTab`(2) + `CompanyInfoSettings`(2) + `WorkerApp:152`(1)。
+- 既存の `useCompanyInfo` を**吸収**する（利用者は `HomeLanding.jsx:27` の1箇所だけ）。
+- `useSupabaseData.js:86` は自前SELECTをやめ、そのフックに**委譲**する。
+- `InputTab`(1) は**手順4**（`useCompanyHolidays`）へ移す。
+- 印影アップロード（`supabase.storage.from('stamps')`）の置き場所は**手順1の着手時に決める**（下記「未決の付随論点」）。
+
+---
+
+**以下は判断に至った経緯の記録（保存用）。**
 
 **承認済みの手順1は「`InputTab`(1) + `SystemSettingsTab`(2)、`system_settings` は新規 `useSystemSettings`」だった。**
-着手前の精査で前提が崩れたので、**勝手に変更せず**ここに記録する。決めるのはユーザー。
+着手前の精査で前提が崩れたので、**勝手に変更せず**ユーザーに判断を仰いだ。
 
 **崩れた前提は2つ:**
 
@@ -561,22 +611,19 @@ WorkerApp・週報出力・在庫・工程表は **E2Eの射程外**。
 2. **`InputTab`(1) は手順1では片付かない。** その1箇所（L35）は `CompanyHolidays` の SELECT であり、
    **手順4が統合する対象そのもの**。ここで別フックに出すと `CompanyHolidays` の**5つ目のコピー**になる。
 
-**提案（A）テーブル単位に揃える** ← 大原則に忠実
-- 手順1 = `system_settings` を1フックに集約。`SystemSettingsTab`(2) + `CompanyInfoSettings`(2)
-  + `WorkerApp:152`(1) を移し、`useCompanyInfo` を吸収、`useSupabaseData.js:86` はそのフックに委譲。
-- `InputTab`(1) は手順4（`useCompanyHolidays`）へ移動。
-- 短所: 手順1が「小さく安全な足慣らし」ではなくなる。`CompanyInfoSettings` の
+この2点を受けて2案を提示し、**ユーザーが (A) を選択した**（上の確定スコープがその結論）。
+
+- **(A) テーブル単位に揃える** ← 大原則に忠実。**採用。**
+  代償として、手順1は「小さく安全な足慣らし」ではなくなり、`CompanyInfoSettings` の
   `supabase.storage.from('stamps')`（L104）の置き場所も決める必要が出る。
+- **(B) 当初の承認どおり進める** ← 不採用。
+  `system_settings` の入口が6つになり、手順1完了時点で**新しい重複を作った状態**になるため。
 
-**提案（B）承認どおり進める**
-- 短所: `system_settings` の入口が6つになり、手順1完了時点で**新しい重複を作った状態**になる。
-  後で必ず統合し直すことになる。
-
-**未決の付随論点**: `CompanyInfoSettings` の印影アップロード（Storage・privateバケット `stamps`）は
-`system_settings` フックに同居させるか、`useStampStorage` として分けるか。
+**残る未決の論点（手順1の着手時に決める）**: `CompanyInfoSettings` の印影アップロード
+（Storage・privateバケット `stamps`）を `system_settings` フックに同居させるか、
+`useStampStorage` として分けるか。
 （現状は `src/utils/stampStorage` の `getStampSignedUrl` が署名URL変換を担当している）
-
-**→ ユーザーの判断があるまで手順1には着手しない。** 判断が出たらこの節を結論で置き換えること。
+これは手順1の**内部の設計判断**であり、着手可否を止めるものではない。
 
 ### 8.2 その他の観点
 
