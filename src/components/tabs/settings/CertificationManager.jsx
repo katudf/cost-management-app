@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { Award, Plus, Edit3, Trash2, X, ChevronDown, ChevronRight, Save } from 'lucide-react';
-import { supabase } from '../../../lib/supabase';
+import { useCertifications } from '../../../hooks/useCertifications';
 import { useToast } from '../../../components/Toast';
 import ConfirmModal from '../../ConfirmModal';
 
@@ -10,19 +10,26 @@ const CertificationManager = ({ workers = [], isLoading, setIsLoading, fetchAllD
     const [isSaving, setIsSaving] = useState(false);
     const [certForm, setCertForm] = useState({ id: null, workerId: '', name: '', registrationNumber: '', acquisitionDate: '', expiryDate: '' });
     const [expandedWorkers, setExpandedWorkers] = useState({});
-    const [certNameMaster, setCertNameMaster] = useState([]);
     const [isCustomCertName, setIsCustomCertName] = useState(false);
     const [viewMode, setViewMode] = useState('worker'); // 'worker' or 'cert'
+
+    const {
+        certNames: certNameMaster,
+        refetchCertNames,
+        createCertName,
+        createWorkerCertification,
+        updateWorkerCertification,
+        deleteWorkerCertification,
+    } = useCertifications();
 
     // 資格名マスター取得
     const fetchCertNameMaster = useCallback(async () => {
         try {
-            const { data } = await supabase.from('CertificationNames').select('*').order('name', { ascending: true });
-            setCertNameMaster(data || []);
+            await refetchCertNames();
         } catch (e) {
             console.error('資格名マスター取得エラー:', e);
         }
-    }, []);
+    }, [refetchCertNames]);
 
     useEffect(() => {
         fetchCertNameMaster();
@@ -97,16 +104,19 @@ const CertificationManager = ({ workers = [], isLoading, setIsLoading, fetchAllD
             };
 
             if (certForm.id) {
-                const { error } = await supabase.from('WorkerCertifications').update(payload).eq('id', certForm.id);
-                if (error) throw error;
+                await updateWorkerCertification(certForm.id, payload);
             } else {
-                const { error } = await supabase.from('WorkerCertifications').insert([payload]);
-                if (error) throw error;
+                await createWorkerCertification(payload);
             }
 
             if (trimmedName && !certNameMaster.some(m => m.name === trimmedName)) {
-                await supabase.from('CertificationNames').insert([{ name: trimmedName }]);
-                await fetchCertNameMaster();
+                // 資格名マスターへの登録失敗は資格本体の保存を巻き戻さない（従来どおり非致命扱い）
+                try {
+                    await createCertName(trimmedName);
+                    await fetchCertNameMaster();
+                } catch (e) {
+                    console.error('資格名マスター登録エラー:', e);
+                }
             }
 
             setCertForm({ id: null, workerId: '', name: '', registrationNumber: '', acquisitionDate: '', expiryDate: '' });
@@ -125,8 +135,7 @@ const CertificationManager = ({ workers = [], isLoading, setIsLoading, fetchAllD
         setIsSaving(true);
         setIsLoading(true);
         try {
-            const { error } = await supabase.from('WorkerCertifications').delete().eq('id', certId);
-            if (error) throw error;
+            await deleteWorkerCertification(certId);
             if (fetchAllData) await fetchAllData();
         } catch (error) {
             console.error('資格削除エラー:', error);

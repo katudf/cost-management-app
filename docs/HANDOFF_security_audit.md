@@ -543,8 +543,8 @@ WorkerApp・週報出力・在庫・工程表は **E2Eの射程外**。
 |---|---|---|
 | 1 | ⬜ 未着手 | スコープは(A)で確定済み。印影アップロードの置き場所だけ着手時に決める |
 | 2 | ✅ **完了（2026-09-15）** | 下記「手順2の完了記録」 |
-| 3 | ⬜ 未着手 | 次にやる |
-| 4 | ⬜ 未着手 | |
+| 3 | ✅ **完了（2026-09-15）** | 下記「手順3の完了記録」 |
+| 4 | ⬜ 未着手 | 次にやる |
 | 5 | ⬜ 未着手 | |
 | 6 | ⬜ 未着手 | |
 | 7 | ⬜ 未着手 | |
@@ -578,6 +578,45 @@ import削除・state削除・本体移設を**1回のバッチで並行実行**�
 - **教訓2: Edit の `old_string` は必ず「その場で Read した実物」から作ること。**
   要約や記憶から復元したスニペットで Edit を組むと、この種の1文字違いで落ちる。
   （§3の鉄則「ローカルの記録を信用せず実物を見る」のソースコード版）
+
+#### ✅ 手順3の完了記録（2026-09-15）
+
+- 新規 `src/hooks/useCertifications.js`（71行）を作成し、
+  `CertificationManager.jsx` の直接呼び出し**5箇所**を全部移設。
+  内訳: `CertificationNames` 2箇所（L20 SELECT / L108 INSERT）＋
+  `WorkerCertifications` 3箇所（L100 UPDATE / L103 INSERT / L128 DELETE）。
+- **完了条件の実測**:
+  1. `grep -n "supabase" src/components/tabs/settings/CertificationManager.jsx` → **0件** ✅
+     （残るのは `useCertifications` の import 1行と呼び出し1箇所のみ）
+  2. `npm run build` → ✅ 成功（14.17s・既存のチャンクサイズ警告のみ）
+  3. `npm test` → ✅ 2ファイル26テスト全パス
+  4. 本節 ← これ
+
+**採用したフックの形（`useCustomerSettingsData` のCRUD雛形・純粋版）**:
+- 手順2の `useProjectSuspensions`（ハイブリッド）とは**あえて変えた**。
+  フック内に `useEffect` を持たず、`refetchCertNames()` は呼び出し側が叩く。
+  コンポーネント側が既に `useEffect` ドライバとエラー文言を持っており、
+  効果を持たないフックの方が使い回しが効くため。
+- `WorkerCertifications` の**読みは実装していない**。表示データは親から渡る
+  `workers[].certifications`（`useSupabaseData` 経由）であり、この画面は
+  `certsByWorker` / `certsByName` で**整形しているだけ**だから。書きだけ提供する。
+- `MasterTab` と同じ**別名受け**を再利用（`certNames: certNameMaster`）。
+  これで L140以降のJSX（約360行）を**一切触らずに済んだ**。
+
+**副産物: 実在のバグを1件潰した**:
+- 旧 L20 は `const { data } = await supabase.from('CertificationNames')...` と
+  **`error` を受け取っていなかった**。supabase-js は reject せず resolve するので、
+  周囲の `try/catch` は**原理的に発火しない**。
+  取得が失敗しても黙って空配列になり、資格名マスターが消えるだけだった。
+- フック側の `if (error) throw error;` ＋ 呼び出し側の `catch` で、
+  既存の文言「資格名マスター取得エラー:」に到達するようになった。
+
+**意図的に「握りつぶし」を残した箇所（挙動維持）**:
+- `createCertName`（資格名マスターへの新規登録）は雛形どおり throw するが、
+  **呼び出し側で個別に `try/catch` して `console.error` し、処理を続行**させている。
+  資格本体の保存が成功しているのにマスター登録の失敗で全体を失敗扱いにしない、
+  という従来の挙動をそのまま保つため。
+  **「書き忘れによる暗黙の握りつぶし」ではなく「明示的な非致命扱い」**に変わった点が差分。
 
 #### ✅ 手順1の再スコープ（2026-09-15・**ユーザー承認済み → (A)採用**）
 
