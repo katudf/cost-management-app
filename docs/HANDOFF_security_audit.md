@@ -612,13 +612,81 @@ WorkerApp・週報出力・在庫・工程表は **E2Eの射程外**。
 
 | 手順 | 状態 | 記録 |
 |---|---|---|
-| 1 | 🔶 **着手中（2026-09-15）** | **着手前の精査完了。**スコープ(A)確定・印影の置き場所も決着（`stampStorage.js` に `uploadStamp` 追加）・行番号を実ファイルで再確認・実バグ1件を発見（自社情報の空文字上書き）。実装はこれから |
+| 1 | ✅ **完了（2026-09-16）** | 下記「手順1の完了記録」 |
 | 2 | ✅ **完了（2026-09-15）** | 下記「手順2の完了記録」 |
 | 3 | ✅ **完了（2026-09-15）** | 下記「手順3の完了記録」 |
 | 4 | ⬜ 未着手 | |
 | 5 | ⬜ 未着手 | |
 | 6 | ⬜ 未着手 | |
 | 7 | ⬜ 未着手 | |
+
+#### ✅ 手順1の完了記録（2026-09-16）
+
+**前セッションがコンテキスト超過で中断していたため、まず「ドキュメントの記述」ではなく「実ツリーの状態」を検証した。**
+結果、作業は**未コミットのまま半分進んでいた**（doc は「実装はこれから」と書いてあり、実態とズレていた）。
+
+**着手時点の実測（コミット `c3229c8` 時点の作業ツリー）**:
+
+| ファイル | 発見時の状態 |
+|---|---|
+| `src/hooks/useSystemSettings.js` | ✅ 新規作成済み・完成していた（未追跡） |
+| `src/utils/stampStorage.js` | ✅ `uploadStamp` 追加済み |
+| `src/components/tabs/SystemSettingsTab.jsx` | ✅ 移行済み（`supabase` 0件） |
+| `src/components/tabs/settings/CompanyInfoSettings.jsx` | ❌ **編集途中で壊れていた**（下記） |
+| `src/hooks/useCompanyInfo.js` | ✅ `git rm` 済み |
+| `src/components/HomeLanding.jsx` | ✅ import 差し替え済み |
+| `src/hooks/useSupabaseData.js` | ✅ 委譲済み |
+| `src/WorkerApp.jsx` | ❌ 本体は書き換え済みだが **import 未追加でビルド不能** |
+
+**壊れていた2ファイルを本セッションで修復して完了させた。**
+
+- `CompanyInfoSettings.jsx`: `useCompanyInfoSettings()` を呼んでいるのに import が無く、
+  削除済み `useState` の `companyLoaded` / `companySaving` を参照したまま、
+  `supabase.storage.from('stamps')` も残っていた（＝**地雷1と全く同じ形**）。
+  import 追加・`uploadStamp` 呼び出し化・表示ガードの3分岐化・ボタンの `disabled` 修正で解消。
+- `WorkerApp.jsx`: `fetchSystemSettings` を未 import で参照。L15 に import を追加。
+
+**`fetchWithCache` との形の不一致（本セッションで判明した設計上の注意点）**:
+`fetchSystemSettings` は `throw` する素の関数だが、`offlineCache.js:51` の `fetchWithCache` は
+`{data, error}` を受け取って `if (error) throw error` する。素のまま渡すと
+**localStorage フォールバックの経路を素通りしてしまう**ため、呼び出し側で形を戻している:
+
+```js
+const { data: settingsData } = await fetchWithCache('hourly_wage',
+    () => fetchSystemSettings('hourly_wage')
+        .then(data => ({ data, error: null }))
+        .catch(error => ({ data: null, error }))
+);
+```
+
+**確定した設計（スコープ(A)）**:
+- `src/hooks/useSystemSettings.js` に `system_settings` の入口を集約。
+  - 素の関数 `fetchSystemSettings(columns)` / `updateSystemSettings(patch)`（**どちらも throw。toast は呼び出し側の責務**）
+  - `useSystemSettings()`（時給・見積有効期限。`isDirty` で保存ボタンを制御）
+  - `useCompanyInfo(columns)`（読み取り専用。旧 `useCompanyInfo.js` を**吸収して削除**）
+  - `useCompanyInfoSettings()`（自社情報の読み書き）
+  - 定数 `COMPANY_BASIC_FIELDS` / `COMPANY_ALL_FIELDS` / `DEFAULT_HOURLY_WAGE` / `DEFAULT_EST_VALID_DAYS`
+- 印影アップロードは `stampStorage.js` の `uploadStamp` へ（`stampStorage.js` は
+  `supabaseEstimates.js:6` が React の外から import するため**フック化せず util のまま**）。
+
+**🐛 実バグの修正（自社情報の空文字上書き）**:
+読み込み失敗と読み込み未完了を `loadFailed` / `isLoaded` の**2つのフラグに分離**し、
+- `save()` は `loadFailed` のとき `throw` して保存を拒否
+- 画面は「読み込み失敗」を赤字で明示し、保存ボタンを `disabled`
+
+**完了条件の実測**:
+1. `grep -c supabase` → `SystemSettingsTab.jsx` **0件** / `CompanyInfoSettings.jsx` **0件** / `HomeLanding.jsx` **0件** ✅
+   `grep -n "system_settings" src/hooks/useSupabaseData.js` → コメント1行のみ ✅
+2. `npm run build` → ✅ 成功（16.55s・既存のチャンクサイズ警告のみ）
+3. `npm test` → ✅ 2ファイル26テスト全パス
+4. 本節 ← これ
+
+**手順1の対象外として残した `system_settings` 参照**（レイヤ違反ではない / 別途判断）:
+
+| 場所 | 扱い |
+|---|---|
+| `src/supabaseEstimates.js:439, 566` | CLAUDE.md が認める正規の経路（UIではない）。**違反ではない** |
+| `src/features/lineworks/lineworksNotify.js:34, 46` | UI ではなく features 層の専用モジュール。手順1のスコープ外。**フェーズ3で `useSystemSettings` に寄せるか判断する**（TODO） |
 
 #### ✅ 手順2の完了記録（2026-09-15）
 

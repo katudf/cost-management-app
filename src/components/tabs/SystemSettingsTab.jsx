@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Settings, Save, CheckCircle2, Award, Activity, UserCheck, Building2, MessageSquare } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
+import { useSystemSettings } from '../../hooks/useSystemSettings';
 import { useToast } from '../../components/Toast';
 import { getDailyApiUsage } from '../../utils/aiOptimizeUtils';
 import HolidayCalendar from '../HolidayCalendar';
@@ -21,10 +21,12 @@ const SystemSettingsTab = ({
     fetchAllData 
 }) => {
     const { showToast } = useToast();
-    const [localWage, setLocalWage] = useState(hourlyWage);
-    const [validDays, setValidDays] = useState(30);
-    const [initialValidDays, setInitialValidDays] = useState(30);
-    const [isSaving, setIsSaving] = useState(false);
+    const {
+        localWage, setLocalWage,
+        validDays, setValidDays,
+        isSaving, isDirty,
+        save: saveSystemSettings,
+    } = useSystemSettings({ hourlyWage, onHourlyWageSaved: setHourlyWage });
     const [showSuccess, setShowSuccess] = useState(false);
     const [apiUsage, setApiUsage] = useState(null);
     const [activeSubTab, setActiveSubTab] = useState('general'); // 'general', 'calendar', 'certs', 'customers', 'company', 'lineworks'
@@ -33,45 +35,16 @@ const SystemSettingsTab = ({
         setApiUsage(getDailyApiUsage());
     }, []);
 
-    useEffect(() => {
-        const fetchValidDays = async () => {
-            const { data, error } = await supabase
-                .from('system_settings')
-                .select('est_default_valid_days')
-                .eq('id', 1)
-                .single();
-            if (!error && data) {
-                setValidDays(data.est_default_valid_days ?? 30);
-                setInitialValidDays(data.est_default_valid_days ?? 30);
-            }
-        };
-        fetchValidDays();
-    }, []);
-
     const handleSave = async () => {
-        setIsSaving(true);
         setIsLoading(true);
         try {
-            const { error } = await supabase
-                .from('system_settings')
-                .update({
-                    hourly_wage: localWage,
-                    est_default_valid_days: validDays,
-                    updated_at: new Date().toISOString(),
-                })
-                .eq('id', 1);
-
-            if (error) throw error;
-
-            setHourlyWage(localWage);
-            setInitialValidDays(validDays);
+            await saveSystemSettings();
             setShowSuccess(true);
             setTimeout(() => setShowSuccess(false), 3000);
         } catch (error) {
             console.error('設定の保存に失敗しました:', error);
             showToast('設定の保存に失敗しました: ' + error.message, 'error');
         } finally {
-            setIsSaving(false);
             setIsLoading(false);
         }
     };
@@ -259,7 +232,7 @@ const SystemSettingsTab = ({
                         <div className="flex items-center gap-4 pt-6 border-t border-slate-100">
                             <button
                                 onClick={handleSave}
-                                disabled={isSaving || (localWage === hourlyWage && validDays === initialValidDays)}
+                                disabled={isSaving || !isDirty}
                                 className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-blue-700 transition shadow-lg shadow-blue-100 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 <Save size={18} />

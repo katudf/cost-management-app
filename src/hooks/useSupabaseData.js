@@ -1,12 +1,13 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { PROJECT_STATUS } from '../utils/constants';
+import { fetchSystemSettings, DEFAULT_HOURLY_WAGE } from './useSystemSettings';
 
 export function useSupabaseData(showToast) {
     const [projects, setProjects] = useState([]);
     const [workers, setWorkers] = useState([]);
     const [customers, setCustomers] = useState([]);
-    const [hourlyWage, setHourlyWage] = useState(3500);
+    const [hourlyWage, setHourlyWage] = useState(DEFAULT_HOURLY_WAGE);
     // AIによるExcel項目名最適化機能は現在無効化中（コード・UIは utils/aiOptimizeUtils.js に温存）。
     // 再度有効化する場合はこの初期値を true に戻すだけでよい。
     const [isGeminiEnabled, setIsGeminiEnabled] = useState(false);
@@ -83,9 +84,13 @@ export function useSupabaseData(showToast) {
                 sData = subs || [];
             }
 
-            const { data: settingsData, error: settingsError } = await supabase.from('system_settings').select('hourly_wage').eq('id', 1).single();
-            if (!settingsError && settingsData) {
-                setHourlyWage(settingsData.hourly_wage);
+            // system_settings へのアクセスは useSystemSettings.js に集約している
+            try {
+                const settingsData = await fetchSystemSettings('hourly_wage');
+                if (settingsData) setHourlyWage(settingsData.hourly_wage);
+            } catch (e) {
+                // 時給が取れなくても他のマスタ表示は続行する（既定値のまま）
+                console.error('システム設定取得エラー:', e);
             }
 
             // ローカルステート用の構造にマッピング

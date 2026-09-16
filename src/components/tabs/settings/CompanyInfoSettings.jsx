@@ -1,24 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { Building2, Upload, X, Save, CheckCircle2 } from 'lucide-react';
-import { supabase } from '../../../lib/supabase';
 import { useToast } from '../../../components/Toast';
-import { getStampSignedUrl } from '../../../utils/stampStorage';
+import { getStampSignedUrl, uploadStamp } from '../../../utils/stampStorage';
+import { useCompanyInfoSettings } from '../../../hooks/useSystemSettings';
 
 const CompanyInfoSettings = ({ isLoading, setIsLoading }) => {
     const { showToast } = useToast();
     
-    // 自社情報ステート
-    const [companyInfo, setCompanyInfo] = useState({
-        company_name: '',
-        company_zip: '',
-        company_address: '',
-        company_tel: '',
-        company_fax: '',
-        stamp_company_url: '',
-        stamp_representative_url: '',
-    });
-    const [companyLoaded, setCompanyLoaded] = useState(false);
-    const [companySaving, setCompanySaving] = useState(false);
+    // 自社情報ステート（取得・保存は useCompanyInfoSettings が持つ）
+    const { companyInfo, setCompanyInfo, isLoaded, loadFailed, isSaving, save } = useCompanyInfoSettings();
     const [companySuccess, setCompanySuccess] = useState(false);
     // stamps バケットは private のため、プレビュー表示には署名付きURLを使う
     // （companyInfo にはバケット内パスを保持し、そのままDBへ保存する）
@@ -39,55 +29,16 @@ const CompanyInfoSettings = ({ isLoading, setIsLoading }) => {
         return () => { cancelled = true; };
     }, [companyInfo.stamp_company_url, companyInfo.stamp_representative_url]);
 
-    // 自社情報取得
-    useEffect(() => {
-        const fetchCompanyInfo = async () => {
-            try {
-                const { data } = await supabase
-                    .from('system_settings')
-                    .select('company_name, company_zip, company_address, company_tel, company_fax, stamp_company_url, stamp_representative_url')
-                    .eq('id', 1)
-                    .single();
-                if (data) {
-                    setCompanyInfo({
-                        company_name: data.company_name || '',
-                        company_zip: data.company_zip || '',
-                        company_address: data.company_address || '',
-                        company_tel: data.company_tel || '',
-                        company_fax: data.company_fax || '',
-                        stamp_company_url: data.stamp_company_url || '',
-                        stamp_representative_url: data.stamp_representative_url || '',
-                    });
-                }
-            } catch (e) {
-                console.error('自社情報取得エラー:', e);
-            } finally {
-                setCompanyLoaded(true);
-            }
-        };
-        fetchCompanyInfo();
-    }, []);
-
     // 自社情報保存
     const handleSaveCompany = async () => {
-        setCompanySaving(true);
         try {
-            const { error } = await supabase
-                .from('system_settings')
-                .update({
-                    ...companyInfo,
-                    updated_at: new Date().toISOString(),
-                })
-                .eq('id', 1);
-            if (error) throw error;
+            await save();
             setCompanySuccess(true);
             setTimeout(() => setCompanySuccess(false), 3000);
             showToast('自社情報を保存しました', 'success');
         } catch (e) {
             console.error('自社情報保存エラー:', e);
             showToast('保存に失敗しました: ' + e.message, 'error');
-        } finally {
-            setCompanySaving(false);
         }
     };
 
@@ -98,14 +49,7 @@ const CompanyInfoSettings = ({ isLoading, setIsLoading }) => {
 
         setIsLoading(true);
         try {
-            const fileExt = file.name.split('.').pop();
-            const fileName = `${type}_${Date.now()}.${fileExt}`;
-
-            const { error: uploadError } = await supabase.storage
-                .from('stamps')
-                .upload(fileName, file, { upsert: true });
-
-            if (uploadError) throw uploadError;
+            const fileName = await uploadStamp(file, type);
 
             // stamps バケットは private のため公開URLは使えない。
             // バケット内パスを保存し、表示・PDF生成時に署名付きURLへ変換する
@@ -133,7 +77,12 @@ const CompanyInfoSettings = ({ isLoading, setIsLoading }) => {
                     <p className="text-xs text-slate-400">見積書PDF表紙に反映されます</p>
                 </div>
 
-                {!companyLoaded ? (
+                {loadFailed ? (
+                    <div className="text-center text-red-500 py-8 text-sm font-bold">
+                        自社情報の読み込みに失敗しました。<br />
+                        このまま保存すると既存の情報が消えるため、保存はできません。画面を再読み込みしてください。
+                    </div>
+                ) : !isLoaded ? (
                     <div className="text-center text-slate-400 py-8">読み込み中...</div>
                 ) : (
                     <>
@@ -266,11 +215,11 @@ const CompanyInfoSettings = ({ isLoading, setIsLoading }) => {
                         <div className="flex items-center gap-4 pt-6 mt-6 border-t border-slate-100">
                             <button
                                 onClick={handleSaveCompany}
-                                disabled={companySaving || !companyInfo.company_name.trim()}
+                                disabled={isSaving || loadFailed || !companyInfo.company_name.trim()}
                                 className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-blue-700 transition shadow-lg shadow-blue-100 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 <Save size={18} />
-                                {companySaving ? '保存中...' : '自社情報を保存'}
+                                {isSaving ? '保存中...' : '自社情報を保存'}
                             </button>
                             {companySuccess && (
                                 <span className="text-green-600 font-bold text-sm flex items-center gap-1 animate-bounce">

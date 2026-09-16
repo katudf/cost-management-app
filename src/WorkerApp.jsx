@@ -12,6 +12,7 @@ import { PROJECT_STATUS, WORKER_TYPE } from './utils/constants';
 import { syncOvertimeApproval, fetchPendingApprovals, approveOvertime, fetchApprovalReason, fetchApprovalsForReport } from './lib/overtimeApprovals';
 import { syncWorkAllowanceApproval, fetchPendingWorkAllowanceApprovals, approveWorkAllowance, fetchWorkAllowanceApprovalsForReport } from './lib/workAllowanceApprovals';
 import { fetchWithCache, getDraftQueue, upsertDraft, removeDraft } from './utils/offlineCache';
+import { fetchSystemSettings } from './hooks/useSystemSettings';
 import { generateMultipleWorkersReportPDF } from './utils/pdfExportUtils';
 
 // ローカルタイムゾーンで 'YYYY-MM-DD' を生成する（toISOString はUTC変換されるため日付がずれる）
@@ -148,8 +149,12 @@ const WorkerApp = () => {
                 );
                 if (pData) setProjects(pData);
 
+                // system_settings へのアクセスは useSystemSettings.js に集約している。
+                // fetchWithCache は {data, error} 形式を期待するため、throw を error に戻して渡す。
                 const { data: settingsData } = await fetchWithCache('hourly_wage',
-                    () => supabase.from('system_settings').select('hourly_wage').eq('id', 1).single()
+                    () => fetchSystemSettings('hourly_wage')
+                        .then(data => ({ data, error: null }))
+                        .catch(error => ({ data: null, error }))
                 );
                 if (settingsData && settingsData.hourly_wage) setHourlyWage(settingsData.hourly_wage);
             } catch (error) {

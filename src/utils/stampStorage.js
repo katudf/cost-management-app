@@ -25,3 +25,15 @@ export const getStampSignedUrl = async (value) => {
   if (error) throw error;
   return data.signedUrl;
 };
+
+// 印影画像をアップロードし、DBに保存すべきバケット内パスを返す。
+// 戻り値をそのまま system_settings.stamp_*_url に保存すること（公開URLに変換しない）
+export const uploadStamp = async (file, type) => {
+  const fileExt = file.name.split('.').pop();
+  const fileName = `${type}_${Date.now()}.${fileExt}`;
+  const { error } = await supabase.storage
+    .from(BUCKET)
+    .upload(fileName, file, { upsert: true });
+  if (error) throw error;
+  return fileName;
+};

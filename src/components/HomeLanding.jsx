@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { HardHat, Calendar, Clipboard, FileText, Users, Database, Settings, LogOut } from 'lucide-react';
-import { useCompanyInfo } from '../hooks/useCompanyInfo';
+import { useCompanyInfo } from '../hooks/useSystemSettings';
 import WeatherPanel from './WeatherPanel';
 import logoUrl from '../img/logo.png';
 
