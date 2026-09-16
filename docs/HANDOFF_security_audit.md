@@ -1,6 +1,8 @@
 # HANDOFF — 全体検証（監査）の引き継ぎ
 
-最終更新: 2026-09-16 / 対象コミット: `cd63c7b`（`430a323` → `2bb434b` → `bc6b210` → `8d17193` → `dba39b5` → `5dddd9e` → `c1c567d` → `8133162` → `fc00a7f` → `e88f98a` → `c3229c8` → `e3ebe7f` → `9c6a20e` → `b0c1b0e` → `6e57ff4` → `cd63c7b`）
+最終更新: 2026-09-17 / 対象コミット: `339c7e8`（フェーズ2完了 `cd63c7b` → `0816eae` → `81d4933` → **フェーズ3着手 `339c7e8`**）
+
+旧: `cd63c7b`（`430a323` → `2bb434b` → `bc6b210` → `8d17193` → `dba39b5` → `5dddd9e` → `c1c567d` → `8133162` → `fc00a7f` → `e88f98a` → `c3229c8` → `e3ebe7f` → `9c6a20e` → `b0c1b0e` → `6e57ff4` → `cd63c7b`）
 
 この文書だけで、文脈ゼロの新規チャットが監査を再開できることを目的とする。
 
@@ -9,19 +11,20 @@
 ## 0. 最初に読む人へ（3行）
 
 - 目的は **「Vibeコーディングで積み上げた本プロジェクトの、雑さ・非整合・脆弱性を一度全部洗う」** こと。
-- 進捗は **フェーズ0・フェーズ1 完了 / フェーズ2 進行中 / フェーズ3 未着手**。
+- 進捗は **フェーズ0・1・2 完了 / フェーズ3 進行中**。
 - **§8.1（レイヤ違反の解消・手順1〜7）は 2026-09-16 に全て完了した**（`cd63c7b`）。
   2026-09-15の再スキャンで見つかった52箇所/8ファイルは、すべてフック層へ集約済み。
 - **§8.2（その他の観察事項）も 2026-09-16 に全件処理した。**
   内訳: マジック文字列（ステータス）是正不要 / 休日判定17箇所を `holidayUtils.js` に集約✅ /
-  人工計算は統一済み✅・**原価計算は3重実装を発見しフェーズ3へ送った⚠️** /
+  人工計算は統一済み✅・**原価計算の3重実装はフェーズ3へ送り `339c7e8` で解消済み✅** /
   `docs/archive/` は方針で保持されており死んだコードではない /
   `Workers` のポリシー欠如は**本文の前提が誤り**だった（真の論点は
   `workers_directory` の `security_invoker=false` によるRLS迲回）/
   購買台帳のエラー通知が画面に出ていなかった不具合を是正✅。
-- **次にやるのは §9 フェーズ3（巨大コンポーネントの分割）。**
-  フェーズ3の最大の対象は `PurchaseLedgerTab.jsx`（1,416行）と `WorkerApp.jsx`。
-  **`WorkerApp.jsx` を分割する際に、§8.2 で発見した原価計算の3重実装を同時に片付けること。**
+- **§9 フェーズ3に着手済み（2026-09-17）。**
+  §8.2 で発見した**原価計算の3重実装は `339c7e8` で解消した**（ヘッダに書かれていた宿題は完了）。
+  詳細と、E2Eゲートが使えないためユニットテストに差し替えた経緯は **§9.0 / §9.1**。
+  次の対象は `WorkerApp.jsx`（1,865行）。**§9.2 の行数表は再計測済み。古い値を引用しないこと。**
 
 ### ⚠️ 名前がぶつかっているので必ず区別すること
 
@@ -60,8 +63,8 @@
 |---|---|---|
 | フェーズ0 | 足場固め（DB実態とマイグレーションの一致、型再生成、残骸整理） | ✅ 完了 `d7ffed0` |
 | フェーズ1 | セキュリティ検証（RLS・RPC・匿名到達性） | ✅ 完了 `430a323` |
-| フェーズ2 | 凝集度・整合性（レイヤ違反、マジック文字列、死んだコード） | 🔶 進行中 |
-| フェーズ3 | 構造改善（巨大コンポーネントの分割） | ⬜ 未着手 |
+| フェーズ2 | 凝集度・整合性（レイヤ違反、マジック文字列、死んだコード） | ✅ 完了 `81d4933` |
+| フェーズ3 | 構造改善（巨大コンポーネントの分割） | 🔶 進行中 `339c7e8` |
 
 ### コミット履歴
 
@@ -81,7 +84,13 @@
 | `5dddd9e` | HANDOFF_security_audit.mdのヘッダを最新コミットに更新 |
 | `c1c567d` | フェーズ2の着手前精査を記録（レイヤ違反55箇所・手順1の再スコープ提案） |
 | `8133162` | 休工期間のSupabase直接呼び出しを `useProjectSuspensions` に分離（手順2） |
-| `fc00a7f` | 資格情報のSupabase直接呼び出しを `useCertifications` に分離（手順3） ← **現在のHEAD** |
+| `fc00a7f` | 資格情報のSupabase直接呼び出しを `useCertifications` に分離（手順3） |
+| `6e57ff4` | `WorkerApp` のSupabase直接呼び出し22件を `useDailyReport` に集約 |
+| `cd63c7b` | `PurchaseLedgerTab` のSupabase直接呼び出し6件を `usePurchaseLedger` に集約（§8.1 完了） |
+| `76b2fac` | HANDOFF_security_audit.mdのヘッダと次の一手を最新化 |
+| `0816eae` | 休日判定マジック文字列17箇所を `holidayUtils.js` に集約 |
+| `81d4933` | 描画されない error ステートをトースト通知に差し替え（**フェーズ2 完了**） |
+| `339c7e8` | 原価計算の3重実装を `projectUtils` の純粋関数に集約（**フェーズ3 着手**。§9.1） ← **現在のHEAD** |
 
 ### フェーズ1の指摘一覧
 
@@ -1538,7 +1547,7 @@ finally { setCompanyLoaded(true) }   // ← 失敗でも必ず true
   `holidayUtils.js` 自身の定義 4。
 
   **ゲート**: `npm run build` ✓（既知の >500kB chunk 警告のみ） / `npm test` ✓ 26/26
-- 原価・人工の計算ロジックの重複 — **調査済み（2026-09-16）。人工は ✅ / 原価は ⚠️ 3重実装。**
+- 原価・人工の計算ロジックの重複 — **調査済み（2026-09-16）。人工は ✅ / 原価も ✅ 解消済み（`339c7e8`・§9.1）。**
 
   **人工（✅ 是正不要）**: `8d17193` で `workTimeUtils.ts` の季節対応
   `calculateNinku`/`getSeasonConfig` に統一済み（`DashboardTab.jsx` / `useDashboardStats.js` /
@@ -1546,7 +1555,9 @@ finally { setCompanyLoaded(true) }   // ← 失敗でも必ず true
   テスト期待値のみ。ショートカット実装は全滅している。`DashboardTab.jsx` はもうgrepに現れない
   （`8d17193` で `useDashboardStats` 経由に移ったため）。
 
-  **原価（⚠️ 未是正 — 同じ4本の式が3箇所に独立実装されている）**:
+  **原価（✅ 2026-09-17 に `339c7e8` で解消 — 詳細は §9.1）**。以下は発見当時の記録:
+
+  発見時点では、同じ4本の式が3箇所に独立実装されていた:
 
   | 式 | `projectUtils.js`<br>`calculateProjectsSummary` | `useDashboardStats.js`<br>36-70 | `WorkerApp.jsx`<br>1218-1240 (`foremanSummary`) |
   |---|---|---|---|
@@ -1649,22 +1660,118 @@ finally { setCompanyLoaded(true) }   // ← 失敗でも必ず true
 
 ---
 
-## 9. フェーズ3のスコープ（構造）— 未着手
+## 9. フェーズ3のスコープ（構造）— 🔶 進行中
 
 巨大コンポーネントの分割。**全面書き換えはしない。**
-E2Eテストで挙動を固定してから、どうせ触る必要が出たファイルを機会的に分割する。
+どうせ触る必要が出たファイルを機会的に分割する。
 
-| ファイル | 行数 |
+### 9.0 ⭐ ゲートの差し替え（E2Eが使えない問題）
+
+この節はもともと「**E2Eテストで挙動を固定してから**分割する」と書かれていた。
+しかしその前提は**使えない**:
+
+- 既存のE2Eは `tests/e2e/lazy_load.spec.ts`（2.7KB）と `settings_flow.spec.ts`（2.2KB）の2本だけ
+- 「既存E2Eの品質が低いので**新規E2Eは書かない**」というのが確定方針
+  （書くと偽の安心を生むため）
+
+つまり**この節が指定したゲートは存在しない**。止まるのではなく、代わりのゲートを置いた:
+
+> **純粋関数を `src/utils/` に切り出し、Vitestのユニットテストで固定する。**
+> そのうえで `npm run build` と `npm test` を通す。
+
+これを選んだ理由:
+- 実際に達成可能（E2Eと違い、環境やタイミングに依存しない）
+- **動かすロジックそのもの**に回帰検知がかかる（E2Eの間接的な確認より直接的）
+- 「全面書き換えはしない」と両立する（呼び出し元のデータ形は温存したまま、計算だけ抜く）
+
+分割の前に、まず**同じ計算が複数箇所に散っている状態を1本化する**。
+これがフェーズ3の最初の仕事。
+
+### 9.1 ✅ 原価計算の3重実装の解消（`339c7e8`）
+
+> ヘッダに記録されていた宿題:
+> **「`WorkerApp.jsx` を分割する際に、§8.2 で発見した原価計算の3重実装を同時に片付けること。」**
+> → **完了。**
+
+**何が重複していたか。** 4つの式が3箇所に、**計算は同一のままデータ形だけ違う**形で存在していた:
+
+| 式 | 内容 |
 |---|---|
-| `src/WorkerApp.jsx` | 1924 |
-| `src/estimate-editor/EstimateEditor.jsx` | 1679 |
-| `src/components/tabs/PurchaseLedgerTab.jsx` | 1416 |
-| `src/hooks/useAssignmentState.js` | 1293 |
-| `src/estimate-editor/SheetPaper.jsx` | 1105 |
-| `src/AdminApp.jsx` | 974 |
-| `src/EstimatePDF.jsx` | 969 |
+| 予測着地 | `actual / (progress / 100)` |
+| 予測損益 | `(target - 予測着地) * hourlyWage` |
+| 協力業者原価 | `Σ worker_count * unit_price` |
+| 加重平均進捗 | `Σ(progress * target) / Σ target` |
 
-リポジトリ全体: ソース103ファイル / 31,039行。
+| 箇所 | データ形 |
+|---|---|
+| `src/utils/projectUtils.js` の `calculateProjectsSummary` | camelCase。`m.target` / `r.taskId` / 進捗は `progressData` に別持ち |
+| `src/hooks/useDashboardStats.js` | 同上 |
+| `src/WorkerApp.jsx` の `foremanSummary` | snake_case。`t.target_hours` / `r.project_task_id` / 進捗は `t.progress_percentage`（タスク行に同居） |
+
+**どう直したか。** データ形を統一する全面書き換えはせず、
+**形状非依存のコア**を `projectUtils.js` に置き、各呼び出し元が**境界で自分の形を正規化**する:
+
+```
+呼び出し元の形 ──(正規化)──> { target, actual, progress }[] ──> summarizeTaskCosts()
+```
+
+新設した純粋関数（すべて `src/utils/projectUtils.js`）:
+
+| 関数 | 役割 |
+|---|---|
+| `calcPredictedFinal(actual, progress)` | 予測着地。`progress === 0` は0を返す（ゼロ除算しない） |
+| `calcPredictedProfitLoss(target, actual, progress, hourlyWage)` | 予測損益 |
+| `calcSubcontractorCost(subcontractors)` | 協力業者原価。`null`/`undefined` も0 |
+| `calcWeightedProgress(items)` | 加重平均進捗。**丸めなし**（丸めは呼び出し元の責任） |
+| `summarizeTaskCosts(items, hourlyWage, subcontractors)` | 上記をまとめた集計。協力業者原価を予測損益から差し引く |
+
+**ついでに直ったもの（意図せぬ副産物なので記録する）:**
+`WorkerApp` の `foremanSummary` は、合計側では `Number(t.target_hours) || 0` と型変換していたのに、
+予測損益側では生の `t.target_hours` を使っていた。
+コアに寄せたことで両方が同じ扱いになった。**潜在的な不整合が1件消えている。**
+
+**振る舞いの差（レビュー時に見るべき点）:**
+`calculateProjectsSummary` の目標合計が `m.target` の素の加算から `Number(m.target || 0)` に変わった。
+正常な数値データでは完全に同一。`undefined`/`null` が混ざった場合だけ `NaN` → `0` に変わる（改善方向）。
+
+**時間単価のハードコード解消:**
+`DEFAULT_HOURLY_WAGE = 3500` は `src/hooks/useSystemSettings.js:25` に**すでに存在していた**。
+それを知らずに書かれた裸の `3500` が2箇所（`WorkerApp.jsx:109` / `supabaseEstimates.js:443`）あったので定数に寄せた。
+→ `grep -rn "3500" src` は現在**定義行1件のみ**。
+
+**死にコード削除:** `AdminApp.jsx:17` の `import { calculateProjectsSummary }` は
+import されているだけで**呼ばれていなかった**（実際の呼び出しは `useDashboardStats.js:9` の1箇所のみ）。削除。
+
+**ゲート結果:**
+
+| 項目 | 結果 |
+|---|---|
+| `npm test` | ✅ 48件 / 3ファイル（着手前は 26件 / 2ファイル。`projectUtils.test.ts` で **+22件**） |
+| `npm run build` | ✅ 16.44s |
+| ESLint | ⛔ リポジトリに `eslint.config.*` が無いのでゲートにできない（§11参照） |
+
+### 9.2 分割候補（行数は `339c7e8` 時点で grep 再計測済み）
+
+| ファイル | 行数 | 備考 |
+|---|---|---|
+| `src/WorkerApp.jsx` | 1865 | 最有力。原価計算の重複は 9.1 で解消済み |
+| `src/types/supabase.ts` | 1849 | ⛔ **自動生成。分割対象外**（`generate_typescript_types` の出力） |
+| `src/estimate-editor/EstimateEditor.jsx` | 1679 | |
+| `src/components/tabs/PurchaseLedgerTab.jsx` | 1378 | §8.1 で Supabase 直接呼び出しを `usePurchaseLedger` に集約済み |
+| `src/hooks/useAssignmentState.js` | 1290 | |
+| `src/estimate-editor/SheetPaper.jsx` | 1105 | |
+| `src/EstimatePDF.jsx` | 969 | |
+| `src/AdminApp.jsx` | 889 | |
+
+リポジトリ全体: ソース **117ファイル / 34,053行**（`src/` + `tests/` の js/jsx/ts/tsx）。
+
+> ⚠️ この表の以前の版（103ファイル / 31,039行、WorkerApp 1924行 等）は**すべて古い**値だった。
+> フェーズ2の各コミットで行数が動いている。**引用する前に必ず grep で数え直すこと。**
+
+### 9.3 次の一手
+
+`WorkerApp.jsx`（1865行）から、9.1と同じやり方で**純粋ロジックを `src/utils/` に抜いてユニットテストを付ける**。
+UIコンポーネントの機械的な切り出しより、テストできる形にする方を先にやる。
 
 ---
 
