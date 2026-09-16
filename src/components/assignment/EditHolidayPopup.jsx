@@ -1,5 +1,6 @@
 import React from 'react';
 import { X } from 'lucide-react';
+import { COMPANY_EVENT, HOLIDAY_DESCRIPTION } from '../../utils/holidayUtils';
 
 const EditHolidayPopup = ({ editHolidayCell, onClose, onUpdateHoliday }) => {
     if (!editHolidayCell) return null;
@@ -27,19 +28,19 @@ const EditHolidayPopup = ({ editHolidayCell, onClose, onUpdateHoliday }) => {
             </div>
             <div className="p-2 flex flex-col gap-1">
                 <button
-                    onClick={() => onUpdateHoliday(editHolidayCell.dateStr, '休日', editHolidayCell.existingId)}
+                    onClick={() => onUpdateHoliday(editHolidayCell.dateStr, HOLIDAY_DESCRIPTION, editHolidayCell.existingId)}
                     className="text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded font-bold"
                 >
                     休日
                 </button>
                 <button
-                    onClick={() => onUpdateHoliday(editHolidayCell.dateStr, '会議', editHolidayCell.existingId)}
+                    onClick={() => onUpdateHoliday(editHolidayCell.dateStr, COMPANY_EVENT.MEETING, editHolidayCell.existingId)}
                     className="text-left px-3 py-2 text-sm text-sky-700 hover:bg-sky-50 rounded font-bold"
                 >
                     会議
                 </button>
                 <button
-                    onClick={() => onUpdateHoliday(editHolidayCell.dateStr, '社員旅行', editHolidayCell.existingId)}
+                    onClick={() => onUpdateHoliday(editHolidayCell.dateStr, COMPANY_EVENT.TRIP, editHolidayCell.existingId)}
                     className="text-left px-3 py-2 text-sm text-violet-700 hover:bg-violet-50 rounded font-bold"
                 >
                     社員旅行

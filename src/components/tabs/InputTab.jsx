@@ -4,6 +4,7 @@ import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmProvider';
 import { WORKER_TYPE } from '../../utils/constants';
 import { useCompanyHolidays } from '../../hooks/useCompanyHolidays';
+import { isActualHoliday } from '../../utils/holidayUtils';
 
 const InputTab = ({
     activeProject,
@@ -40,7 +41,7 @@ const InputTab = ({
             
             // 休日判定 (配置表と同様)
             const registeredHoliday = companyHolidays.find(h => h.date === dateStr);
-            const isActualHoliday = registeredHoliday && registeredHoliday.description !== '会議' && registeredHoliday.description !== '社員旅行';
+            const isRegisteredHoliday = isActualHoliday(registeredHoliday);
             
             return {
                 day: i + 1,
@@ -48,7 +49,7 @@ const InputTab = ({
                 dow,
                 isSunday: dow === 0,
                 isSaturday: dow === 6,
-                isHoliday: isActualHoliday,
+                isHoliday: isRegisteredHoliday,
                 dayOfWeek: ['日', '月', '火', '水', '木', '金', '土'][dow]
             };
         });

@@ -11,6 +11,7 @@ import EditHolidayPopup from '../assignment/EditHolidayPopup';
 import AssignmentPopup from '../assignment/AssignmentPopup';
 import ProjectBarRow from '../assignment/ProjectBarRow';
 import WorkerRow from '../assignment/WorkerRow';
+import { isNonWorkingDay, getHolidayStyle } from '../../utils/holidayUtils';
 
 // メモ化した行コンポーネントに「変化なし」を安定した参照で伝えるための定数
 const EMPTY_ARRAY = [];
@@ -88,11 +89,10 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
     // 日付ヘッダーのスタイルを列ごとに事前計算（セルごとの再計算を排除）
     const dayHeaderInfo = useMemo(() => dateColumns.map(col => {
         const registered = holidayMap[col.dateStr];
-        const isActualHoliday = registered && registered.description !== '会議' && registered.description !== '社員旅行';
         const isToday = col.dateStr === todayStr;
         let bg = null;
         let color = null;
-        if (col.dow === 0 || isActualHoliday) {
+        if (isNonWorkingDay(col.dow, registered)) {
             bg = '#FEE2E2'; color = '#DC2626';
         } else if (col.dow === 6) {
             bg = '#DBEAFE'; color = '#2563EB';
@@ -348,22 +348,18 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                 const holidayObj = holidayMap[col.dateStr];
                                 const isWeekend = col.dow === 0 || col.dow === 6;
 
+                                const holidayStyle = getHolidayStyle(holidayObj);
+
                                 let bgColor = 'transparent';
-                                if (holidayObj) {
-                                    bgColor = holidayObj.description === '会議' ? '#BAE6FD' : // light sky blue
-                                        holidayObj.description === '社員旅行' ? '#DDD6FE' : // light purple
-                                            '#FECACA'; // light red (default/holiday)
+                                if (holidayStyle) {
+                                    bgColor = holidayStyle.bgColor;
                                 } else if (isWeekend) {
                                     bgColor = '#F1F5F9';
                                 }
 
-                                const displayText = holidayObj?.description === '会議' ? '会議' :
-                                    holidayObj?.description === '社員旅行' ? '旅行' :
-                                        holidayObj ? '休' : '';
+                                const displayText = holidayStyle?.shortLabel ?? '';
 
-                                const textColor = holidayObj?.description === '会議' ? 'text-sky-700' :
-                                    holidayObj?.description === '社員旅行' ? 'text-violet-700' :
-                                        'text-red-600';
+                                const textColor = holidayStyle?.textColor ?? 'text-red-600';
 
                                 const isEditingEvent = editHolidayCell && editHolidayCell.dateStr === col.dateStr;
 

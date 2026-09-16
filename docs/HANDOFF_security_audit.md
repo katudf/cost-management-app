@@ -1432,7 +1432,7 @@ finally { setCompanyLoaded(true) }   // ← 失敗でも必ず true
   これは**タブ定義オブジェクトの表示文字列**でありステータス比較ではない。値がたまたま一致しているだけ。
   → **ステータス定数については是正不要。**
 
-- **⚠️ 本当のマジック文字列問題は「休日判定」だった — `'会議'` / `'社員旅行'`（17箇所 / 7ファイル）**
+- **✅ 是正済み（2026-09-16）— 本当のマジック文字列問題は「休日判定」だった — `'会議'` / `'社員旅行'`（17箇所 / 7ファイル）**
   （`grep -n "会議\|社員旅行" src` の生出力は **24行**。是正対象は17箇所。差の7行の内訳は下記）
   「登録された休日のうち `会議`・`社員旅行` は*実質的な休日ではない*」という業務ルールが、
   定数化されないまま各所にコピーされている。**性質の異なる3種類が混在しているので、対策も3種類必要。**
@@ -1472,6 +1472,64 @@ finally { setCompanyLoaded(true) }   // ← 失敗でも必ず true
 > 着手前に必ず grep で数え直すこと。
 
   **手順4（`useCompanyHolidays` への統合）と同時に片付けるのが自然。**
+
+  ---
+
+  #### ✅ 完了（2026-09-16） — `src/utils/holidayUtils.js` に集約
+
+  **着手前精査（grepで数え直した結果、上の記述を1点訂正）**
+
+  `grep -rn "会議\|社員旅行" src` の生出力は **24行ではなく25行**だった。
+  増えた1行は `src/hooks/useCompanyHolidays.js:13` の JSDoc コメントで、
+  **手順4（このフックの切り出し）自身が作った行**。上の記述は手順4より前に書かれたので
+  当然含まれていない。**是正対象17箇所（a=7 / b=8 / c=2）は変化なし**、
+  除外は 3（定義）+ 2（ボタンラベル）+ **3**（コメント）= 8。**17 + 8 = 25 ✓**
+
+  行番号も手順1〜7のリファクタでずれていたので現物で取り直した:
+  `useAssignmentState.js` 98→**99** / `HolidayCalendar.jsx` 165→**142**・233→**210**・コメント158→**135** /
+  `InputTab.jsx` 52→**43**
+
+  **新設した共通モジュール `src/utils/holidayUtils.js`**
+
+  | export | 用途 |
+  |--------|------|
+  | `COMPANY_EVENT.MEETING` / `.TRIP` | 会社行事の `description` 値（`'会議'` / `'社員旅行'`） |
+  | `HOLIDAY_DESCRIPTION` | 通常休日の UI 側文字列（`'休日'`） |
+  | `isActualHoliday(holiday)` | レコード単体で「実際の休業日か」を判定（曜日は見ない） |
+  | `isNonWorkingDay(dow, holiday)` | 日曜判定込み。`dow === 0 \|\| isActualHoliday(holiday)` |
+  | `getHolidayStyle(holiday)` | `{ bgColor, shortLabel, textColor }` または `null` を返す表示テーブル |
+
+  **述語を2つ export したのは意図的。** 呼び出し側には
+  「先に `dow === 0` を見てから使う」形と「レコードだけ見る」形の**2種類が実在した**ので、
+  1つに寄せると片方の呼び出し側に無意味な引数を強いることになる。
+
+  **ドキュメントの一覧に無かった2箇所も同時に直した（重要）**
+
+  1. **`useAssignmentState.js:1033`** — `updateCompanyHoliday()` が
+     `description === '休日' ? null : description` で **UI文字列をDBのnullへ変換**していた。
+     つまり `EditHolidayPopup` が書く文字列を**読む側**であり、
+     まさに上で警告している「**(a)(c)が食い違うと無言でバグる**」の本体。
+     一覧から漏れていたが、放置すると定数化の意味が無いので `HOLIDAY_DESCRIPTION` 経由にした。
+  2. **`HolidayCalendar.jsx` の `HOLIDAY_TYPES`** — 「定義側なので除外」と分類していたが、
+     実体は**同じ値のもう1つの定義**。除外理由としては形式的に正しいものの、
+     残すと今回潰したはずのドリフト危険がそのまま残るため、共有定数を参照する形にした。
+
+  **変更したファイル（8）**: `holidayUtils.js`（新規）/ `useAssignmentState.js` /
+  `AssignmentChartTab.jsx` / `WorkerAssignmentView.jsx` / `InputTab.jsx` /
+  `HolidayCalendar.jsx` / `ProjectBarRow.jsx` / `EditHolidayPopup.jsx`
+  （差分は **+33 / −41**。判定・表示ロジックが減って共通化された形）
+
+  **リネーム時に踏みかけた罠（記録）**: `InputTab.jsx` / `WorkerAssignmentView.jsx` で
+  ローカル変数 `isActualHoliday` を別名にした際、**同名の import 関数が
+  そのまま参照に残る**（`isHoliday: isActualHoliday` が boolean ではなく関数を指す）状態が発生した。
+  ビルドは通ってしまう種類のバグなので、**リネーム直後に必ず旧名を grep する**こと。今回は混入前に修正済み。
+
+  **残った生grep 11行はすべて正当**:
+  ボタン表示ラベル2 / `HOLIDAY_TYPES` の label・description 2（定数参照済み）/
+  コメント2 / `constants.js:159`（`SCHEDULE_TYPES` の予定種別で CompanyHolidays とは無関係）1 /
+  `holidayUtils.js` 自身の定義 4。
+
+  **ゲート**: `npm run build` ✓（既知の >500kB chunk 警告のみ） / `npm test` ✓ 26/26
 - 原価・人工の計算ロジックの重複 — **ダッシュボード/Excel出力の人工数計算（総時間÷7.5のショートカット）は
   `8d17193` で `workTimeUtils.ts` の季節対応 `calculateNinku`/`getSeasonConfig` に統一済み ✅**
   （`DashboardTab.jsx` / `useDashboardStats.js` / `excelExportUtils.js` 修正）。

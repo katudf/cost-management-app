@@ -2,14 +2,15 @@ import React, { useState } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { useToast } from './Toast';
 import { useCompanyHolidays, deleteCompanyHoliday, upsertCompanyHoliday } from '../hooks/useCompanyHolidays';
+import { isNonWorkingDay, COMPANY_EVENT, HOLIDAY_DESCRIPTION } from '../utils/holidayUtils';
 
 const DOW_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
 const MONTH_NAMES = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
 
 const HOLIDAY_TYPES = [
-    { key: 'holiday', label: '休日', color: '#FECACA', textColor: '#DC2626', description: null },
-    { key: 'meeting', label: '会議', color: '#DCFCE7', textColor: '#15803d', description: '会議' },
-    { key: 'trip', label: '社員旅行', color: '#DDD6FE', textColor: '#6D28D9', description: '社員旅行' },
+    { key: 'holiday', label: HOLIDAY_DESCRIPTION, color: '#FECACA', textColor: '#DC2626', description: null },
+    { key: 'meeting', label: COMPANY_EVENT.MEETING, color: '#DCFCE7', textColor: '#15803d', description: COMPANY_EVENT.MEETING },
+    { key: 'trip', label: COMPANY_EVENT.TRIP, color: '#DDD6FE', textColor: '#6D28D9', description: COMPANY_EVENT.TRIP },
 ];
 
 const HolidayCalendar = () => {
@@ -132,14 +133,14 @@ const HolidayCalendar = () => {
             );
         }
 
-        // 休日・出勤日数の計算 (日曜 or 登録済み休日[会議・旅行除く])
+        // 休日・出勤日数の計算 (日曜 or 登録済み休日[会社行事除く])
         let monthlyHolidays = 0;
         for (let day = 1; day <= daysInMonth; day++) {
             const date = new Date(displayYear, displayMonth, day);
             const dateStr = `${displayYear}-${String(displayMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
             const dow = date.getDay();
             const holiday = getHoliday(dateStr);
-            if (dow === 0 || (holiday && holiday.description !== '会議' && holiday.description !== '社員旅行')) {
+            if (isNonWorkingDay(dow, holiday)) {
                 monthlyHolidays++;
             }
         }
@@ -207,7 +208,7 @@ const HolidayCalendar = () => {
                                 if (d.getFullYear() > year + 1 || (d.getFullYear() === year + 1 && d.getMonth() >= 3 && d.getDate() > 31)) return count;
                                 const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
                                 const holiday = getHoliday(dateStr);
-                                if (d.getDay() === 0 || (holiday && holiday.description !== '会議' && holiday.description !== '社員旅行')) return count + 1;
+                                if (isNonWorkingDay(d.getDay(), holiday)) return count + 1;
                                 return count;
                             }, 0)
                         }日

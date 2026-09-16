@@ -1,4 +1,5 @@
 import React from 'react';
+import { isNonWorkingDay } from '../../utils/holidayUtils';
 
 /**
  * 案件バーチャートの1行。
@@ -71,8 +72,7 @@ const ProjectBarRow = ({
                 const isInBar = bar && i >= bar.startIdx && i <= bar.endIdx;
                 const isBarStart = bar && i === bar.startIdx;
                 const registeredHoliday = holidayMap[col.dateStr];
-                const isActualHoliday = registeredHoliday && registeredHoliday.description !== '会議' && registeredHoliday.description !== '社員旅行';
-                const isHolidayOrWeekend = col.dow === 0 || isActualHoliday;
+                const isHolidayOrWeekend = isNonWorkingDay(col.dow, registeredHoliday);
                 const isToday = col.dateStr === todayStr;
                 const suspensionMatch = isInBar
                     ? suspensions.find(s => col.dateStr >= s.start_date && col.dateStr <= s.end_date)

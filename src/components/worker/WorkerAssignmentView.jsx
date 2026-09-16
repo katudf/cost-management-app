@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, Loader2, X } from 'lucide-react';
 import { SCHEDULE_TYPES } from '../../utils/constants';
 import { useWorkerAssignments } from '../../hooks/useWorkerAssignments';
+import { isNonWorkingDay, getHolidayStyle } from '../../utils/holidayUtils';
 
 const CELL_WIDTH = 90;      // 現場名をできるだけ長く表示するため広めに取る（管理者版は48px）
 const NAME_COL_WIDTH = 72;
@@ -55,12 +56,8 @@ const WorkerAssignmentView = ({ workers, projects, loggedInWorker, onClose }) =>
         }
     }, [isLoading, dateColumns, todayStr]);
 
-    // 会議・社員旅行は休日扱いにしない（管理者版と同じ判定）
-    const isActualHoliday = (col) => {
-        if (col.dow === 0) return true;
-        const h = holidayMap[col.dateStr];
-        return !!(h && h.description !== '会議' && h.description !== '社員旅行');
-    };
+    // 会社行事（会議・社員旅行）は休日扱いにしない（管理者版と同じ判定）
+    const isHolidayColumn = (col) => isNonWorkingDay(col.dow, holidayMap[col.dateStr]);
 
     // セルの表示アイテムを組み立てる（過去日は日報実績を優先、管理者版と同じルール）
     const buildCellItems = (workerId, col) => {
@@ -172,7 +169,7 @@ const WorkerAssignmentView = ({ workers, projects, loggedInWorker, onClose }) =>
                             </tr>
                             <tr>
                                 {dateColumns.map((col) => {
-                                    const holiday = isActualHoliday(col);
+                                    const holiday = isHolidayColumn(col);
                                     const isToday = col.dateStr === todayStr;
                                     let bg = '#F8FAFC';
                                     let color;
@@ -204,12 +201,7 @@ const WorkerAssignmentView = ({ workers, projects, loggedInWorker, onClose }) =>
                                 </td>
                                 {dateColumns.map((col) => {
                                     const holidayObj = holidayMap[col.dateStr];
-                                    let bgColor = 'transparent';
-                                    if (holidayObj) {
-                                        bgColor = holidayObj.description === '会議' ? '#BAE6FD'
-                                            : holidayObj.description === '社員旅行' ? '#DDD6FE'
-                                                : '#FECACA';
-                                    }
+                                    const bgColor = getHolidayStyle(holidayObj)?.bgColor ?? 'transparent';
                                     return (
                                         <td
                                             key={col.dateStr}
@@ -238,7 +230,7 @@ const WorkerAssignmentView = ({ workers, projects, loggedInWorker, onClose }) =>
                                             const items = buildCellItems(worker.id, col);
                                             const isToday = col.dateStr === todayStr;
                                             const isWeekend = col.dow === 0 || col.dow === 6;
-                                            const holiday = isActualHoliday(col);
+                                            const holiday = isHolidayColumn(col);
                                             let cellBg;
                                             if (isToday) cellBg = '#FEFCE8';
                                             else if (holiday) cellBg = '#FEF2F2';

@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { toDateStr, addDays, getDayOfWeek, getMonday } from '../utils/dateUtils';
 import { DEFAULT_COLORS, PROJECT_STATUS, WORKER_TYPE } from '../utils/constants';
 import { fetchCompanyHolidays, deleteCompanyHoliday, upsertCompanyHoliday } from './useCompanyHolidays';
+import { isActualHoliday, HOLIDAY_DESCRIPTION } from '../utils/holidayUtils';
 
 export function useAssignmentState({
     projects,
@@ -96,7 +97,7 @@ export function useAssignmentState({
         const dow = dateObj.getDay();
         if (dow === 0) return true; // 日曜は常に休み
         const h = holidayMap[toDateStr(dateObj)];
-        return !!(h && h.description !== '会議' && h.description !== '社員旅行');
+        return isActualHoliday(h);
     }, [holidayMap]);
 
     const countWorkingDays = useCallback((startStr, endStr) => {
@@ -1029,7 +1030,7 @@ export function useAssignmentState({
                 const saved = await upsertCompanyHoliday({
                     id: existingId,
                     date: dateStr,
-                    description: description === '休日' ? null : description
+                    description: description === HOLIDAY_DESCRIPTION ? null : description
                 });
                 if (saved) {
                     setCompanyHolidays(prev => existingId
