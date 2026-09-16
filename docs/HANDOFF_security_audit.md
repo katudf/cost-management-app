@@ -417,7 +417,24 @@ Advisor の `auth_leaked_password_protection` はSQL上の対象を持たない
 | `PurchaseLedgerTab.jsx` | 1 | **6** | L182 / L539 / L658 / L731 / L755 / L808 |
 | `HolidayCalendar.jsx` | 1 | **4** | L31 / L62 / L67(継続行) / L77(継続行) |
 | `WorkerApp.jsx` | 24 | **26** | 全数列挙で確定（下記）。~~件数は偶然一致~~ ← **この記述は誤り。撤回する** |
-| `CompanyInfoSettings.jsx` | **記載なし** | **3** | L46 SELECT / L75 UPDATE（ともに `system_settings`）/ L104 `supabase.storage.from('stamps')` |
+| `CompanyInfoSettings.jsx` | **記載なし** | **3** | L47 SELECT / L76 UPDATE（ともに `system_settings`）/ L105 `supabase.storage.from('stamps')` |
+
+**⚠️ 上の表の行番号を2026-09-15に再確認（実ファイルをRead）。以前の記載は1〜2行ずれていた。**
+`grep -rn "system_settings" src/` の生出力で確定した**呼び出し行**（`await supabase` の行ではなく
+`.from(` の行）は以下。**着手時はこの値を使うこと。**
+
+| ファイル | 旧記載 | 実際の `.from(` 行 | 備考 |
+|---|---|---|---|
+| `SystemSettingsTab.jsx` | L36/L51 | **L39 / L56** | L36/L51 は囲みブロック（`useEffect` / `handleSave`）の開始行 |
+| `CompanyInfoSettings.jsx` | L46/L75 | **L47 / L76** | 印影アップロードは **L105**（`.from('stamps')`） |
+| `WorkerApp.jsx` | L152 | **L152** | 一致。手順1のスコープ記述も L152 が正しい |
+| `useCompanyInfo.js` | 「L20付近」 | **L19** | |
+
+**`SystemSettingsTab.jsx` の行数は 317行**（`export default React.memo(...)` が L316）。
+本ファイルの旧記載「`tabs/settings/` 配下・317行」のうち**パスが誤り**で、
+実際は `src/components/tabs/SystemSettingsTab.jsx`（`settings/` ではない）。
+※ 引き継ぎメモ側で「316行」としていたのも誤り。**実数317行。**
+→ これで「行数・行番号のズレ」は3回目。**着手前に必ず実ファイルをReadすること。**
 
 **`WorkerApp.jsx` = 26 の全数内訳**（複数行形を1文として数えた後の値）:
 L129 / L147 / **L152** / L186 / L205 / L224 / L231 / L234 / L275 / L279 /
@@ -482,6 +499,57 @@ L1088 / L1094 / L1098 / L1109 / L1119 / L1129 / L1133 / L1175
 **補足**: `useCompanyInfo` の利用者は `src/components/HomeLanding.jsx:27`（`useCompanyInfo('company_name')`）
 **の1箇所だけ**。文字列リテラル渡しなので、このフックを拡張・統合しても影響範囲は極小。
 
+#### 🔢 上の「5箇所」の数え方（2026-09-15・全数再確認）— **2つの数字はどちらも正しい**
+
+**この節は過去3回の「合計値の間違い」を繰り返さないために、数え方を明記する。**
+`system_settings` の数字が2つ出回るが、**矛盾ではなくスコープ違い**。混ぜないこと。
+
+| 数え方 | 値 | 意味 |
+|---|---|---|
+| **手順1のスコープ** | **7箇所 / 5ファイル** | 手順1で集約する対象だけ。**この数字が手順1の作業範囲**（§8.1 の表の「5箇所 / 4ファイル」は緩い数え。下の注記を参照） |
+| **`system_settings` の全アクセス点** | **11箇所 / 7ファイル** | 設計どおりの層（`features/` `supabaseEstimates.js`）も含む全数 |
+
+**全数11箇所の内訳**（`grep -rn "system_settings" src/` の生出力 **16行**から導出）:
+
+| 場所 | 種別 | 手順1の対象か |
+|---|---|---|
+| `src/hooks/useSupabaseData.js` L86 | ✅ フック内 | ✅ 委譲させる |
+| `src/hooks/useCompanyInfo.js` L19 | ✅ フック内 | ✅ 吸収する |
+| `src/components/tabs/SystemSettingsTab.jsx` L39 / L56 | ❌ UI層 | ✅ 移設（2箇所） |
+| `src/components/tabs/settings/CompanyInfoSettings.jsx` L47 / L76 | ❌ UI層 | ✅ 移設（2箇所） |
+| `src/WorkerApp.jsx` L152 | ❌ UI層 | ✅ 移設 |
+| `src/features/lineworks/lineworksNotify.js` L34 / L46 | ✅ 設計どおり | ❌ **対象外**（SELECT / UPDATE） |
+| `src/supabaseEstimates.js` L439 / L566 | ✅ 設計どおり | ❌ **対象外**（うち1つは `hourly_wage` 読み） |
+
+**⚠️ 生出力16行 → 11箇所 の導出（引き算で出す。小計の足し算で出さない）**:
+16行 − コメント/JSDoc 4行（`CoverPaper.jsx:44` / `lineworksNotify.js:43` /
+`useCompanyInfo.js:7` / `supabaseEstimates.js:436`）− 型定義1行（`types/supabase.ts:1359`）
+= **11箇所 / 7ファイル**。
+
+**🔴 この導出は一度間違えた（2026-09-16に自己修正）。**
+最初に書いたときは「− 同一ファイル内の重複行1行」という項を入れて **10箇所** としたが、
+`grep -rn "system_settings" src/` の生出力16行を実際に全部並べたところ、
+**重複行は1行もなかった**（16行すべてが別々の `file:line`）。この引き算の項は**でっち上げ**だった。
+しかも上の内訳表は**最初から11箇所を列挙していた**ので、見出しの「10箇所」と表の中身が矛盾していた。
+→ **この節が戒めている「合計値の間違い」を、その戒めを書いた本人がその場で再発させた事例。**
+**教訓の再確認: 合計は必ず生の grep 行数からの引き算で出し、書いたあとに内訳表と突き合わせて検算する。**
+
+**📌 §8.1 の表の「5箇所 / 4ファイル」も緩い数え（上書きはしないが注意）。**
+`SystemSettingsTab.jsx` と `CompanyInfoSettings.jsx` はそれぞれ**2箇所ずつ**持つため、
+手順1の実際の作業対象は **7箇所 / 5ファイル**:
+SystemSettingsTab 2 ＋ CompanyInfoSettings 2 ＋ WorkerApp 1 ＋ useSupabaseData 1（委譲）
+＋ useCompanyInfo 1（吸収） = **7**。
+
+**`src/estimate-editor/CoverPaper.jsx` は違反ではない（2026-09-15に確認・スコープから除外）。**
+`supabase` の参照が**0件**で、L44 の `system_settings` は `settings` prop を説明する**コメント**。
+データは上位から props で受け取っている。→ **手順1の対象外。**
+
+**📌 `useCompanyInfo` の `columns` 引数には再取得の罠がある（休眠中・統合時に潰すこと）**
+`useEffect` の依存配列が `[columns]` なので、**呼び出し側が毎レンダー新しい文字列を渡すと
+毎レンダー再取得する**。現状 `HomeLanding.jsx:27` は文字列リテラル `'company_name'` を渡しており、
+リテラルは同一参照なので**今は発火しない＝休眠**。ただしテンプレート文字列や計算結果を
+渡した瞬間に無限再取得になる。**統合後のフックにこの形を持ち込まないこと。**
+
 `grep -n "Holiday\|holiday" src/hooks/useSupabaseData.js` は **ヒット0件**。
 つまり集約先は `useSupabaseData` の拡張ではなく、**新規 `useCompanyHolidays`** になる。
 
@@ -544,7 +612,7 @@ WorkerApp・週報出力・在庫・工程表は **E2Eの射程外**。
 
 | 手順 | 状態 | 記録 |
 |---|---|---|
-| 1 | ⬜ 未着手 | **次にやる。** スコープは(A)で確定済み。印影アップロードの置き場所だけ着手時に決める |
+| 1 | 🔶 **着手中（2026-09-15）** | **着手前の精査完了。**スコープ(A)確定・印影の置き場所も決着（`stampStorage.js` に `uploadStamp` 追加）・行番号を実ファイルで再確認・実バグ1件を発見（自社情報の空文字上書き）。実装はこれから |
 | 2 | ✅ **完了（2026-09-15）** | 下記「手順2の完了記録」 |
 | 3 | ✅ **完了（2026-09-15）** | 下記「手順3の完了記録」 |
 | 4 | ⬜ 未着手 | |
@@ -661,11 +729,59 @@ import削除・state削除・本体移設を**1回のバッチで並行実行**�
 - **(B) 当初の承認どおり進める** ← 不採用。
   `system_settings` の入口が6つになり、手順1完了時点で**新しい重複を作った状態**になるため。
 
-**残る未決の論点（手順1の着手時に決める）**: `CompanyInfoSettings` の印影アップロード
+**~~残る未決の論点（手順1の着手時に決める）~~**: `CompanyInfoSettings` の印影アップロード
 （Storage・privateバケット `stamps`）を `system_settings` フックに同居させるか、
 `useStampStorage` として分けるか。
 （現状は `src/utils/stampStorage` の `getStampSignedUrl` が署名URL変換を担当している）
 これは手順1の**内部の設計判断**であり、着手可否を止めるものではない。
+
+#### ✅ 上の未決論点の決着（2026-09-15・`stampStorage.js` を実読して確定）
+
+**結論: `src/utils/stampStorage.js` に `uploadStamp(file, type)` を追加する。**
+新規フックは作らない。`system_settings` フックにも同居させない。
+
+**根拠（実ファイルで確認した事実）**:
+- `stampStorage.js` は既に `supabase` を import し、**バケット名 `'stamps'` を定数 `BUCKET` で所有**、
+  `stampPathFromValue` / `getStampSignedUrl` で**読み取り側を既に担当**している。
+  アップロードはその**書き込み側の対**であり、同じモジュールに置くのが最小の移動。
+- バケット名が1箇所に集まる（現状 `CompanyInfoSettings.jsx:105` に直書きで散っている）。
+- これで `CompanyInfoSettings.jsx` は `supabase` import を**完全に落とせる**
+  → §8.1.1 完了条件(1)「`grep -n "supabase"` が0件」を満たせる。
+- 利用者は React 外からも呼ぶ（`supabaseEstimates.js:6` が `getStampSignedUrl` を import）。
+  フックにすると PDF 生成側から呼べない。**プレーンな util が正しい形。**
+
+**⚠️ 記録すべき例外**: CLAUDE.md は経由先として `src/hooks/` と `supabaseEstimates.js` だけを挙げるが、
+`src/utils/stampStorage.js` は**それ以前から存在する3つ目の正当な場所**（Storage専用）。
+これは「違反」ではなく**既存の設計**。ここを是正対象と誤解しないこと。
+
+#### 🐛 手順1で直す実バグ: `CompanyInfoSettings.jsx` の自社情報が空文字で上書きされうる
+
+**手順1は単なるリファクタではない。実害のあるバグ修正を含む。**
+
+`CompanyInfoSettings.jsx` L46（`.from(` は L47）が **`error` を分割代入していない**:
+
+```js
+const { data } = await supabase...   // ← error を受けていない
+if (data) { setCompanyInfo({ ...7列... }) }   // 失敗時はスキップ
+...
+finally { setCompanyLoaded(true) }   // ← 失敗でも必ず true
+```
+
+**なぜ握りつぶし以上に悪いか**:
+1. supabase-js は**エラーでも reject せず resolve する**ので、`try/catch` は**構造的に死んでいる**
+   （`catch` に入らない）。エラートーストも出ない。
+2. それでも `finally` で `companyLoaded = true` になるため、**7列すべて `''` のままフォームが開く**。
+3. `handleSaveCompany`（L75、`.from(` は L76）は **`{ ...companyInfo }` を丸ごと UPDATE** する。
+   → 取得失敗後に保存すると、**実データが空文字で上書きされる。**
+4. 唯一のガードは保存ボタン L269 の `disabled={companySaving || !companyInfo.company_name.trim()}`。
+   会社名が空の間は保存できないが、**会社名だけ入力すれば残り6列は空文字で書き込まれる。**
+   → 緩和されているだけで**塞がっていない**。
+5. 特に `stamp_company_url` / `stamp_representative_url` が消えると、
+   **バケットにファイルは残るがDBのパスが失われ、UIから再リンクする手段がない**（再アップロードのみ）。
+
+**手順1での対応**: 統合フックの読み取りで `error` を必ず受けて throw/ログし、
+**取得失敗時は保存させない**（`companyLoaded` とは別に「取得成功」フラグを持つ）。
+※ 同型のバグは手順3の `CertificationManager` でも1件潰している（下記「手順3の完了記録」）。
 
 ### 8.2 その他の観点
 
