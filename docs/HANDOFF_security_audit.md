@@ -618,7 +618,94 @@ WorkerApp・週報出力・在庫・工程表は **E2Eの射程外**。
 | 4 | ✅ **完了（2026-09-16）** | 下記「手順4の完了記録」 |
 | 5 | ✅ **完了（2026-09-16）** | 下記「手順5の完了記録」 |
 | 6 | ✅ **完了（2026-09-16）** | 下記「手順6の完了記録」 |
-| 7 | ⬜ 未着手 | |
+| 7 | ✅ **完了（2026-09-16）** | 下記「手順7の完了記録」 |
+
+#### 🔍 手順7の着手前精査（2026-09-16）
+
+**§8.1の教訓「着手前に必ず実ファイルをReadすること」に従い、まず実数を数え直した。**
+
+```
+$ wc -l src/components/tabs/PurchaseLedgerTab.jsx
+1416
+
+$ grep -n "supabase" src/components/tabs/PurchaseLedgerTab.jsx
+3:import { supabase } from '../../lib/supabase';
+6:import { searchPaintProductsByName, fetchPaintProductsByIds } from '../../features/paint/supabasePaint';
+182:                const { data: dbData, error: dbError } = await supabase
+539:            const { data: insertedData, error } = await supabase
+658:                const { error } = await supabase.from('PurchaseRecords').insert(chunk);
+731:            const { data: updatedData, error } = await supabase
+755:            const { error } = await supabase
+808:            const { error } = await supabase
+```
+
+**今回に限り、ドキュメントの記載（1,416行・6箇所・L182/L539/L658/L731/L755/L808）は実ファイルと完全に一致した。**
+（行数・行番号の記載ミスは過去3回あったため、毎回この照合を行っている。）
+
+**⚠️ 完了条件1の但し書き（重要）**
+
+完了条件1は「対象ファイルの `grep -n "supabase"` が **0件**」だが、
+**手順7ではこれを文字どおり満たせない。** L6 の
+`import { ... } from '../../features/paint/supabasePaint';` が
+文字列 `supabase` を含むためである。
+
+これは**違反ではない**。§8.1で確認したとおり `src/features/` 配下は
+CLAUDE.md が許可するデータアクセス層であり、`supabasePaint` は
+`supabaseEstimates.js` と同格の存在。したがって手順7の完了条件は
+
+> **`grep -n "supabase\." が 0件** かつ `import { supabase } from '../../lib/supabase'` が消えていること**
+
+と読み替える。（`supabasePaint` からの import は残す。）
+
+**大原則（テーブル・責務単位）の充足確認**
+
+```
+$ grep -rn "PurchaseRecords" src/
+src/components/tabs/PurchaseLedgerTab.jsx : 6箇所（上記）
+src/types/supabase.ts:1265                : 型定義
+src/types/supabase.ts:1310                : FK名
+```
+
+`PurchaseRecords` テーブルを触っているのは**このファイルだけ**。
+手順4の `CompanyHolidays`（4ファイルに散在）のような重複は存在しないため、
+**単独ファイルの抽出でも「重複を別々のフックに焼き付ける」危険はない。**
+§8.1.1の表が手順7を「単独」と書いているのは正しい。
+
+**全6箇所の呼び出し一覧**
+
+| # | 行 | 関数 | 操作 | 特記事項 |
+|---|---|------|------|----------|
+| 1 | 182 | `fetchPurchaseData` | `select('*')` + `order('id')` + `range()` ページング（1000件/回） | **失敗を `setError` state で表示する**（他5件はトースト）。マウント時 `useEffect` と CSV取込後に呼ばれる |
+| 2 | 539 | `handleSaveNewRecord` | `insert([row]).select()` | 必須項目チェックと `'' → null` 正規化（`quantity`/`unit_price`/`amount`）を**呼び出し側で**実施済み |
+| 3 | 658 | `handleCsvFileSelected` | `insert(chunk)` を500件ずつループ | **throw しない。** チャンク単位で `error.message` を `insertErrors` に積み、取込結果サマリに出す |
+| 4 | 731 | `handleSaveEdit(id)` | `update(row).eq('id', id).select()` | 正規化対象が insert より1つ多い（**`paint_product_id` を含む4項目**） |
+| 5 | 755 | `handleDelete(id)` | `delete().eq('id', id)` | **成功トーストなし。** 編集中の行なら `handleCancelEdit()` |
+| 6 | 808 | `handleBulkDelete` | `delete().in('id', ids)` | `selectedIds` が空なら早期 return。成功時のみトースト |
+
+**設計上の判断が要る差分（3点）**
+
+1. **エラー通知の流儀が #1 だけ違う**（`setError` state vs トースト）。
+   → 手順2で確立した規約「**フックは throw する／通知は呼び出し側の責務**」をそのまま適用すれば
+   　この差は自然に吸収される。フックは一律 throw し、**#1 の呼び出し側だけ `catch` で `setError` を維持**する。
+   　通知方式の統一は**挙動変更**なので手順7ではやらない（機械的変換の原則）。
+
+2. **`'' → null` 正規化が insert(3項目) と update(4項目) で食い違う。**
+   → これは「フォーム入力の空文字」という**UIの都合**であり、テーブルの都合ではない。
+   　手順4で `'休日' → null` の解釈を呼び出し側に残したのと同じ判断で、**呼び出し側に残す**。
+   　フックは渡された行をそのまま書く。（食い違い自体の是非は§8.2の観察事項に回す。）
+
+3. **#3 の CSV 一括 insert だけ throw させたくない**（チャンクごとにエラーを集計して取込結果に出すため）。
+   → フックには **throw する素の insert** を置き、**ループと集計は呼び出し側に残す**。
+   　手順6で `insertDefaultProjectTask` だけ throw させなかったのと逆向きの解決だが、
+   　理由は同じ「**失敗の扱いが呼び出し側の表示ロジックと不可分**」。
+
+**確定スコープ**
+
+- 新規 `src/hooks/usePurchaseLedger.js` を作り、上記6箇所を集約する。
+- `PurchaseLedgerTab.jsx` は**フック抽出のみ**。**コンポーネント分割はしない**（採用方針(B)、フェーズ3送り）。
+- モジュールレベルの CSV ユーティリティ（`CSV_COLUMNS` / `parseCsv` / `buildCsvColMap` /
+  `CSV_INSERT_CHUNK_SIZE`）は **DBに触らない純粋な表示・入力の都合**なので**移さない**。
+- 地雷1のとおり、`import { supabase }` の削除は**全6箇所の移行が終わった最後**に行う。
 
 #### 🔍 手順4の着手前精査（2026-09-16）— スコープは§8.1.1の表より広い
 
@@ -1024,6 +1111,84 @@ Test Files  2 passed (2)
 
 **手順6への申し送り**: `WorkerApp.jsx` の `supabase` 出現は **23**（= import 1 + 呼び出し22）。
 着手前精査で修正した「22件」と一致することを移行後に再確認済み。
+
+#### ✅ 手順7の完了記録（2026-09-16）
+
+**対象**: `src/components/tabs/PurchaseLedgerTab.jsx`（1,416行）の `supabase` 直呼び **6件 → 0件**。
+新規モジュール `src/hooks/usePurchaseLedger.js`（161行）に集約した。
+**これで §8.1 の層違反ワークストリーム（手順1〜7）は全て完了。**
+
+**完了条件1の但し書き**: このファイルは `grep -n "supabase"` を literal に 0件にできない。
+L13 に `import { searchPaintProductsByName, fetchPaintProductsByIds } from '../../features/paint/supabasePaint';` が残るが、
+`src/features/` は設計上**層の内側**なので、これは違反ではない。
+よって本手順の完了条件1は「**`grep -n "supabase\."` が 0件** かつ **`import { supabase } from '../../lib/supabase'` が消えていること**」と読み替えて判定した（着手前精査で合意済み）。
+
+**`src/hooks/usePurchaseLedger.js` の構成**
+
+| 区分 | エクスポート | 備考 |
+|------|--------------|------|
+| 参照 | `fetchPurchaseRecords()` | `.range()` による1000件ページングを内包。`throw` |
+| 参照（状態付き） | `usePurchaseLedger({onError})` | `{records, setRecords, isLoading, refetch}`。マウント時に自動取得 |
+| 書き込み | `insertPurchaseRecord(record)` | `.select()` して**登録済み1件**を返す（採番された `id` を呼び出し側が使う） |
+| 書き込み | `insertPurchaseRecords(records)` | CSV一括用。**素の throw する insert**（ループと集計は呼び出し側） |
+| 書き込み | `updatePurchaseRecord(id, updates)` | `.select()` して更新後1件を返す |
+| 書き込み | `deletePurchaseRecord(id)` / `deletePurchaseRecords(ids)` | 単体 / `.in('id', ids)` による一括 |
+
+規約は手順2以降と同じ：**エラーは `throw`**、トースト通知・ローディング表示は呼び出し側の責務。
+
+**移行した6件**
+
+| # | 旧行 | 操作 | 呼び出し元 | 移行後 |
+|---|------|------|-----------|--------|
+| 1 | 182 | SELECT（ページング） | `fetchPurchaseData` | `usePurchaseLedger` に吸収。マウント時 `useEffect` も**フック内へ移動**し、コンポーネント側は CSV取込後の再取得用に薄いラッパのみ残す |
+| 2 | 539 | INSERT | `handleSaveNewRecord` | `insertPurchaseRecord(insertData)` → 返り値を `setData` に追記 |
+| 3 | 658 | INSERT（チャンク） | `handleCsvFileSelected` | `insertPurchaseRecords(chunk)` を `try/catch` で包み、失敗を取込結果サマリへ集計（**外へ伝播させない**従来挙動を維持） |
+| 4 | 731 | UPDATE | `handleSaveEdit` | `updatePurchaseRecord(id, updateData)` → 返り値で該当行を差し替え |
+| 5 | 755 | DELETE | `handleDelete` | `deletePurchaseRecord(id)` |
+| 6 | 808 | DELETE（一括） | `handleBulkDelete` | `deletePurchaseRecords(ids)` |
+
+**今回は潜在バグ ゼロ**（手順5・手順6との差分）
+
+手順5/6では「`error` 未受領による暗黙失敗」を実バグとして潰したが、
+**本ファイルの6件はいずれも `const { data, error } = await ...` と正しく分解し、`if (error) throw error` 相当の処理を持っていた**。
+したがって本手順は純粋に**振る舞いを変えない機械的な移設**であり、差分レビューは「移設漏れが無いか」だけを見ればよい。
+
+**意図的にやらなかったこと**
+
+- **CSVユーティリティを移動していない**: `CSV_COLUMNS` / `CSV_SAMPLE_ROW` / `CSV_INSERT_CHUNK_SIZE` / `buildCsvColMap` / `parseCsv` はモジュール先頭の純関数群で、DBに触れない。層違反ではないので手を付けない（動かすなら別コミット）。
+- **`'' → null` 正規化を呼び出し側に残した**: フォーム入力都合の変換であり、UIの責務。
+  なお **insert は3項目（quantity / unit_price / amount）、update は4項目（+ `paint_product_id`）** と非対称で、
+  これは元からの不整合。本手順では**挙動を変えない**ため踏襲し、指摘だけ §8.2 に送る。
+- **`setError` 方式を変えていない**: 呼び出し元#1だけがトーストでなく `error` ステートで失敗を報告していた。
+  これを `usePurchaseLedger({ onError })` 経由に繋ぎ替えることで**通知方法を据え置いた**（#2〜#6 は従来どおりトースト）。
+- **コンポーネント分割はしていない**: 方針(B)のとおりフェーズ3の範囲。
+
+**差分を小さくした工夫**: フックの返り値を `{ records: data, setRecords: setData }` と**別名で受けた**。
+これにより `data` / `setData` を参照する約1,300行のJSXに一切手を入れずに済み、レビュー対象を実質6箇所＋宣言部に限定できた。
+
+**地雷回避**: §8.1 の `CustomerSettings.jsx` の教訓どおり、**`import` の差し替えは6件すべての移設が終わった後**に行った。
+先に `grep -n "supabase\."` が 0件になったことを確認してから import 行を書き換えている。
+
+**ゲート結果**
+
+```
+$ grep -n "supabase" src/components/tabs/PurchaseLedgerTab.jsx
+13:import { searchPaintProductsByName, fetchPaintProductsByIds } from '../../features/paint/supabasePaint';
+   （= supabase. の呼び出しは 0件。lib/supabase の import は消滅）
+
+$ npm run build
+✓ built in 11.52s   （既存のチャンクサイズ警告のみ／PWA precache 42 entries）
+
+$ npm test
+Test Files  2 passed (2)
+     Tests  26 passed (26)
+```
+
+**次への申し送り**
+
+1. **§8.1（層違反の解消）はこれで完了**。残りはフェーズ2の §8.2（その他の観察事項）と、フェーズ3（§9）。
+2. フェーズ3の分割対象として、**`PurchaseLedgerTab.jsx` は1,416行のまま**であることをここに記録しておく（本手順は層の是正のみで、行数はほぼ変わっていない）。
+3. §8.2 送りの観察: (a) insert/update の正規化対象フィールドの非対称（上述）、(b) **`error` ステートがどこにも描画されていない**——`setError` は呼ばれるが JSX に参照が無く、実質デッドステート。手順7以前からの既存の状態であり、本手順では挙動を変えないため触っていない。
 
 #### ✅ 手順1の完了記録（2026-09-16）
 

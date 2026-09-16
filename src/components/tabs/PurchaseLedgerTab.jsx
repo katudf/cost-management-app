@@ -1,6 +1,13 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Search, Loader2, Database, Plus, Edit3, Trash2, X, Check, ChevronLeft, ChevronRight, FlaskConical, Upload, FileDown, ArrowUp, ArrowDown, ArrowUpDown, Filter, RotateCcw, CheckSquare, Square, MinusSquare, Copy } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
+import {
+    usePurchaseLedger,
+    insertPurchaseRecord,
+    insertPurchaseRecords,
+    updatePurchaseRecord,
+    deletePurchaseRecord,
+    deletePurchaseRecords
+} from '../../hooks/usePurchaseLedger';
 import { useToast } from '../../components/Toast';
 import ConfirmModal from '../ConfirmModal';
 import { searchPaintProductsByName, fetchPaintProductsByIds } from '../../features/paint/supabasePaint';
@@ -105,9 +112,16 @@ const initialFormData = {
 
 const PurchaseLedgerTab = () => {
     const { showToast } = useToast();
-    const [data, setData] = useState([]);
-    const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState(null);
+    // 一覧の取得・保持は usePurchaseLedger に集約（従来の data / isLoading と同じ役割）
+    const {
+        records: data,
+        setRecords: setData,
+        isLoading,
+        refetch: refetchPurchaseData
+    } = usePurchaseLedger({
+        onError: () => setError('データの読み込み中にエラーが発生しました。')
+    });
     const [searchTerm, setSearchTerm] = useState('');
 
     // 新規登録用ステート
@@ -171,44 +185,15 @@ const PurchaseLedgerTab = () => {
         { key: 'amount', label: '金額', type: 'number' }
     ];
 
+    // 再取得。失敗時のメッセージ表示は usePurchaseLedger の onError に集約している
     const fetchPurchaseData = async () => {
         try {
-            setIsLoading(true);
-            let allRecords = [];
-            let from = 0;
-            const limit = 1000;
-            
-            while (true) {
-                const { data: dbData, error: dbError } = await supabase
-                    .from('PurchaseRecords')
-                    .select('*')
-                    .order('id', { ascending: true })
-                    .range(from, from + limit - 1);
-
-                if (dbError) throw dbError;
-                
-                if (dbData && dbData.length > 0) {
-                    allRecords = [...allRecords, ...dbData];
-                    if (dbData.length < limit) break;
-                    from += limit;
-                } else {
-                    break;
-                }
-            }
-
-            setData(allRecords);
+            await refetchPurchaseData();
             setError(null);
-        } catch (err) {
-            console.error(err);
-            setError('データの読み込み中にエラーが発生しました。');
-        } finally {
-            setIsLoading(false);
+        } catch {
+            // onError で setError 済み
         }
     };
-
-    useEffect(() => {
-        fetchPurchaseData();
-    }, []);
 
     // 検索語句・ソート条件・フィルターが変わったら1ページ目に戻す
     useEffect(() => {
@@ -536,16 +521,11 @@ const PurchaseLedgerTab = () => {
             if (insertData.unit_price === '') insertData.unit_price = null;
             if (insertData.amount === '') insertData.amount = null;
 
-            const { data: insertedData, error } = await supabase
-                .from('PurchaseRecords')
-                .insert([insertData])
-                .select();
+            const insertedRecord = await insertPurchaseRecord(insertData);
 
-            if (error) throw error;
-
-            if (insertedData) {
+            if (insertedRecord) {
                 // 先頭に追加するか、末尾に追加するか
-                setData(prev => [...prev, insertedData[0]]);
+                setData(prev => [...prev, insertedRecord]);
                 // 最後のページに切り替えるなど
             }
             closeAddModal();
@@ -655,11 +635,11 @@ const PurchaseLedgerTab = () => {
             const insertErrors = [...errors];
             for (let i = 0; i < records.length; i += CSV_INSERT_CHUNK_SIZE) {
                 const chunk = records.slice(i, i + CSV_INSERT_CHUNK_SIZE);
-                const { error } = await supabase.from('PurchaseRecords').insert(chunk);
-                if (error) {
-                    insertErrors.push({ line: null, reason: `DB登録エラー（${i + 1}〜${i + chunk.length}件目）: ${error.message}` });
-                } else {
+                try {
+                    await insertPurchaseRecords(chunk);
                     inserted += chunk.length;
+                } catch (err) {
+                    insertErrors.push({ line: null, reason: `DB登録エラー（${i + 1}〜${i + chunk.length}件目）: ${err.message}` });
                 }
             }
 
@@ -728,16 +708,10 @@ const PurchaseLedgerTab = () => {
             if (updateData.amount === '') updateData.amount = null;
             if (updateData.paint_product_id === '') updateData.paint_product_id = null;
 
-            const { data: updatedData, error } = await supabase
-                .from('PurchaseRecords')
-                .update(updateData)
-                .eq('id', id)
-                .select();
+            const updatedRecord = await updatePurchaseRecord(id, updateData);
 
-            if (error) throw error;
-
-            if (updatedData) {
-                setData(prev => prev.map(r => r.id === id ? updatedData[0] : r));
+            if (updatedRecord) {
+                setData(prev => prev.map(r => r.id === id ? updatedRecord : r));
             }
             setEditingRowId(null);
         } catch (err) {
@@ -752,12 +726,7 @@ const PurchaseLedgerTab = () => {
     const handleDelete = async (id) => {
         try {
             setIsSaving(true);
-            const { error } = await supabase
-                .from('PurchaseRecords')
-                .delete()
-                .eq('id', id);
-
-            if (error) throw error;
+            await deletePurchaseRecord(id);
 
             setData(prev => prev.filter(r => r.id !== id));
             if (editingRowId === id) {
@@ -805,12 +774,7 @@ const PurchaseLedgerTab = () => {
         if (ids.length === 0) return;
         try {
             setIsSaving(true);
-            const { error } = await supabase
-                .from('PurchaseRecords')
-                .delete()
-                .in('id', ids);
-
-            if (error) throw error;
+            await deletePurchaseRecords(ids);
 
             const removed = new Set(ids);
             setData(prev => prev.filter(r => !removed.has(r.id)));
