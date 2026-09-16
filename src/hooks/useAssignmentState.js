@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { toDateStr, addDays, getDayOfWeek, getMonday } from '../utils/dateUtils';
 import { DEFAULT_COLORS, PROJECT_STATUS, WORKER_TYPE } from '../utils/constants';
+import { fetchCompanyHolidays, deleteCompanyHoliday, upsertCompanyHoliday } from './useCompanyHolidays';
 
 export function useAssignmentState({
     projects,
@@ -158,16 +159,14 @@ export function useAssignmentState({
     const fetchStaticData = useCallback(async () => {
         setStaticLoading(true);
         try {
-            const [pRes, hRes] = await Promise.all([
+            const [pRes, hData] = await Promise.all([
                 supabase
                     .from('Projects')
                     .select('id, name, startDate, endDate, bar_color, status, display_order, customerId, is_prime_contractor')
                     .in('status', [PROJECT_STATUS.SCHEDULED, PROJECT_STATUS.IN_PROGRESS])
                     .order('display_order', { ascending: true, nullsFirst: false })
                     .order('created_at', { ascending: true }),
-                supabase
-                    .from('CompanyHolidays')
-                    .select('id, date, description')
+                fetchCompanyHolidays()
             ]);
 
             const pData = pRes.data || [];
@@ -179,7 +178,7 @@ export function useAssignmentState({
                     color: p.bar_color || DEFAULT_COLORS[idx % DEFAULT_COLORS.length]
                 }))
             );
-            setCompanyHolidays(hRes.data || []);
+            setCompanyHolidays(hData);
 
             const projectIds = pData.map(p => p.id);
             if (projectIds.length > 0) {
@@ -1022,23 +1021,20 @@ export function useAssignmentState({
     const updateCompanyHoliday = useCallback(async (dateStr, description, existingId) => {
         try {
             if (description === null && existingId) {
-                const { error } = await supabase.from('CompanyHolidays').delete().eq('id', existingId);
-                if (error) throw error;
+                await deleteCompanyHoliday(existingId);
                 setCompanyHolidays(prev => prev.filter(h => h.id !== existingId));
                 showToast('予定を削除しました', 'success');
             } else if (description !== null) {
-                const payload = {
+                // '休日' は「行事名なし＝単なる休日」の UI 表現なので、DB 上の null に戻す
+                const saved = await upsertCompanyHoliday({
+                    id: existingId,
                     date: dateStr,
                     description: description === '休日' ? null : description
-                };
-                if (existingId) {
-                    const { data, error } = await supabase.from('CompanyHolidays').update(payload).eq('id', existingId).select();
-                    if (error) throw error;
-                    if (data && data.length > 0) setCompanyHolidays(prev => prev.map(h => h.id === existingId ? data[0] : h));
-                } else {
-                    const { data, error } = await supabase.from('CompanyHolidays').insert(payload).select();
-                    if (error) throw error;
-                    if (data && data.length > 0) setCompanyHolidays(prev => [...prev, data[0]]);
+                });
+                if (saved) {
+                    setCompanyHolidays(prev => existingId
+                        ? prev.map(h => h.id === existingId ? saved : h)
+                        : [...prev, saved]);
                 }
                 showToast('予定を保存しました', 'success');
             }

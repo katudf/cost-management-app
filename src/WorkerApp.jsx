@@ -13,6 +13,7 @@ import { syncOvertimeApproval, fetchPendingApprovals, approveOvertime, fetchAppr
 import { syncWorkAllowanceApproval, fetchPendingWorkAllowanceApprovals, approveWorkAllowance, fetchWorkAllowanceApprovalsForReport } from './lib/workAllowanceApprovals';
 import { fetchWithCache, getDraftQueue, upsertDraft, removeDraft } from './utils/offlineCache';
 import { fetchSystemSettings } from './hooks/useSystemSettings';
+import { fetchCompanyHolidays } from './hooks/useCompanyHolidays';
 import { generateMultipleWorkersReportPDF } from './utils/pdfExportUtils';
 
 // ローカルタイムゾーンで 'YYYY-MM-DD' を生成する（toISOString はUTC変換されるため日付がずれる）
@@ -394,7 +395,7 @@ const WorkerApp = () => {
             });
             const weekPrefix = days[0].replace(/-/g, '').slice(0, 8);
 
-            const { data: holidayData } = await supabase.from('CompanyHolidays').select('date');
+            const holidayData = await fetchCompanyHolidays();
 
             const { data: recordsData } = await supabase.from('TaskRecords')
                 .select('*, ProjectTasks(name, projectId)')

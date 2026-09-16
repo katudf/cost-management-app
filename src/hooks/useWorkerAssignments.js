@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../components/Toast';
 import { fetchWithCache } from '../utils/offlineCache';
+import { fetchCompanyHolidaysResult } from './useCompanyHolidays';
 import { toDateStr, addDays, getDayOfWeek, getMonday } from '../utils/dateUtils';
 import { DEFAULT_COLORS } from '../utils/constants';
 
@@ -35,9 +36,7 @@ export function useWorkerAssignments({ workers, projects, loggedInWorker }) {
                     fetchWithCache('worker-chart-assignments', () =>
                         supabase.from('Assignments').select('*').gte('date', startStr).lte('date', endStr)
                     ),
-                    fetchWithCache('worker-chart-holidays', () =>
-                        supabase.from('CompanyHolidays').select('id, date, description')
-                    ),
+                    fetchWithCache('worker-chart-holidays', fetchCompanyHolidaysResult),
                     fetchWithCache('worker-chart-actuals', () =>
                         supabase.from('TaskRecords').select('id, project_id, worker_name, date').gte('date', startStr).lte('date', actualEnd)
                     ),

@@ -615,10 +615,149 @@ WorkerApp・週報出力・在庫・工程表は **E2Eの射程外**。
 | 1 | ✅ **完了（2026-09-16）** | 下記「手順1の完了記録」 |
 | 2 | ✅ **完了（2026-09-15）** | 下記「手順2の完了記録」 |
 | 3 | ✅ **完了（2026-09-15）** | 下記「手順3の完了記録」 |
-| 4 | ⬜ 未着手 | |
+| 4 | ✅ **完了（2026-09-16）** | 下記「手順4の完了記録」 |
 | 5 | ⬜ 未着手 | |
 | 6 | ⬜ 未着手 | |
 | 7 | ⬜ 未着手 | |
+
+#### 🔍 手順4の着手前精査（2026-09-16）— スコープは§8.1.1の表より広い
+
+**前セッションからの引継ぎのため、まず grep で実数を数え直した（§8.1「総数は生出力から導く」の教訓を適用）。**
+
+```
+$ grep -rn "CompanyHolidays" src/
+```
+生出力 **20行**（`src/types/supabase.ts:276` の型定義1行を除く）。
+うち `supabase.from('CompanyHolidays')` の**実呼び出しは 12箇所 / 6ファイル**。
+残りは `setCompanyHolidays` / `useState` などのローカル状態行。
+
+**§8.1.1 の手順4の記述は 4ファイル分しか挙げていない**
+（`HolidayCalendar`(4) + `InputTab`の読み + `useAssignmentState` L1025-1041 + `useWorkerAssignments` L39）。
+**`AdminApp.jsx:401` / `WorkerApp.jsx:397` / `useAssignmentState.js:169` の3箇所が抜けている。**
+§8.1 の重複マップ（L471）のほうは6ファイル全部を載せているので、**そちらが正しい。**
+
+##### 実呼び出し 12箇所の全数（2026-09-16 時点）
+
+| # | 場所 | 操作 | 取得列 | 日付フィルタ | エラー処理 |
+|---|---|---|---|---|---|
+| 1 | `HolidayCalendar.jsx:31` | SELECT | `*` | **あり**（年度 4/1〜翌3/31） | `throw` → toast |
+| 2 | `HolidayCalendar.jsx:62` | DELETE | — | — | `throw` → toast |
+| 3 | `HolidayCalendar.jsx:68` | UPDATE | `.select()` | — | `throw` → toast |
+| 4 | `HolidayCalendar.jsx:78` | INSERT | `.select()` | — | `throw` → toast |
+| 5 | `useAssignmentState.js:169` | SELECT | `id, date, description` | なし | `Promise.all` の中・`hRes.data \|\| []` |
+| 6 | `useAssignmentState.js:1025` | DELETE | — | — | `throw` → toast |
+| 7 | `useAssignmentState.js:1035` | UPDATE | `.select()` | — | `throw` → toast |
+| 8 | `useAssignmentState.js:1039` | INSERT | `.select()` | — | `throw` → toast |
+| 9 | `useWorkerAssignments.js:39` | SELECT | `id, date, description` | なし | `fetchWithCache` 経由・toast |
+| 10 | `InputTab.jsx:35` | SELECT | `date, description` | なし | **なし**（`if (data)` のみ） |
+| 11 | `AdminApp.jsx:401` | SELECT | `date` | なし | **なし**（`error` を分割代入すらしない） |
+| 12 | `WorkerApp.jsx:397` | SELECT | `date` | なし | **なし**（同上） |
+
+##### 精査でわかった、設計上の判断が要る差分
+
+1. **取得列が4種類バラバラ**（`*` / `id, date, description` / `date, description` / `date`）。
+   → `id, date, description` に統一する。`*` との差は `created_at` 等のみで、
+   `HolidayCalendar` は `id` / `date` / `description` しか参照していないことを確認済み。
+   `date` だけを使う #11/#12 も、余分な2列が付いてくるだけで害はない。
+2. **日付フィルタは #1 だけにある**（年度単位）。他11箇所は全件取得。
+   → フック側は `fetchCompanyHolidays({ from, to })` の**任意引数**にし、
+   引数なし＝全件、で既存挙動を保つ。
+3. **`updateCompanyHoliday` の意味論が2種類ある。**
+   - `useAssignmentState` 版: `description === '休日'` を `null` に正規化して保存。削除は `description === null`。
+   - `HolidayCalendar` 版: `HOLIDAY_TYPES`（`holiday`/`meeting`/`trip`）から `description`（`null`/`'会議'`/`'社員旅行'`）を引いて保存。
+   → **DB上はどちらも「`description` が `null` なら単なる休日」という同じ表現**なので、
+   フックは低レベルな `deleteHoliday(id)` / `upsertHoliday({id, date, description})` を出し、
+   `'休日'→null` の正規化や `HOLIDAY_TYPES` の解釈は**各呼び出し側に残す**（UIの都合であってテーブルの都合ではない）。
+4. **`useWorkerAssignments:39` は `fetchWithCache` で包まれている。**
+   手順1の `fetchSystemSettings` と同じ形。
+   `fetchWithCache` は `{data, error}` を要求するのに対し、フックの素の関数は `throw` する。
+   → 手順1で確立した `.then/.catch` 再ラップの型をそのまま使う。
+5. **#11/#12（週報）は手順5の `useWeeklyReportData` の territory と重なる。**
+   → **境界の決定: `CompanyHolidays` に触る行は手順4で片付ける。**
+   手順5は「残りの週報クエリをまとめる」だけになる。
+   理由は §8.1.1 の大原則「テーブル・責務単位」。ここでコピーを残すと手順5で焼き付く。
+
+##### 手順4の確定スコープ
+
+新規 `src/hooks/useCompanyHolidays.js` に以下を集約し、**6ファイル12箇所**を置き換える。
+`useAssignmentState.js` / `useWorkerAssignments.js` は既にフック層なので
+「レイヤ違反の是正」ではなく**重複の解消**が目的（大原則どおり同時に片付ける）。
+
+#### ✅ 手順4の完了記録（2026-09-16）
+
+**着手前精査（上記）どおり、6ファイル12箇所すべてを `src/hooks/useCompanyHolidays.js` に集約して完了。**
+
+**新規フックの API（確定形）**:
+
+| 名前 | 種別 | 挙動 |
+|---|---|---|
+| `HOLIDAY_COLUMNS` | 定数 | `'id, date, description'`（判断1: 4種類バラバラだった取得列を統一） |
+| `fetchCompanyHolidays(range = {})` | 素の関数 | `{from, to}` は任意。省略＝全件（判断2）。**throw する**（toast は呼び出し側の責務） |
+| `fetchCompanyHolidaysResult(range = {})` | 素の関数 | 上記を `{data, error}` 形に再ラップ（判断4／手順1と同じ型） |
+| `deleteCompanyHoliday(id)` | 素の関数 | throw する |
+| `upsertCompanyHoliday({id, date, description})` | 素の関数 | `id` があれば UPDATE、無ければ INSERT。保存後の行 or `null` を返す |
+| `useCompanyHolidays(options = {})` | フック | `{from, to, onError}` を受け、`{ holidays, setHolidays, isLoading, refetch }` を返す |
+
+`useCompanyHolidays` は `options` を `from` / `to` のプリミティブに分解してから `useCallback` の
+依存配列に渡している。**このためインラインのオブジェクトリテラルを渡しても再取得ループにならない**
+（`HolidayCalendar` が実際にそう呼んでいる）。`onError` も同じ理由で `useRef` に退避してあり、
+インラインのアロー関数を渡しても依存配列を汚さない。
+
+**`onError` を足した理由（移行中に見つけた取りこぼし）**: `HolidayCalendar` の旧 `fetchHolidays` は
+catch で `showToast('休日データの取得に失敗しました', 'error')` を出していたが、フック化で
+その catch ごと消えかけた。フックの中で toast を出すのは
+「トースト通知は呼び出し側の責務」という手順2以来の規約に反するので、
+**任意の `onError` コールバックを口として開け、`HolidayCalendar` だけが渡す**形にした。
+渡さない画面（`InputTab`）は従来どおり console のみ＝挙動は変わらない。
+
+**12箇所の移行結果**:
+
+| # | 置換前 | 置換後 |
+|---|---|---|
+| 1 | `HolidayCalendar.jsx` fetch（年度範囲） | `useCompanyHolidays({ from: \`${year}-04-01\`, to: \`${year+1}-03-31\` })` |
+| 2-4 | `HolidayCalendar.jsx` DELETE / UPDATE / INSERT | `deleteCompanyHoliday` / `upsertCompanyHoliday` ×2 |
+| 5 | `useAssignmentState.js` `Promise.all` 内の SELECT | `fetchCompanyHolidays()` |
+| 6-8 | `useAssignmentState.js` `updateCompanyHoliday` の DELETE / UPDATE / INSERT | `deleteCompanyHoliday` / `upsertCompanyHoliday`（分岐が1本に統合） |
+| 9 | `useWorkerAssignments.js:39`（`fetchWithCache` 包み） | `fetchWithCache('worker-chart-holidays', fetchCompanyHolidaysResult)` |
+| 10 | `InputTab.jsx` の `useEffect` 取得 | `const { holidays: companyHolidays } = useCompanyHolidays();` |
+| 11 | `AdminApp.jsx:401`（週報PDF） | `const holidayData = await fetchCompanyHolidays();` |
+| 12 | `WorkerApp.jsx:397`（週報PDF） | 同上 |
+
+**#9 について**: `fetchWithCache` は fetcher を**引数ゼロで呼ぶ**ことを実物で確認した
+（`offlineCache.js:51`）。したがって `fetchCompanyHolidaysResult` を**裸で渡してよい**
+（`range` が既定値 `{}` になり、フィルタ無し＝元のクエリと完全に一致する）。
+
+**#11/#12 で潜在バグを1件修正した（挙動の改善）**:
+移行前は `const { data: holidayData } = await supabase...` と **`error` を分解していなかった**ため、
+休日取得に失敗しても `holidayData` が `undefined` になるだけで、
+**休日の網掛けが無い週報PDFが黙って出力されていた**。
+移行後は `fetchCompanyHolidays()` が throw し、呼び出し元の既存 `try/catch` が
+`showToast(..., 'error')` を出す。消費側は元から `holidayData || []` なので**形の変化は安全**。
+
+**#6-8 の設計判断を維持**: `description === '休日' ? null : description` の正規化は
+判断3のとおり**呼び出し側（`useAssignmentState`）に残した**。UIの都合であってテーブルの都合ではないため。
+`HolidayCalendar` 側の `HOLIDAY_TYPES` 解釈も同様に呼び出し側に残っている。
+
+**地雷1/2の教訓の適用**:
+- `HolidayCalendar.jsx` は本文を全部移してから、**最後の別バッチで** `supabase` import を削除（教訓1）。
+  同時に不要になった `useEffect` / `useCallback` の named import も落とした。
+- `useAssignmentState.js` / `useWorkerAssignments.js` / `AdminApp.jsx` / `WorkerApp.jsx` は
+  **`supabase` import を残した**。`CompanyHolidays` 以外の呼び出しが同一ファイルに残っているため
+  （`useAssignmentState.js` は移行後も `supabase.` が10箇所）。
+- 編集はすべて Python の `assert s.count(old)==1` で**一意一致を検証**してから適用（教訓2）。
+
+**検証**:
+- `grep -rn "from('CompanyHolidays')" src/` → **`src/hooks/useCompanyHolidays.js` の4行のみ**（他は0）
+- `grep -c supabase src/components/tabs/InputTab.jsx` → **0**
+- `grep -c supabase src/components/HolidayCalendar.jsx` → **0**
+- `npm run build` ✅（`✓ built in 11.34s`）
+- `npm test` ✅（2 files / 26 tests passed）
+
+**ついでに解消した小さな負債**: `WorkerApp.jsx` が `fetchCompanyHolidaysResult` を
+import していたが未使用だったため削除（実際の利用箇所は `useWorkerAssignments.js`）。
+
+**手順5への影響**: 判断5の境界決定どおり、週報系（#11/#12）の `CompanyHolidays` 行は本手順で片付いた。
+手順5 `useWeeklyReportData` は「残りの週報クエリの集約」だけを担当する（スコープは縮小）。
 
 #### ✅ 手順1の完了記録（2026-09-16）
 

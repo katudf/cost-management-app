@@ -1,9 +1,9 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Edit3, Plus, Trash2, Filter, Grid, List as ListIcon, ChevronLeft, ChevronRight } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmProvider';
 import { WORKER_TYPE } from '../../utils/constants';
+import { useCompanyHolidays } from '../../hooks/useCompanyHolidays';
 
 const InputTab = ({
     activeProject,
@@ -20,7 +20,7 @@ const InputTab = ({
 }) => {
     const { showToast } = useToast();
     const { confirm } = useConfirm();
-    const [companyHolidays, setCompanyHolidays] = useState([]);
+    const { holidays: companyHolidays } = useCompanyHolidays();
     const [viewMode, setViewMode] = useState('matrix');
     const [currentMonth, setCurrentMonth] = useState(() => {
         const d = new Date();
@@ -28,15 +28,6 @@ const InputTab = ({
     });
     const [filterDate, setFilterDate] = useState('');
     const [filterWorker, setFilterWorker] = useState('');
-
-    // 休日データの取得
-    useEffect(() => {
-        const fetchHolidays = async () => {
-            const { data } = await supabase.from('CompanyHolidays').select('date, description');
-            if (data) setCompanyHolidays(data);
-        };
-        fetchHolidays();
-    }, []);
 
     // --- マトリックス表示用の計算 ---
     const matrixData = useMemo(() => {

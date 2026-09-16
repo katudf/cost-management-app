@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
-import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
+import { useCompanyHolidays, deleteCompanyHoliday, upsertCompanyHoliday } from '../hooks/useCompanyHolidays';
 
 const DOW_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
 const MONTH_NAMES = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
@@ -18,33 +18,13 @@ const HolidayCalendar = () => {
         const today = new Date();
         return today.getMonth() < 3 ? today.getFullYear() - 1 : today.getFullYear();
     });
-    const [holidays, setHolidays] = useState([]);
-    const [isLoading, setIsLoading] = useState(true);
     const [activeType, setActiveType] = useState('holiday');
-
-    const fetchHolidays = useCallback(async () => {
-        setIsLoading(true);
-        try {
-            const startDate = `${year}-04-01`;
-            const endDate = `${year + 1}-03-31`;
-            const { data, error } = await supabase
-                .from('CompanyHolidays')
-                .select('*')
-                .gte('date', startDate)
-                .lte('date', endDate);
-            if (error) throw error;
-            setHolidays(data || []);
-        } catch (err) {
-            console.error('休日データ取得エラー:', err);
-            showToast('休日データの取得に失敗しました', 'error');
-        } finally {
-            setIsLoading(false);
-        }
-    }, [year, showToast]);
-
-    useEffect(() => {
-        fetchHolidays();
-    }, [fetchHolidays]);
+    // 年度（4月〜翌3月）の範囲だけを取得する
+    const { holidays, setHolidays, isLoading } = useCompanyHolidays({
+        from: `${year}-04-01`,
+        to: `${year + 1}-03-31`,
+        onError: () => showToast('休日データの取得に失敗しました', 'error')
+    });
 
     const getHoliday = (dateStr) => holidays.find(h => h.date === dateStr);
 
@@ -59,27 +39,24 @@ const HolidayCalendar = () => {
                 const newDesc = typeInfo.description;
                 if (existingDesc === newDesc) {
                     // 削除
-                    const { error } = await supabase.from('CompanyHolidays').delete().eq('id', existing.id);
-                    if (error) throw error;
+                    await deleteCompanyHoliday(existing.id);
                     setHolidays(prev => prev.filter(h => h.id !== existing.id));
                 } else {
                     // タイプ変更
-                    const { data, error } = await supabase
-                        .from('CompanyHolidays')
-                        .update({ description: newDesc })
-                        .eq('id', existing.id)
-                        .select();
-                    if (error) throw error;
-                    if (data && data[0]) setHolidays(prev => prev.map(h => h.id === existing.id ? data[0] : h));
+                    const saved = await upsertCompanyHoliday({
+                        id: existing.id,
+                        date: dateStr,
+                        description: newDesc
+                    });
+                    if (saved) setHolidays(prev => prev.map(h => h.id === existing.id ? saved : h));
                 }
             } else {
                 // 新規追加
-                const { data, error } = await supabase
-                    .from('CompanyHolidays')
-                    .insert([{ date: dateStr, description: typeInfo.description }])
-                    .select();
-                if (error) throw error;
-                if (data && data[0]) setHolidays(prev => [...prev, data[0]]);
+                const saved = await upsertCompanyHoliday({
+                    date: dateStr,
+                    description: typeInfo.description
+                });
+                if (saved) setHolidays(prev => [...prev, saved]);
             }
         } catch (err) {
             console.error('休日更新エラー:', err);

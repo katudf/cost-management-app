@@ -18,6 +18,7 @@ import { calculateProjectsSummary } from './utils/projectUtils';
 import { exportToExcel, generateWorkerReportExcel, generateMultipleWorkersReportExcel } from './utils/excelExportUtils';
 import { generateWorkerReportPDF, generateMultipleWorkersReportPDF } from './utils/pdfExportUtils';
 import { fetchApprovalsForReport } from './lib/overtimeApprovals';
+import { fetchCompanyHolidays } from './hooks/useCompanyHolidays';
 import { fetchWorkAllowanceApprovalsForReport } from './lib/workAllowanceApprovals';
 import WorkerEditModal from './components/WorkerEditModal';
 import ExportReportModal from './components/ExportReportModal';
@@ -398,7 +399,7 @@ const App = () => {
             const weekPrefix = exportWeekStart.replace(/-/g, '').slice(0, 8);
 
             // 会社休日の取得
-            const { data: holidayData } = await supabase.from('CompanyHolidays').select('date');
+            const holidayData = await fetchCompanyHolidays();
 
             const workersDataList = [];
 
