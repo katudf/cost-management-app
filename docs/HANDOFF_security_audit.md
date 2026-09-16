@@ -1908,15 +1908,84 @@ JSDocコメントの文言だけで、**振る舞いの差はゼロ**。
 | `npm run build` | ✅ 11.14s |
 | ESLint | ⛔ 9.1・9.3と同じ（`eslint.config.*` が無い。§11参照） |
 
-### 9.5 次の一手
+### 9.5 ✅ 作業項目タイルの並び順ロジックの切り出し
+
+9.1・9.3と同じやり方の3件目。`WorkerApp.jsx` の先頭に**べた書きされていた
+44行のモジュールレベル関数4本**（作業項目タイルの並び順の保存・復元）を、
+`src/utils/taskOrderUtils.ts` に切り出してテストで固定した。
+
+**なぜこれを選んだか。** `9.4 次の一手 (b)` で挙げた「次の純粋ロジック」として、
+残っていた候補（`tasksWithCalculation` / `notifiableDraftQueue` / 並び順ヘルパー）の中で
+これが一番「壊れても気付けない」形だった:
+
+- **テストが1件も無かった**
+- **間違えやすい条件が密集している**: 保存順に無い項目の末尾送り、
+  同順位を元の順序で維持する安定ソート、`Number.MAX_SAFE_INTEGER` によるランク既定値、
+  id が数値と文字列で混ざるための `String()` 寄せ、壊れた localStorage 値の握り潰し
+- **壊れても画面はエラーを出さない**。並び順が黙って変わるだけなので、
+  作業員が「並び替えたのに戻っている」と気付くまで分からない
+- `tasksWithCalculation` は中身が `calculateWorkHours`（`workTimeUtils.test.ts` で
+  テスト済み）への委譲＋加算なので、**切り出しの価値が相対的に低い**と判断して見送った
+
+**新しい構成:**
+
+| ファイル | 行数 | 内容 |
+|---|---|---|
+| `src/utils/taskOrderUtils.ts` | 99 | `taskOrderStorageKey` / `loadSavedTaskOrder` / `sortByOrder` / `applyTaskOrder` / `saveTaskOrder` |
+| `src/utils/taskOrderUtils.test.ts` | 184 | **26件**。関数ごとに `describe` を分けた |
+
+`WorkerApp.jsx`: **1798行 → 1754行**（44行減）。
+呼び出し元（227 / 384 / 780行目）は**一字も変えていない**。import を足しただけ。
+
+#### 切り出しで足した唯一の設計変更: `sortByOrder` の分離
+
+元の `applyTaskOrder` は「localStorage を読む」と「並べ替える」を1本でやっていた。
+**並べ替えの方が間違えやすいのに、localStorage 無しでは呼べない**形だったので、
+純粋関数 `sortByOrder(items, savedOrder)` を切り出し、
+`applyTaskOrder` は**その2つを繋ぐだけ**にした。
+
+```ts
+export const applyTaskOrder = (items, projectId) =>
+    sortByOrder(items, loadSavedTaskOrder(projectId));
+```
+
+**振る舞いは同一。** これ以外に挙動の差は無い（`saveTaskOrder` に
+`(items || [])` の null ガードを足したのみ）。
+
+#### テスト環境の注意: `environment: 'node'` に localStorage は無い
+
+`vitest.config.ts` は `environment: 'node'` なので、**`localStorage` が存在しない**。
+jsdom に切り替えると既存4ファイルすべてに影響が出るため、
+**テストファイル側で `vi.stubGlobal('localStorage', ...)` の最小スタブを立てた**。
+
+副産物として、本番では再現しづらい以下の経路を**直接テストできている**:
+
+- `getItem` が例外を投げる（プライベートブラウジング等の `SecurityError`）→ `null` を返す
+- `setItem` が例外を投げる（`QuotaExceededError`）→ 呼び出し側に伝播しない
+
+#### ゲート結果
+
+| 項目 | 結果 |
+|---|---|
+| `npm test` | ✅ **104件 / 5ファイル**（着手前は 78件 / 4ファイル。`taskOrderUtils.test.ts` で **+26件**） |
+| `npm run build` | ✅ 10.96s |
+| ESLint | ⛔ 9.1・9.3・9.4と同じ（`eslint.config.*` が無い。§11参照） |
+
+### 9.6 次の一手
 
 行数は動くので**引用前に必ず grep で数え直すこと**。
-現在: `src/WorkerApp.jsx` **1798行**。
+現在: `src/WorkerApp.jsx` **1754行**。
 
-**(a) `WorkerApp.jsx` から次の純粋ロジックを抜く**
+**(a) `WorkerApp.jsx` に残っている純粋ロジック**
 
-9.1・9.3と同じ手順（純粋関数を `src/utils/` に切り出し → Vitestで固定）。
-UIの機械的な切り出しより、**テストできる形にする方を先に**やる。
+モジュールレベルのべた書きは**9.5で無くなった**。残りは `WorkerApp` コンポーネント内部で、
+切り出すなら state / ref への依存を引き剥がす必要がある:
+
+| 箇所 | 内容 | 所感 |
+|---|---|---|
+| `notifiableDraftQueue`（762行目） | 通知対象の下書きの絞り込み | **純粋。次に抜くならここ** |
+| `tasksWithCalculation`（730行目） | 各スロットの労働時間集計 | 純粋だが中身は `calculateWorkHours` への委譲。価値は低め |
+| `reorderTasks`（375行目）/ 端部オートスクロール系 | `setTasks`・`dragRef` に依存 | 純粋ではない。切り出すなら設計判断が要る |
 
 **(b) 積み残し（着手していない分割候補）**
 

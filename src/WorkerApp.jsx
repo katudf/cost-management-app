@@ -33,55 +33,11 @@ import { summarizeTaskCosts } from './utils/projectUtils';
 import { calculateTimeOverlapWarnings } from './utils/timeOverlapUtils';
 // ローカルタイムゾーンでの 'YYYY-MM-DD' 生成は dateUtils が持ち主
 import { toDateStr } from './utils/dateUtils';
+// 作業項目タイルの並び順の保存・適用は taskOrderUtils が持ち主
+import { applyTaskOrder, saveTaskOrder } from './utils/taskOrderUtils';
 import { fetchCompanyHolidays } from './hooks/useCompanyHolidays';
 import { generateMultipleWorkersReportPDF } from './utils/pdfExportUtils';
 import { buildWeekDays, buildWeekPrefix, fetchWorkerReportData } from './hooks/useWeeklyReportData';
-
-// 作業員ごとの作業項目タイル並び順を保存する localStorage キー（プロジェクト単位）
-const taskOrderStorageKey = (projectId) => `cost-app-worker-task-order-${projectId}`;
-
-// 保存済みの並び順（タスクidの配列）を読み込む。壊れていれば null。
-const loadSavedTaskOrder = (projectId) => {
-    if (!projectId) return null;
-    try {
-        const raw = localStorage.getItem(taskOrderStorageKey(projectId));
-        if (!raw) return null;
-        const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? parsed.map(String) : null;
-    } catch {
-        return null;
-    }
-};
-
-// タスク配列を保存済みの並び順で安定ソートする。
-// 保存順に無い項目（新規追加された作業など）は元の相対順を保ったまま末尾に回す。
-const applyTaskOrder = (tasksArr, projectId) => {
-    const savedOrder = loadSavedTaskOrder(projectId);
-    if (!savedOrder || savedOrder.length === 0) return tasksArr;
-    const rank = new Map(savedOrder.map((id, i) => [id, i]));
-    return tasksArr
-        .map((task, index) => ({ task, index }))
-        .sort((a, b) => {
-            const ra = rank.has(String(a.task.id)) ? rank.get(String(a.task.id)) : Number.MAX_SAFE_INTEGER;
-            const rb = rank.has(String(b.task.id)) ? rank.get(String(b.task.id)) : Number.MAX_SAFE_INTEGER;
-            if (ra !== rb) return ra - rb;
-            return a.index - b.index; // 同順位は元の順序を維持（安定ソート）
-        })
-        .map(({ task }) => task);
-};
-
-// 現在のタスク配列の並び順（idの配列）を localStorage に保存する。
-const saveTaskOrder = (tasksArr, projectId) => {
-    if (!projectId) return;
-    try {
-        localStorage.setItem(
-            taskOrderStorageKey(projectId),
-            JSON.stringify(tasksArr.map((t) => String(t.id)))
-        );
-    } catch {
-        // 保存に失敗しても並び替え自体は有効なので黙って無視する
-    }
-};
 
 const WorkerApp = () => {
     const { showToast } = useToast();
