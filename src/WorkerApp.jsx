@@ -1,5 +1,21 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { supabase } from './lib/supabase';
+import {
+    fetchWorkersDirectoryResult,
+    fetchProjectsResult,
+    fetchWorkerDailyRecordsResult,
+    fetchProjectTasksResult,
+    fetchTaskRecordsResult,
+    fetchSubcontractorRecordsResult,
+    fetchAllProjectRecordsResult,
+    fetchAllSubcontractorRecordsResult,
+    fetchLatestRecordDateBefore,
+    fetchTaskRecords,
+    fetchWorkerDailyRecords,
+    insertProjectTask,
+    insertDefaultProjectTask,
+    deleteProjectDayRecords,
+    saveDailyReport,
+} from './hooks/useDailyReport';
 import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2, PlusCircle, Clock, X, Wifi, WifiOff, FileText, CalendarDays, CopyPlus, GripVertical } from 'lucide-react';
 import WorkerAssignmentView from './components/worker/WorkerAssignmentView';
 import { useAuth } from './hooks/useAuth';
@@ -127,10 +143,7 @@ const WorkerApp = () => {
                 const savedProjectId = localStorage.getItem('cost-app-worker-project');
                 if (savedProjectId) setSelectedProjectId(savedProjectId);
 
-                const { data: wData } = await fetchWithCache('workers',
-                    // workerロールはWorkers基表を直接読めない（機微カラム遮蔽）ため安全カラムのみのビューを使う
-                    () => supabase.from('workers_directory').select('id, name, resignation_date, worker_type').order('display_order', { ascending: true, nullsFirst: false })
-                );
+                const { data: wData } = await fetchWithCache('workers', fetchWorkersDirectoryResult);
                 if (wData) setWorkers(wData.filter(w => w.name && w.name.trim() !== '' && !w.resignation_date && w.worker_type !== WORKER_TYPE.OFFICE));
 
                 // 管理画面の「日報編集」リンクから ?workerId=<id> 付きで開かれた場合はその作業員で自動ログイン
@@ -146,9 +159,7 @@ const WorkerApp = () => {
                     if (savedWorkerStr) setLoggedInWorker(JSON.parse(savedWorkerStr));
                 }
 
-                const { data: pData } = await fetchWithCache('projects',
-                    () => supabase.from('Projects').select('*').order('created_at', { ascending: true })
-                );
+                const { data: pData } = await fetchWithCache('projects', fetchProjectsResult);
                 if (pData) setProjects(pData);
 
                 // system_settings へのアクセスは useSystemSettings.js に集約している。
@@ -190,7 +201,7 @@ const WorkerApp = () => {
             try {
                 const cacheKey = `worker-daily-records-${loggedInWorker.name}-${selectedDate}`;
                 const { data } = await fetchWithCache(cacheKey,
-                    () => supabase.from('TaskRecords').select('*').eq('worker_name', loggedInWorker.name).eq('date', selectedDate)
+                    () => fetchWorkerDailyRecordsResult(loggedInWorker.name, selectedDate)
                 );
                 setWorkerDailyAllRecords(data || []);
             } catch (e) { console.error(e); }
@@ -209,7 +220,7 @@ const WorkerApp = () => {
                 const targetDate = selectedDate;
                 const tasksCacheKey = `project-tasks-${selectedProjectId}`;
                 let { data: tData, fromCache: tFromCache } = await fetchWithCache(tasksCacheKey,
-                    () => supabase.from('ProjectTasks').select('*').eq('projectId', selectedProjectId).order('order', { ascending: true })
+                    () => fetchProjectTasksResult(selectedProjectId)
                 );
 
                 // 有給・社内業務などの特別な共通現場で作業項目が未登録の場合は自動生成する（オンライン時のみ）
@@ -220,25 +231,20 @@ const WorkerApp = () => {
                     if (project.name.includes('有給')) {
                         defaultTaskName = '有給休暇';
                     }
-                    const newItem = {
-                        projectId: Number(selectedProjectId),
+                    const insertedData = await insertDefaultProjectTask({
+                        projectId: selectedProjectId,
                         name: defaultTaskName,
-                        target_hours: 0,
-                        estimated_amount: 0,
-                        order: 1,
-                        progress_percentage: 0
-                    };
-                    const { data: insertedData, error: insertError } = await supabase.from('ProjectTasks').insert([newItem]).select();
-                    if (!insertError && insertedData && insertedData.length > 0) {
+                    });
+                    if (insertedData) {
                         tData = insertedData;
                     }
                 }
 
                 const { data: rData } = await fetchWithCache(`task-records-${selectedProjectId}-${loggedInWorker.name}-${targetDate}`,
-                    () => supabase.from('TaskRecords').select('*').eq('project_id', selectedProjectId).eq('worker_name', loggedInWorker.name).eq('date', targetDate)
+                    () => fetchTaskRecordsResult(selectedProjectId, loggedInWorker.name, targetDate)
                 );
                 const { data: sData } = await fetchWithCache(`subcontractor-records-${selectedProjectId}-${targetDate}`,
-                    () => supabase.from('SubcontractorRecords').select('*').eq('project_id', selectedProjectId).eq('date', targetDate)
+                    () => fetchSubcontractorRecordsResult(selectedProjectId, targetDate)
                 );
 
                 const mappedTasks = (tData || []).map(t => {
@@ -279,11 +285,11 @@ const WorkerApp = () => {
 
                 if (project && project.foreman_worker_id === loggedInWorker.id) {
                     const { data: allRecords } = await fetchWithCache(`all-task-records-${selectedProjectId}`,
-                        () => supabase.from('TaskRecords').select('*').eq('project_id', selectedProjectId)
+                        () => fetchAllProjectRecordsResult(selectedProjectId)
                     );
                     setAllProjectRecords(allRecords || []);
                     const { data: allSubData } = await fetchWithCache(`all-subcontractor-records-${selectedProjectId}`,
-                        () => supabase.from('SubcontractorRecords').select('*').eq('project_id', selectedProjectId)
+                        () => fetchAllSubcontractorRecordsResult(selectedProjectId)
                     );
                     setAllSubcontractorRecords(allSubData || []);
                 } else {
@@ -637,28 +643,15 @@ const WorkerApp = () => {
         setIsCopyingPreviousDay(true);
         try {
             // 現在の日付より前で、この作業員・この現場に実績がある最新の日付を1件取得
-            const { data: latestRows, error: latestErr } = await supabase.from('TaskRecords')
-                .select('date')
-                .eq('project_id', selectedProjectId)
-                .eq('worker_name', loggedInWorker.name)
-                .lt('date', selectedDate)
-                .order('date', { ascending: false })
-                .limit(1);
-            if (latestErr) throw latestErr;
-            if (!latestRows || latestRows.length === 0) {
+            const sourceDate = await fetchLatestRecordDateBefore(selectedProjectId, loggedInWorker.name, selectedDate);
+            if (!sourceDate) {
                 showToast('この現場で、これより前の入力データが見つかりませんでした。', 'warning');
                 return;
             }
-            const sourceDate = latestRows[0].date;
 
             // その日のこの作業員・この現場の全レコードを取得
-            const { data: srcRecords, error: srcErr } = await supabase.from('TaskRecords')
-                .select('*')
-                .eq('project_id', selectedProjectId)
-                .eq('worker_name', loggedInWorker.name)
-                .eq('date', sourceDate);
-            if (srcErr) throw srcErr;
-            if (!srcRecords || srcRecords.length === 0) {
+            const srcRecords = await fetchTaskRecords(selectedProjectId, loggedInWorker.name, sourceDate);
+            if (srcRecords.length === 0) {
                 showToast('コピー元のデータが見つかりませんでした。', 'warning');
                 return;
             }
@@ -743,19 +736,17 @@ const WorkerApp = () => {
         setIsLoading(true);
         try {
             const newTaskOrder = tasks.length > 0 ? Math.max(...tasks.map(t => t.order || 0)) + 1 : 1;
-            const { data, error } = await supabase.from('ProjectTasks').insert([{
-                projectId: selectedProjectId, name: taskName.trim(), target_hours: 0, estimated_amount: 0, order: newTaskOrder, progress_percentage: 0
-            }]).select();
-            if (error) throw error;
-            if (data && data[0]) {
-                const ins = data[0];
-                setTasks(prev => [...prev, {
-                    id: ins.id, name: ins.name, target_hours: ins.target_hours, progress_percentage: ins.progress_percentage, order: ins.order,
-                    time_slots: [{ slot_id: `new-${Date.now()}`, record_id: null, start_time: '', end_time: '', is_overnight: false }],
-                    deleted_record_ids: [], today_note: '', work_allowance: false,
-                }]);
-                setHasUnsavedChanges(true);
-            }
+            const ins = await insertProjectTask({
+                projectId: selectedProjectId,
+                name: taskName.trim(),
+                order: newTaskOrder,
+            });
+            setTasks(prev => [...prev, {
+                id: ins.id, name: ins.name, target_hours: ins.target_hours, progress_percentage: ins.progress_percentage, order: ins.order,
+                time_slots: [{ slot_id: `new-${Date.now()}`, record_id: null, start_time: '', end_time: '', is_overnight: false }],
+                deleted_record_ids: [], today_note: '', work_allowance: false,
+            }]);
+            setHasUnsavedChanges(true);
         } catch (e) { console.error(e); showToast('作業項目の追加に失敗しました。', 'error'); }
         finally { setIsLoading(false); }
     };
@@ -925,22 +916,17 @@ const WorkerApp = () => {
         });
         if (!ok) return;
 
+        let deleted = false;
         try {
-            const { error } = await supabase
-                .from('TaskRecords')
-                .delete()
-                .eq('worker_name', loggedInWorker.name)
-                .eq('date', selectedDate)
-                .eq('project_id', project.id);
-            if (error) throw error;
+            await deleteProjectDayRecords({
+                projectId: project.id,
+                workerName: loggedInWorker.name,
+                date: selectedDate,
+            });
+            deleted = true;
 
             // workerDailyAllRecords を再取得
-            const { data: refreshed } = await supabase
-                .from('TaskRecords')
-                .select('*')
-                .eq('worker_name', loggedInWorker.name)
-                .eq('date', selectedDate);
-            setWorkerDailyAllRecords(refreshed || []);
+            setWorkerDailyAllRecords(await fetchWorkerDailyRecords(loggedInWorker.name, selectedDate));
 
             // 削除した現場が現在選択中なら入力欄をリセット
             if (String(selectedProjectId) === String(project.id)) {
@@ -957,7 +943,12 @@ const WorkerApp = () => {
             showToast(`「${project.name}」の入力記録を削除しました。`, 'success');
         } catch (e) {
             console.error(e);
-            showToast('削除に失敗しました。', 'error');
+            if (deleted) {
+                // 削除自体は成功している。表示の更新だけが失敗した状態。
+                showToast('削除しましたが、画面の更新に失敗しました。再読み込みしてください。', 'warning');
+            } else {
+                showToast('削除に失敗しました。', 'error');
+            }
         }
     };
 
@@ -1053,61 +1044,37 @@ const WorkerApp = () => {
                 }
             }
 
-            // 削除はまとめて1回
-            if (deleteIds.length > 0) {
-                const { error } = await supabase.from('TaskRecords').delete().in('id', deleteIds);
-                if (error) throw error;
-            }
-
-            // 更新・進捗更新は並列実行
-            const parallelOps = updateOps.map(u =>
-                supabase.from('TaskRecords').update(u.data).eq('id', u.id)
-            );
+            // 協力業者（職長のみ）
+            const subcontractorUpdates = [];
+            const subInsertPayloads = [];
             if (isForeman) {
-                tasks.forEach(t => {
-                    parallelOps.push(supabase.from('ProjectTasks').update({ progress_percentage: t.progress_percentage }).eq('id', t.id));
-                });
-            }
-            if (parallelOps.length > 0) {
-                const results = await Promise.all(parallelOps);
-                const failed = results.find(r => r.error);
-                if (failed) throw failed.error;
-            }
-
-            // 新規 insert はまとめて1回（返り順は入力順と一致するため id を書き戻す）
-            if (insertPayloads.length > 0) {
-                const { data, error } = await supabase.from('TaskRecords').insert(insertPayloads).select();
-                if (error) throw error;
-                (data || []).forEach((row, k) => {
-                    if (insertSlotRefs[k]) insertSlotRefs[k].record_id = row.id;
-                });
-            }
-
-            // 協力業者
-            if (isForeman) {
-                if (deletedSubcontractorIds.length > 0) {
-                    const { error } = await supabase.from('SubcontractorRecords').delete().in('id', deletedSubcontractorIds);
-                    if (error) throw error;
-                }
-                const subOps = [];
-                const subInsertPayloads = [];
                 for (const s of subcontractors) {
                     if (!s.company_name) continue;
                     if (String(s.id).startsWith('temp-')) {
                         subInsertPayloads.push({ project_id: selectedProjectId, date: targetDate, company_name: s.company_name, worker_count: s.worker_count, unit_price: 0, worker_name: loggedInWorker.name });
                     } else {
-                        subOps.push(supabase.from('SubcontractorRecords').update({ company_name: s.company_name, worker_count: s.worker_count }).eq('id', s.id));
+                        subcontractorUpdates.push({ id: s.id, company_name: s.company_name, worker_count: s.worker_count });
                     }
                 }
-                if (subInsertPayloads.length > 0) {
-                    subOps.push(supabase.from('SubcontractorRecords').insert(subInsertPayloads));
-                }
-                if (subOps.length > 0) {
-                    const subResults = await Promise.all(subOps);
-                    const subFailed = subResults.find(r => r.error);
-                    if (subFailed) throw subFailed.error;
-                }
             }
+
+            // 削除 → 更新 → 追加 → 協力業者 を1つの保存トランザクションとして実行
+            const insertedRecords = await saveDailyReport({
+                deleteIds,
+                updateOps,
+                insertPayloads,
+                progressUpdates: isForeman
+                    ? tasks.map(t => ({ id: t.id, progress_percentage: t.progress_percentage }))
+                    : [],
+                deletedSubcontractorIds: isForeman ? deletedSubcontractorIds : [],
+                subcontractorUpdates,
+                subcontractorInsertPayloads: subInsertPayloads,
+            });
+
+            // 返り順は入力順と一致するため id を書き戻す
+            insertedRecords.forEach((row, k) => {
+                if (insertSlotRefs[k]) insertSlotRefs[k].record_id = row.id;
+            });
 
             // 残業承認の同期（その日・その現場・この作業員の残業合計で起票/更新/削除）
             try {
@@ -1140,11 +1107,13 @@ const WorkerApp = () => {
                 /* 作業手当承認の同期失敗は日報保存自体は成功扱いとし、致命的にはしない */
             }
 
-            // リフレッシュ
+            // リフレッシュ（保存は成功済み。失敗しても保存自体は成功扱いにする）
             try {
-                const { data: refreshed } = await supabase.from('TaskRecords').select('*').eq('worker_name', loggedInWorker.name).eq('date', targetDate);
-                setWorkerDailyAllRecords(refreshed || []);
-            } catch (e) { /* ignore */ }
+                setWorkerDailyAllRecords(await fetchWorkerDailyRecords(loggedInWorker.name, targetDate));
+            } catch (e) {
+                console.error('Refresh after submit failed:', e);
+                showToast('保存しましたが、一覧の更新に失敗しました。再読み込みしてください。', 'warning');
+            }
 
             setDraftQueue(removeDraft(selectedProjectId, selectedDate));
             setHasUnsavedChanges(false);

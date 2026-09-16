@@ -617,7 +617,7 @@ WorkerApp・週報出力・在庫・工程表は **E2Eの射程外**。
 | 3 | ✅ **完了（2026-09-15）** | 下記「手順3の完了記録」 |
 | 4 | ✅ **完了（2026-09-16）** | 下記「手順4の完了記録」 |
 | 5 | ✅ **完了（2026-09-16）** | 下記「手順5の完了記録」 |
-| 6 | ⬜ 未着手 | |
+| 6 | ✅ **完了（2026-09-16）** | 下記「手順6の完了記録」 |
 | 7 | ⬜ 未着手 | |
 
 #### 🔍 手順4の着手前精査（2026-09-16）— スコープは§8.1.1の表より広い
@@ -838,6 +838,128 @@ import していたが未使用だったため削除（実際の利用箇所は 
 
 **検証ゲート**: `npm run build` と `npm test`。
 （ESLint はこのリポジトリでは `eslint.config.*` が無く実行不能なのでゲートに使えない。）
+
+#### 🔄 手順6の着手前精査（2026-09-16）
+
+**対象**: `src/WorkerApp.jsx` に残る `supabase` 直呼び **22件**（`supabase` 出現23 = import 1 + 呼び出し22。手順5完了時に実測で再確認済み）。
+
+**方針**: 大原則どおり「ファイル単位」ではなく **テーブル・責務単位** で片付ける。コンポーネント分割は手順6の対象外（フェーズ3）。
+
+##### 分類（22件）
+
+| # | 行 | テーブル | 操作 | 呼び出し元 | 備考 |
+|---|-----|---------|------|-----------|------|
+| 1 | 132 | `workers_directory` | SELECT | 初期ロード `useEffect` | `fetchWithCache('workers')` |
+| 2 | 150 | `Projects` | SELECT | 初期ロード `useEffect` | `fetchWithCache('projects')` |
+| 3 | 193 | `TaskRecords` | SELECT | 日次記録 `useEffect` | `fetchWithCache('worker-daily-records-…')` |
+| 4 | 212 | `ProjectTasks` | SELECT | `loadProjectDetails` | `fetchWithCache('project-tasks-…')`・`fromCache` を使用 |
+| 5 | 231 | `ProjectTasks` | INSERT | `loadProjectDetails` | 共通現場の既定工種 自動生成 |
+| 6 | 238 | `TaskRecords` | SELECT | `loadProjectDetails` | `fetchWithCache` |
+| 7 | 241 | `SubcontractorRecords` | SELECT | `loadProjectDetails` | `fetchWithCache` |
+| 8 | 282 | `TaskRecords` | SELECT | `loadProjectDetails`（職長のみ） | `fetchWithCache` |
+| 9 | 286 | `SubcontractorRecords` | SELECT | `loadProjectDetails`（職長のみ） | `fetchWithCache` |
+| 10 | 640 | `TaskRecords` | SELECT | `handleCopyPreviousDay` | 直近日付の探索・`error` 処理あり |
+| 11 | 655 | `TaskRecords` | SELECT | `handleCopyPreviousDay` | コピー元の取得・`error` 処理あり |
+| 12 | 746 | `ProjectTasks` | INSERT | `handleAddNewTask` | `error` 処理あり |
+| 13 | 929 | `TaskRecords` | DELETE | `handleDeleteProjectRecords` | `error` 処理あり |
+| 14 | 938 | `TaskRecords` | SELECT | `handleDeleteProjectRecords` | ⚠️ **`error` 未受領** |
+| 15 | 1058 | `TaskRecords` | DELETE | `handleSubmit` | `error` 処理あり |
+| 16 | 1064 | `TaskRecords` | UPDATE | `handleSubmit` | `Promise.all` → `results.find(r => r.error)` で検査済み |
+| 17 | 1068 | `ProjectTasks` | UPDATE | `handleSubmit`（職長のみ） | 同上 |
+| 18 | 1079 | `TaskRecords` | INSERT | `handleSubmit` | `error` 処理あり・返り id を書き戻す |
+| 19 | 1089 | `SubcontractorRecords` | DELETE | `handleSubmit`（職長のみ） | `error` 処理あり |
+| 20 | 1099 | `SubcontractorRecords` | UPDATE | `handleSubmit`（職長のみ） | `Promise.all` で検査済み |
+| 21 | 1103 | `SubcontractorRecords` | INSERT | `handleSubmit`（職長のみ） | 同上 |
+| 22 | 1145 | `TaskRecords` | SELECT | `handleSubmit`（リフレッシュ） | ⚠️ **`error` 未受領**・`catch {/* ignore */}` |
+
+テーブル別の件数: `TaskRecords` 11 / `SubcontractorRecords` 5 / `ProjectTasks` 4 / `Projects` 1 / `workers_directory` 1。
+
+##### 制約1: `fetchWithCache` を壊さないこと（8件 = #1〜#4, #6〜#9）
+
+`src/utils/offlineCache.js` の `fetchWithCache(key, fetcher)` は **`fetcher` に `Promise<{data, error}>` を返す関数**を要求し、内部で
+`if (error) throw error;` → 成功時のみ `setCache`、失敗/オフライン時はキャッシュへフォールバックする。
+つまりこれらの呼び出しは「await 済みの結果」ではなく **クエリビルダを包んだサンク**として渡されている。
+フックへ移す際は **`{data, error}` を返す関数をそのまま返す形**（= `useCompanyHolidays.js:36` で既に確立済みのラッパ方式）を踏襲する。
+`await` して `throw` する形に変えると **オフライン時のキャッシュフォールバックが死ぬ**ため、ここは手順5のような `throw` 統一を**適用しない**。
+
+> 既存の前例: `WorkerApp.jsx:156` は `fetchSystemSettings('hourly_wage').then(data => ({data, error: null})).catch(error => ({data: null, error}))` と、
+> throw するフックを `{data, error}` に戻して渡している。同じ橋渡しを使う。
+
+##### 制約2: `handleSubmit`（#15〜#21）は1つの保存トランザクション
+
+`handleSubmit` は DELETE → UPDATE群(`Promise.all`) → INSERT → 協力業者DELETE/UPDATE/INSERT → 承認同期 → リフレッシュ を
+**1つの `try` の中で順序依存に**実行し、失敗時は `catch` でオフライン下書きキュー(`upsertDraft`)へ退避する。
+個々の呼び出しをバラバラにフック化すると、この「失敗したら下書きへ」の一体性が壊れる。
+→ **呼び出し単位ではなく、保存処理まるごと1関数**（例 `saveDailyReport({...})`）としてフックへ移し、
+`upsertDraft` / `setDraftQueue` / `setSaveMessage` などの **UI・オフラインキュー操作は呼び出し側に残す**（手順5と同じ責務分離）。
+
+##### 発見: `error` 未受領 2件（#14, #22）
+
+手順5で潰したのと**同じ構造**。supabase-js は失敗時も resolve するため、`error` を受け取らないと `data` が `undefined` になり、
+`setWorkerDailyAllRecords(refreshed || [])` が **無言で空配列**を入れる。囲っている `try/catch` は到達しない。
+
+- #14 `WorkerApp.jsx:938` — 記録削除後のリフレッシュ。DB障害時、画面上は「削除できた」ように見える。
+- #22 `WorkerApp.jsx:1145` — 保存後のリフレッシュ。`catch (e) { /* ignore */ }` が明示的に握り潰している。
+
+いずれも**リフレッシュ**なので保存そのものは成功している。よって手順6では
+**フック側で `error` を `throw` し、呼び出し側は「保存は成功・表示の更新に失敗」を区別できるようにする**方針とする
+（保存成功のトーストを消さないこと）。
+
+##### 実装計画
+
+| 新規フック | 集約対象 | 備考 |
+|-----------|---------|------|
+| `src/hooks/useDailyReport.js` | #3, #4, #5, #6, #7, #8, #9, #10, #11, #12, #13, #14, #15〜#22 | 日報の読み書き。`fetchWithCache` 用サンクは `{data, error}` を返すラッパとして公開 |
+| 既存フックへ寄せる | #1 `workers_directory` / #2 `Projects` | 既存の `useWorkers` / `useProjects` に該当APIが無ければ、`useDailyReport` のマスタ取得として同居させる |
+
+着手順は **(a) 参照系（`fetchWithCache` 8件）→ (b) 単発の書き込み（#5, #12, #13, #14）→ (c) `handleSubmit` 一括（#15〜#22）**。
+各段でゲート（`npm run build` / `npm test`）を通し、段ごとにこのドキュメントへ追記する。
+
+#### ✅ 手順6の完了記録（2026-09-16）
+
+**対象**: `src/WorkerApp.jsx` の `supabase` 直呼び **22件 → 0件**。
+新規モジュール `src/hooks/useDailyReport.js` に集約した。
+
+**自己修正（件数）**: 着手前精査で「制約1: `fetchWithCache` を壊さないこと（**9件** = #1〜#4, #6〜#9）」と
+書いたが、この列挙は **8件** であり 9 は数え間違いだった。§8.1 の教訓
+（総数は内訳の足し算で導かない）に従い、上の精査セクションを 8件 に修正済み。
+テーブル22行の内訳は正しかったので、総数22件に影響はない。
+
+**`src/hooks/useDailyReport.js` の構成**
+
+| 区分 | エクスポート | 備考 |
+|------|--------------|------|
+| 参照（サンク） | `fetchWorkersDirectoryResult` / `fetchProjectsResult` / `fetchWorkerDailyRecordsResult` / `fetchProjectTasksResult` / `fetchTaskRecordsResult` / `fetchSubcontractorRecordsResult` / `fetchAllProjectRecordsResult` / `fetchAllSubcontractorRecordsResult` | 8件。`{data, error}` を返す。`fetchWithCache` に直接渡す |
+| 参照（throw） | `fetchLatestRecordDateBefore` / `fetchTaskRecords` / `fetchWorkerDailyRecords` | キャッシュに載せない参照 |
+| 書き込み | `insertProjectTask` / `insertDefaultProjectTask` / `deleteProjectDayRecords` | `insertDefaultProjectTask` は表示の補助なので失敗時 `null` を返す（throw しない） |
+| 書き込み | `saveDailyReport` | `handleSubmit` の保存トランザクション一式（#15〜#21） |
+
+手順5の「throw に統一」は **参照系のサンク8件には適用しない**。
+`fetchWithCache` は `{data, error}` を返す関数を要求し、内部で `if (error) throw error;` した上で
+失敗時に localStorage キャッシュへフォールバックする。`await` + `throw` にすると
+**オフライン時のフォールバックが効かなくなる**ため、意図的に例外としている。
+トースト・ローディング・下書きキューは呼び出し側の責務（手順2の規約）。
+
+**実バグ2件を修正（`error` 未受領 = 暗黙失敗）**
+
+| # | 場所 | 症状 | 修正 |
+|---|------|------|------|
+| 14 | `handleDeleteProjectRecords` の再取得 | 再取得が失敗しても `refreshed` が `undefined` になり、`setWorkerDailyAllRecords([])` で**一覧が空になったまま「削除しました」と表示**されていた | `fetchWorkerDailyRecords`（throw する）に置換。`deleted` フラグを導入し、削除成功後の失敗は「削除しましたが、画面の更新に失敗しました」と **warning** で通知（成功トーストを潰さず、かつ「削除に失敗」と誤表示しない） |
+| 22 | `handleSubmit` の再取得 | `catch (e) { /* ignore */ }` で完全に握り潰していた | 同様に置換し、`console.error` + warning トースト。保存自体は成功扱いのまま |
+
+**段階と結果**
+
+| 段 | 内容 | `grep -c "supabase\."` |
+|----|------|----------------------|
+| (a) | 参照系8件を `*Result` に置換 | 20 → 12 |
+| (b) | 単発書き込み #5, #10〜#14 | 12 → 8 |
+| (c) | `handleSubmit` を `saveDailyReport` に集約 + `import { supabase }` 削除 | 8 → **0** |
+
+地雷1/教訓1のとおり、`import { supabase }` の削除は**全呼び出しの移行が終わった最後**に行った。
+
+**ゲート**: `npm run build` ✅ / `npm test` ✅ 26件パス。
+
+**手順7への申し送り**: 残るは `PurchaseLedgerTab`（6件）。
 
 #### ✅ 手順5の完了記録（2026-09-16）
 
