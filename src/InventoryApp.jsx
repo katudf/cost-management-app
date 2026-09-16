@@ -9,14 +9,8 @@ import LoginScreen from './components/auth/LoginScreen';
 import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
 import { useInventory } from './hooks/useInventory';
 import { INVENTORY_CATEGORY_LIST, INVENTORY_CATEGORY_COLOR } from './utils/constants';
-
-// ローカルタイムゾーンで 'YYYY-MM-DD' を生成
-const formatDateLocal = (date) => {
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    const d = String(date.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
-};
+// ローカルタイムゾーンでの 'YYYY-MM-DD' 生成は dateUtils が持ち主
+import { toDateStr } from './utils/dateUtils';
 
 const IMAGE_KEYS = ['image_url_1', 'image_url_2', 'image_url_3'];
 
@@ -28,7 +22,7 @@ const emptyForm = () => ({
     slot_number: '',
     quantity: 1,
     category: '',
-    recorded_date: formatDateLocal(new Date()),
+    recorded_date: toDateStr(new Date()),
     image_url_1: null,
     image_url_2: null,
     image_url_3: null,
@@ -129,7 +123,7 @@ const InventoryApp = () => {
             slot_number: item.slot_number ?? '',
             quantity: item.quantity ?? 0,
             category: item.category || '',
-            recorded_date: item.recorded_date || formatDateLocal(new Date()),
+            recorded_date: item.recorded_date || toDateStr(new Date()),
             image_url_1: item.image_url_1 || null,
             image_url_2: item.image_url_2 || null,
             image_url_3: item.image_url_3 || null,

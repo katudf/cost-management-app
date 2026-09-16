@@ -31,17 +31,11 @@ import { fetchWithCache, getDraftQueue, upsertDraft, removeDraft } from './utils
 import { fetchSystemSettings, DEFAULT_HOURLY_WAGE } from './hooks/useSystemSettings';
 import { summarizeTaskCosts } from './utils/projectUtils';
 import { calculateTimeOverlapWarnings } from './utils/timeOverlapUtils';
+// ローカルタイムゾーンでの 'YYYY-MM-DD' 生成は dateUtils が持ち主
+import { toDateStr } from './utils/dateUtils';
 import { fetchCompanyHolidays } from './hooks/useCompanyHolidays';
 import { generateMultipleWorkersReportPDF } from './utils/pdfExportUtils';
 import { buildWeekDays, buildWeekPrefix, fetchWorkerReportData } from './hooks/useWeeklyReportData';
-
-// ローカルタイムゾーンで 'YYYY-MM-DD' を生成する（toISOString はUTC変換されるため日付がずれる）
-const formatDateLocal = (date) => {
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    const d = String(date.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
-};
 
 // 作業員ごとの作業項目タイル並び順を保存する localStorage キー（プロジェクト単位）
 const taskOrderStorageKey = (projectId) => `cost-app-worker-task-order-${projectId}`;
@@ -117,7 +111,7 @@ const WorkerApp = () => {
     const [isOnline, setIsOnline] = useState(navigator.onLine);
     const [isSyncingQueue, setIsSyncingQueue] = useState(false);
 
-    const [selectedDate, setSelectedDate] = useState(() => formatDateLocal(new Date()));
+    const [selectedDate, setSelectedDate] = useState(() => toDateStr(new Date()));
 
     // 配置表（全画面・閲覧専用）の表示状態
     const [showAssignmentChart, setShowAssignmentChart] = useState(false);
@@ -1275,7 +1269,7 @@ const WorkerApp = () => {
                                 setHasUnsavedChanges(false);
                                 const d = new Date(selectedDate + 'T00:00:00');
                                 d.setDate(d.getDate() - 1);
-                                setSelectedDate(formatDateLocal(d));
+                                setSelectedDate(toDateStr(d));
                             }}
                             aria-label="前日に移動"
                             title="前日に移動"
@@ -1305,7 +1299,7 @@ const WorkerApp = () => {
                                 setHasUnsavedChanges(false);
                                 const d = new Date(selectedDate + 'T00:00:00');
                                 d.setDate(d.getDate() + 1);
-                                setSelectedDate(formatDateLocal(d));
+                                setSelectedDate(toDateStr(d));
                             }}
                             aria-label="翌日に移動"
                             title="翌日に移動"

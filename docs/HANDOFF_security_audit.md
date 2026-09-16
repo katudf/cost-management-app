@@ -1768,7 +1768,7 @@ import されているだけで**呼ばれていなかった**（実際の呼び
 > ⚠️ この表の以前の版（103ファイル / 31,039行、WorkerApp 1924行 等）は**すべて古い**値だった。
 > フェーズ2の各コミットで行数が動いている。**引用する前に必ず grep で数え直すこと。**
 
-### 9.3 ✅ 時間帯重複検出の切り出し（`WorkerApp.jsx` → `timeOverlapUtils.ts`）
+### 9.3 ✅ 時間帯重複検出の切り出し（`52ddf69`）
 
 9.1と同じやり方の2件目。`WorkerApp.jsx` の `timeOverlapWarnings` という
 **約75行の useMemo べた書き**を、純粋関数モジュールに切り出してテストで固定した。
@@ -1867,23 +1867,58 @@ const toMinutes = (timeStr) => {
 | `npm run build` | ✅ 11.12s |
 | ESLint | ⛔ 9.1と同じ。`eslint.config.*` が無いのでゲートにできない（§11参照） |
 
-### 9.4 次の一手
+### 9.4 ✅ `formatDateLocal` の重複解消
 
-行数は `339c7e8` 以降で動いているので、**引用前に必ず grep で数え直すこと**。
-現在: `src/WorkerApp.jsx` **1804行**、リポジトリ全体 **119ファイル / 34,549行**。
+前節の「次の一手」で「小さく、確実」と挙げていた分。**同じ関数が2箇所にべた書きされていた**ので、
+既にテスト済みの `toDateStr`（`src/utils/dateUtils.ts:42`）に寄せて消した。
 
-**(a) `formatDateLocal` の重複を消す（小さく、確実）**
+| 箇所 | 対応 |
+|---|---|
+| `src/WorkerApp.jsx`（旧39行目） | 定義を削除し `toDateStr` を import |
+| `src/InventoryApp.jsx`（旧14行目） | 同上 |
+| `src/utils/dateUtils.ts` の `toDateStr` | **唯一の持ち主**。変更なし |
 
-`src/WorkerApp.jsx:39` と `src/InventoryApp.jsx:14` に同じ関数が2本ある。
-`src/utils/dateUtils.ts` の **`toDateStr` が既に同一実装かつテスト済み**
-（`dateUtils.test.ts`）なので、2箇所を差し替えて消すだけ。
-新規テストも要らない。
+**実装は3本とも完全に同一**だった（`getFullYear` / `getMonth()+1` / `getDate()` を
+`padStart(2,'0')` して `YYYY-MM-DD` に組む）。差は変数名（`d` か `day`）と
+JSDocコメントの文言だけで、**振る舞いの差はゼロ**。
 
-**(b) `WorkerApp.jsx` から次の純粋ロジックを抜く**
+そのため**新規テストは書いていない**。`toDateStr` は `dateUtils.test.ts:67` の
+`describe('toDateStr')` で既に直接テストされており（さらに `addDays` / `getMonday` の
+テストからも間接的に呼ばれている）、寄せた先の方がテストが厚い。
 
-9.1・9.3と同じ手順。UIの機械的な切り出しより、**テストできる形にする方を先に**やる。
+呼び出しの差し替えは**機械的な置換5箇所**:
 
-**(c) 積み残し（着手していない分割候補）**
+| ファイル | 置換した行 |
+|---|---|
+| `src/WorkerApp.jsx` | 114（`selectedDate` の初期値）/ 1272 / 1302（日付ピッカー） |
+| `src/InventoryApp.jsx` | 25（`recorded_date` の既定値）/ 126 |
+
+→ `grep -rn "formatDateLocal" src/` は現在**0件**。
+
+`src/WorkerApp.jsx`: **1804行 → 1798行**。
+
+> なお `toDateStr` は TypeScript で `(d: Date) => string` と型が付いている。
+> 呼び出し元はいずれも `new Date()` か `Date` 変数なので不整合は無い（ビルド✅）。
+
+#### ゲート結果
+
+| 項目 | 結果 |
+|---|---|
+| `npm test` | ✅ 78件 / 4ファイル（**新規テスト無し**。既存が1件も落ちないことの確認） |
+| `npm run build` | ✅ 11.14s |
+| ESLint | ⛔ 9.1・9.3と同じ（`eslint.config.*` が無い。§11参照） |
+
+### 9.5 次の一手
+
+行数は動くので**引用前に必ず grep で数え直すこと**。
+現在: `src/WorkerApp.jsx` **1798行**。
+
+**(a) `WorkerApp.jsx` から次の純粋ロジックを抜く**
+
+9.1・9.3と同じ手順（純粋関数を `src/utils/` に切り出し → Vitestで固定）。
+UIの機械的な切り出しより、**テストできる形にする方を先に**やる。
+
+**(b) 積み残し（着手していない分割候補）**
 
 `EstimateEditor.jsx` 1679 / `PurchaseLedgerTab.jsx` 1378 / `useAssignmentState.js` 1290 /
 `SheetPaper.jsx` 1105 / `EstimatePDF.jsx` 969 / `AdminApp.jsx` 889。
