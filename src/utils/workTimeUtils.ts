@@ -9,9 +9,22 @@
 // 定数: 時刻を分単位 (0:00 = 0, 8:00 = 480, etc.) で管理
 // ============================================================
 
-const toMinutes = (timeStr: string | null | undefined): number | null => {
+/**
+ * 'HH:MM' を 0:00 からの分数に変換する。空文字や null は null。
+ *
+ * 'HH' だけ・時刻でない文字列も null にする。以前の実装はこれらで NaN を返し、
+ * NaN は比較がすべて false になるため、重複判定などを無言ですり抜けていた。
+ *
+ * 時刻→分の変換はこのモジュールが唯一の持ち主。
+ * `timeOverlapUtils.ts` にも同じ関数が生えていたので、ここに寄せた。
+ */
+export const toMinutes = (timeStr: string | null | undefined): number | null => {
     if (!timeStr) return null;
-    const [h, m] = timeStr.split(':').map(Number);
+    const parts = timeStr.split(':');
+    if (parts.length < 2) return null;
+    const h = Number(parts[0]);
+    const m = Number(parts[1]);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
     return h * 60 + m;
 };
 

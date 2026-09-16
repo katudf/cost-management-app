@@ -30,6 +30,7 @@ import { syncWorkAllowanceApproval, fetchPendingWorkAllowanceApprovals, approveW
 import { fetchWithCache, getDraftQueue, upsertDraft, removeDraft } from './utils/offlineCache';
 import { fetchSystemSettings, DEFAULT_HOURLY_WAGE } from './hooks/useSystemSettings';
 import { summarizeTaskCosts } from './utils/projectUtils';
+import { calculateTimeOverlapWarnings } from './utils/timeOverlapUtils';
 import { fetchCompanyHolidays } from './hooks/useCompanyHolidays';
 import { generateMultipleWorkersReportPDF } from './utils/pdfExportUtils';
 import { buildWeekDays, buildWeekPrefix, fetchWorkerReportData } from './hooks/useWeeklyReportData';
@@ -793,79 +794,17 @@ const WorkerApp = () => {
         });
     }, [tasks, selectedDate]);
 
-    // 時間帯ラップ（重複）チェック
-    const timeOverlapWarnings = useMemo(() => {
-        if (!selectedProjectId) return [];
-
-        const toMinutes = (timeStr) => {
-            if (!timeStr) return null;
-            const [h, m] = timeStr.split(':').map(Number);
-            return h * 60 + m;
-        };
-
-        const fmt = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
-
-        const allIntervals = [];
-        const warnings = [];
-        const ap = projects.find(p => p.id === Number(selectedProjectId));
-
-        workerDailyAllRecords
-            .filter(r => String(r.project_id) !== String(selectedProjectId))
-            .forEach(r => {
-                const s = toMinutes(r.start_time);
-                const e = toMinutes(r.end_time);
-                if (s !== null && e !== null) {
-                    const proj = projects.find(p => p.id === Number(r.project_id));
-                    allIntervals.push({ projectId: r.project_id, projectName: proj?.name || '別現場', taskName: proj?.name || '別現場', start: s, end: e });
-                }
-            });
-
-        tasks.forEach(t => {
-            t.time_slots.forEach(slot => {
-                const s = toMinutes(slot.start_time);
-                let e = toMinutes(slot.end_time);
-                if (s !== null && e !== null) {
-                    if (slot.is_overnight) e += 1440;
-
-                    if (s >= e) {
-                        warnings.push({
-                            key: `inverted-${t.id}-${slot.slot_id}`,
-                            message: `「${t.name}」の終了時刻が開始時刻以前になっています。日跨ぎの場合は「翌日」にチェックを入れてください。`
-                        });
-                    } else {
-                        allIntervals.push({ projectId: selectedProjectId, projectName: ap?.name || '現在の現場', taskName: t.name, start: s, end: e, slotId: slot.slot_id });
-                    }
-                }
-            });
-        });
-
-        for (let i = 0; i < allIntervals.length; i++) {
-            for (let j = i + 1; j < allIntervals.length; j++) {
-                const a = allIntervals[i];
-                const b = allIntervals[j];
-                
-                if (a.slotId && b.slotId && a.slotId === b.slotId) continue;
-
-                if (a.start < b.end && b.start < a.end) {
-                    const overlapStart = Math.max(a.start, b.start);
-                    const overlapEnd = Math.min(a.end, b.end);
-                    
-                    const isSameProject = String(a.projectId) === String(b.projectId);
-                    const nameA = isSameProject ? a.taskName : a.projectName;
-                    const nameB = isSameProject ? b.taskName : b.projectName;
-                    
-                    const key = `overlap-${a.projectId}-${a.taskName}-${a.start}-${b.projectId}-${b.taskName}-${b.start}`;
-                    if (!warnings.some(w => w.key === key)) {
-                        warnings.push({
-                            key,
-                            message: `「${nameA}」と「${nameB}」の作業時間が ${fmt(overlapStart)}〜${fmt(overlapEnd)} で重複しています`
-                        });
-                    }
-                }
-            }
-        }
-        return warnings;
-    }, [workerDailyAllRecords, tasks, selectedProjectId, projects]);
+    // 時間帯ラップ（重複）チェック。
+    // 判定ロジックは timeOverlapUtils に切り出してユニットテストで固定済み。
+    const timeOverlapWarnings = useMemo(
+        () => calculateTimeOverlapWarnings({
+            tasks,
+            dailyRecords: workerDailyAllRecords,
+            projects,
+            selectedProjectId,
+        }),
+        [workerDailyAllRecords, tasks, selectedProjectId, projects]
+    );
 
     // 現在編集中の 現場+日付 のドラフトは「入力中の自動保存」であり、
     // ユーザーが今まさに見ている内容そのものなので通知不要。

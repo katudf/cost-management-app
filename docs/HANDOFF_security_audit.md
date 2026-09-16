@@ -1754,7 +1754,7 @@ import されているだけで**呼ばれていなかった**（実際の呼び
 
 | ファイル | 行数 | 備考 |
 |---|---|---|
-| `src/WorkerApp.jsx` | 1865 | 最有力。原価計算の重複は 9.1 で解消済み |
+| `src/WorkerApp.jsx` | 1865 | 原価計算の重複は 9.1、時間帯重複の切り出しは 9.3 で対応。**9.3 の後は 1804行** |
 | `src/types/supabase.ts` | 1849 | ⛔ **自動生成。分割対象外**（`generate_typescript_types` の出力） |
 | `src/estimate-editor/EstimateEditor.jsx` | 1679 | |
 | `src/components/tabs/PurchaseLedgerTab.jsx` | 1378 | §8.1 で Supabase 直接呼び出しを `usePurchaseLedger` に集約済み |
@@ -1768,10 +1768,126 @@ import されているだけで**呼ばれていなかった**（実際の呼び
 > ⚠️ この表の以前の版（103ファイル / 31,039行、WorkerApp 1924行 等）は**すべて古い**値だった。
 > フェーズ2の各コミットで行数が動いている。**引用する前に必ず grep で数え直すこと。**
 
-### 9.3 次の一手
+### 9.3 ✅ 時間帯重複検出の切り出し（`WorkerApp.jsx` → `timeOverlapUtils.ts`）
 
-`WorkerApp.jsx`（1865行）から、9.1と同じやり方で**純粋ロジックを `src/utils/` に抜いてユニットテストを付ける**。
-UIコンポーネントの機械的な切り出しより、テストできる形にする方を先にやる。
+9.1と同じやり方の2件目。`WorkerApp.jsx` の `timeOverlapWarnings` という
+**約75行の useMemo べた書き**を、純粋関数モジュールに切り出してテストで固定した。
+
+**なぜこれを選んだか。** 分割候補の中でこのロジックが一番「壊れても気付けない」形だった:
+
+- **純粋**（DOM・Supabase・stateに触らない）なので、そのまま関数として抜ける
+- **テストが1件も無かった**
+- **間違えやすい条件が密集している**: 日跨ぎの `+1440`、`開始 >= 終了` の反転検出、
+  同一スロットの自己比較除外、同一現場／別現場での表示名の切り替え、順序依存の重複排除キー
+- **保存をブロックする**（`WorkerApp.jsx:926` の `handleSubmit`）。
+  つまり退行すると「保存できない」か「二重計上を見逃す」かの形で**直接ユーザーに出る**
+
+**新しい構成:**
+
+| ファイル | 行数 | 内容 |
+|---|---|---|
+| `src/utils/timeOverlapUtils.ts` | 220 | `formatMinutes` / `buildOtherProjectIntervals` / `buildCurrentProjectIntervals` / `findOverlaps` / `calculateTimeOverlapWarnings` |
+| `src/utils/timeOverlapUtils.test.ts` | 324 | **30件**。関数ごとに `describe` を分けた |
+
+呼び出し元は useMemo の中身を1回の関数呼び出しに置き換えただけ。
+**依存配列 `[workerDailyAllRecords, tasks, selectedProjectId, projects]` は一字も変えていない。**
+
+`WorkerApp.jsx`: **1865行 → 1804行**（61行減）。
+
+#### 振る舞いの差（レビュー時に見るべき点）
+
+純粋な切り出しを狙ったが、**完全に同一ではない**。差は5点あり、すべて意図的:
+
+| # | 変更点 | 影響 |
+|---|---|---|
+| 1 | `toMinutes` が不正文字列で `NaN` ではなく `null` を返す | **下記の通り、テストで見つかった実バグ** |
+| 2 | 自己比較の除外が `a.slotId && b.slotId` → `a.slotId != null && b.slotId != null` | `slot_id` が `0` や `''` のとき、従来は除外が効かなかった。効くようになった |
+| 3 | 重複排除が `warnings.some(...)` の線形走査 → `Set` | 結果は同一（`inverted-*` と `overlap-*` はキー空間が衝突しない）。O(n²)→O(1) |
+| 4 | `(dailyRecords \|\| [])` 等の null ガードを追加 | 従来は `tasks` が undefined だと**例外で落ちた** |
+| 5 | 時間帯の順序・警告の順序は**維持** | 重複排除キーが順序依存なので変えられない。テストで固定した |
+
+#### テストが見つけた実バグ: `toMinutes` の `NaN` すり抜け
+
+元の実装:
+
+```js
+const toMinutes = (timeStr) => {
+    if (!timeStr) return null;
+    const [h, m] = timeStr.split(':').map(Number);
+    return h * 60 + m;   // '9' なら m が undefined → NaN
+};
+```
+
+`'9'` や `'あとで'` のような値が入ると `NaN` が返る。
+そして **`NaN` はあらゆる比較が false になる**ので、
+`a.start < b.end && b.start < a.end` が必ず偽になり、
+**その時間帯は重複チェックから無言で消える**（警告も出ないしエラーも出ない）。
+
+`null` を返すようにしたので、呼び出し側の `if (start === null) return;` で
+**明示的に弾かれる**。結果としてチェック対象から外れるのは同じだが、
+偶然ではなく意図になり、テストで固定された。
+
+> なお、この修正は最初 `Number.isNaN(h) || Number.isNaN(m)` と書いてテストに落ちた。
+> `'9'` では `m` が `undefined` で、**`Number.isNaN(undefined)` は `false`**（undefined は NaN 値そのものではない）。
+> `Number.isFinite()` で書き直して通した。**テストを先に書いていなければ素通りしていた。**
+
+#### 直さずに記録した制約: 他現場の夜勤は検出できない
+
+他現場の日報レコード（`workerDailyAllRecords`）には **`is_overnight` フラグが無い**。
+そのため他現場の 22:00〜翌06:00 は `start=1320, end=360` という
+**開始 > 終了** の時間帯になり、`a.start < b.end && b.start < a.end` が
+どちらも偽になって**重複が検出されない**。
+
+これは元の実装からある挙動。**切り出しでは直さなかった**:
+純粋な切り出しに留めてレビューしやすくするため、
+また修正するならDBスキーマ側（他現場レコードの日跨ぎ表現）の判断が要るため。
+**誤検知ではなく見落とし側に倒れている**ので、安全側ではある。
+`buildOtherProjectIntervals` の JSDoc に制約として明記した。
+
+> ⚠️ この JSDoc は最初**間違ったことを書いていた**（「`start >= end` をここで捨てる」と書いたが、
+> 実際に捨てているのは `null` だけ）。コードは正しく、コメントだけが嘘だった。修正済み。
+
+#### ついでに解消: `toMinutes` の重複定義
+
+同じ関数が3箇所にあった。**`workTimeUtils.ts` を唯一の持ち主にした:**
+
+| 箇所 | 対応 |
+|---|---|
+| `src/utils/workTimeUtils.ts`（private） | **ここに集約**。export して不正入力対応も入れた |
+| `src/utils/timeOverlapUtils.ts` | `workTimeUtils` から import して再輸出するだけにした |
+| `src/WorkerApp.jsx`（useMemo内） | 切り出しで消滅 |
+
+→ `grep -rn "const toMinutes" src/` は現在**定義行1件のみ**。
+
+#### ゲート結果
+
+| 項目 | 結果 |
+|---|---|
+| `npm test` | ✅ **78件 / 4ファイル**（着手前は 48件 / 3ファイル。`timeOverlapUtils.test.ts` で **+30件**） |
+| `npm run build` | ✅ 11.12s |
+| ESLint | ⛔ 9.1と同じ。`eslint.config.*` が無いのでゲートにできない（§11参照） |
+
+### 9.4 次の一手
+
+行数は `339c7e8` 以降で動いているので、**引用前に必ず grep で数え直すこと**。
+現在: `src/WorkerApp.jsx` **1804行**、リポジトリ全体 **119ファイル / 34,549行**。
+
+**(a) `formatDateLocal` の重複を消す（小さく、確実）**
+
+`src/WorkerApp.jsx:39` と `src/InventoryApp.jsx:14` に同じ関数が2本ある。
+`src/utils/dateUtils.ts` の **`toDateStr` が既に同一実装かつテスト済み**
+（`dateUtils.test.ts`）なので、2箇所を差し替えて消すだけ。
+新規テストも要らない。
+
+**(b) `WorkerApp.jsx` から次の純粋ロジックを抜く**
+
+9.1・9.3と同じ手順。UIの機械的な切り出しより、**テストできる形にする方を先に**やる。
+
+**(c) 積み残し（着手していない分割候補）**
+
+`EstimateEditor.jsx` 1679 / `PurchaseLedgerTab.jsx` 1378 / `useAssignmentState.js` 1290 /
+`SheetPaper.jsx` 1105 / `EstimatePDF.jsx` 969 / `AdminApp.jsx` 889。
+（`src/types/supabase.ts` 1849 は自動生成なので**対象外**。）
 
 ---
 
