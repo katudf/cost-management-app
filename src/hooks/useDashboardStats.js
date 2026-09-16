@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { calculateProjectsSummary } from '../utils/projectUtils';
+import { calculateProjectsSummary, calcPredictedProfitLoss, calcSubcontractorCost } from '../utils/projectUtils';
 import { calculateNinku, getSeasonConfig } from '../utils/workTimeUtils';
 
 export function useDashboardStats({ projects, activeProject, hourlyWage }) {
@@ -44,8 +44,7 @@ export function useDashboardStats({ projects, activeProject, hourlyWage }) {
             const consumptionRate = m.target > 0 ? (actual / m.target) * 100 : 0;
             const variance = progress - consumptionRate;
 
-            const predictedFinal = progress > 0 ? (actual / (progress / 100)) : 0;
-            const predictedProfitLoss = progress > 0 ? (m.target - predictedFinal) * hourlyWage : 0;
+            const predictedProfitLoss = calcPredictedProfitLoss(m.target, actual, progress, hourlyWage);
 
             return { ...m, actual, actualNinku, progress, variance, predictedProfitLoss, status: variance < -5 ? 'danger' : variance < 0 ? 'warning' : 'ok' };
         });
@@ -56,7 +55,7 @@ export function useDashboardStats({ projects, activeProject, hourlyWage }) {
         // 目標(target)は見積/計画上の合計時間であり日付を持たないため、季節デフォルト(getSeasonConfig(null))で換算する
         const totalTargetNinku = calculateNinku(totalTarget, null);
         const totalPredictedProfitLoss = items.reduce((sum, i) => sum + i.predictedProfitLoss, 0);
-        const subcontractorCost = (activeProject.subcontractors || []).reduce((sum, s) => sum + (Number(s.worker_count) * Number(s.unit_price || 0)), 0);
+        const subcontractorCost = calcSubcontractorCost(activeProject.subcontractors);
 
         return {
             items,

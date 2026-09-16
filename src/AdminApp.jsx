@@ -14,7 +14,6 @@ import { Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarS
 import { buildWeekDays, buildWeekPrefix, fetchWeeklyReportData } from './hooks/useWeeklyReportData';
 import { DEFAULT_MASTER_DATA, PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR, ITEM_TYPE, DASHBOARD_VIEW_MODE, DASHBOARD_VIEW_MODE_LIST, ESTIMATE_STATUS } from './utils/constants';
 import { calculateAge } from './utils/dateUtils';
-import { calculateProjectsSummary } from './utils/projectUtils';
 import { exportToExcel, generateWorkerReportExcel, generateMultipleWorkersReportExcel } from './utils/excelExportUtils';
 import { generateWorkerReportPDF, generateMultipleWorkersReportPDF } from './utils/pdfExportUtils';
 import { fetchCompanyHolidays } from './hooks/useCompanyHolidays';

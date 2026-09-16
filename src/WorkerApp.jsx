@@ -28,7 +28,8 @@ import { PROJECT_STATUS, WORKER_TYPE } from './utils/constants';
 import { syncOvertimeApproval, fetchPendingApprovals, approveOvertime, fetchApprovalReason } from './lib/overtimeApprovals';
 import { syncWorkAllowanceApproval, fetchPendingWorkAllowanceApprovals, approveWorkAllowance } from './lib/workAllowanceApprovals';
 import { fetchWithCache, getDraftQueue, upsertDraft, removeDraft } from './utils/offlineCache';
-import { fetchSystemSettings } from './hooks/useSystemSettings';
+import { fetchSystemSettings, DEFAULT_HOURLY_WAGE } from './hooks/useSystemSettings';
+import { summarizeTaskCosts } from './utils/projectUtils';
 import { fetchCompanyHolidays } from './hooks/useCompanyHolidays';
 import { generateMultipleWorkersReportPDF } from './utils/pdfExportUtils';
 import { buildWeekDays, buildWeekPrefix, fetchWorkerReportData } from './hooks/useWeeklyReportData';
@@ -106,7 +107,7 @@ const WorkerApp = () => {
     const [subcontractors, setSubcontractors] = useState([]);
     const [deletedSubcontractorIds, setDeletedSubcontractorIds] = useState([]);
 
-    const [hourlyWage, setHourlyWage] = useState(3500);
+    const [hourlyWage, setHourlyWage] = useState(DEFAULT_HOURLY_WAGE);
     const [allProjectRecords, setAllProjectRecords] = useState([]);
     const [allSubcontractorRecords, setAllSubcontractorRecords] = useState([]);
     const [workerDailyAllRecords, setWorkerDailyAllRecords] = useState([]);
@@ -1220,18 +1221,19 @@ const WorkerApp = () => {
 
     let foremanSummary = null;
     if (isForeman) {
-        const totalTarget = tasks.reduce((s, t) => s + (Number(t.target_hours) || 0), 0);
-        let totalActual = 0, predictedProfitLoss = 0;
-        tasks.forEach(t => {
-            const actual = allProjectRecords.filter(r => r.project_task_id === t.id).reduce((s, r) => s + Number(r.hours), 0);
-            totalActual += actual;
-            const progress = t.progress_percentage || 0;
-            const predictedFinal = progress > 0 ? (actual / (progress / 100)) : 0;
-            predictedProfitLoss += progress > 0 ? (t.target_hours - predictedFinal) * hourlyWage : 0;
-        });
-        const subCost = allSubcontractorRecords.reduce((s, r) => s + (Number(r.worker_count) * Number(r.unit_price || 0)), 0);
-        const overallProgress = totalTarget > 0 ? tasks.reduce((s, t) => s + (t.target_hours * (t.progress_percentage || 0)), 0) / totalTarget : 0;
-        foremanSummary = { totalTarget, totalActual, overallProgress: Math.round(overallProgress), predictedProfitLoss: Math.round(predictedProfitLoss - subCost) };
+        // ProjectTasks の snake_case 形を共通コアの {target, actual, progress} 形に正規化する
+        const items = tasks.map(t => ({
+            target: Number(t.target_hours) || 0,
+            actual: allProjectRecords.filter(r => r.project_task_id === t.id).reduce((s, r) => s + Number(r.hours), 0),
+            progress: t.progress_percentage || 0,
+        }));
+        const summary = summarizeTaskCosts(items, hourlyWage, allSubcontractorRecords);
+        foremanSummary = {
+            totalTarget: summary.totalTarget,
+            totalActual: summary.totalActual,
+            overallProgress: Math.round(summary.overallProgress),
+            predictedProfitLoss: Math.round(summary.predictedProfitLoss),
+        };
     }
 
     const seasonLabel = seasonConfig.label;

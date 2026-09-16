@@ -4,6 +4,7 @@
 import { supabase } from './lib/supabase';
 import { ITEM_TYPE, ITEM_SENTINEL, ESTIMATE_STATUS, PROJECT_STATUS } from './utils/constants';
 import { getStampSignedUrl } from './utils/stampStorage';
+import { DEFAULT_HOURLY_WAGE } from './hooks/useSystemSettings';
 
 // ============================================================
 // 見積書一覧取得
@@ -440,7 +441,7 @@ export const copyEstimateItemsToProjectTasks = async (projectId, estimateItems) 
     .select('hourly_wage')
     .eq('id', 1)
     .single();
-  const hourlyWage = settingsData?.hourly_wage || 3500;
+  const hourlyWage = settingsData?.hourly_wage || DEFAULT_HOURLY_WAGE;
 
   const rows = workItems.map((it, idx) => {
     const amount = Number(it.amount) || 0;
