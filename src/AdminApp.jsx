@@ -11,15 +11,13 @@ import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
 import HomeLanding from './components/HomeLanding';
 import logoUrl from './img/logo.png';
 import { Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, GripVertical, LogOut, Bell, Database } from 'lucide-react';
-import { supabase } from './lib/supabase';
+import { buildWeekDays, buildWeekPrefix, fetchWeeklyReportData } from './hooks/useWeeklyReportData';
 import { DEFAULT_MASTER_DATA, PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR, ITEM_TYPE, DASHBOARD_VIEW_MODE, DASHBOARD_VIEW_MODE_LIST, ESTIMATE_STATUS } from './utils/constants';
 import { calculateAge } from './utils/dateUtils';
 import { calculateProjectsSummary } from './utils/projectUtils';
 import { exportToExcel, generateWorkerReportExcel, generateMultipleWorkersReportExcel } from './utils/excelExportUtils';
 import { generateWorkerReportPDF, generateMultipleWorkersReportPDF } from './utils/pdfExportUtils';
-import { fetchApprovalsForReport } from './lib/overtimeApprovals';
 import { fetchCompanyHolidays } from './hooks/useCompanyHolidays';
-import { fetchWorkAllowanceApprovalsForReport } from './lib/workAllowanceApprovals';
 import WorkerEditModal from './components/WorkerEditModal';
 import ExportReportModal from './components/ExportReportModal';
 import DashboardTab from './components/tabs/DashboardTab';
@@ -312,57 +310,15 @@ const App = () => {
         setIsLoading(true);
 
         try {
-            const startDate = new Date(exportWeekStart);
-            const days = Array.from({ length: 7 }, (_, i) => {
-                const d = new Date(startDate);
-                d.setDate(d.getDate() + i);
-                return d.toISOString().split('T')[0];
+            const days = buildWeekDays(exportWeekStart);
+            const weekPrefix = buildWeekPrefix(exportWeekStart);
+
+            const workersDataList = await fetchWeeklyReportData({
+                workerNames,
+                days,
+                projects,
+                workers,
             });
-            const weekPrefix = exportWeekStart.replace(/-/g, '').slice(0, 8);
-
-            const workersDataList = [];
-
-            for (const workerName of workerNames) {
-                const { data: recordsData } = await supabase.from('TaskRecords')
-                    .select('*, ProjectTasks(name, projectId)')
-                    .eq('worker_name', workerName)
-                    .gte('date', days[0])
-                    .lte('date', days[6]);
-
-                const foremanProjects = projects.filter(p => p.foreman_worker_id === workers.find(w => w.name === workerName)?.id);
-                const foremanProjectIds = foremanProjects.map(p => p.id);
-                let subcontractorsData = [];
-                if (foremanProjectIds.length > 0) {
-                    const { data: subData } = await supabase.from('SubcontractorRecords')
-                        .select('*')
-                        .in('project_id', foremanProjectIds)
-                        .gte('date', days[0])
-                        .lte('date', days[6]);
-                    if (subData) subcontractorsData = subData;
-                }
-
-                // 残業承認状況（未承認の判定に使用）
-                let overtimeApprovals = [];
-                try {
-                    overtimeApprovals = await fetchApprovalsForReport(workerName, days[0], days[6]);
-                } catch (e) { console.error('Failed to fetch overtime approvals:', e); }
-
-                // 作業手当承認状況（未承認の判定に使用）
-                let workAllowanceApprovals = [];
-                try {
-                    workAllowanceApprovals = await fetchWorkAllowanceApprovalsForReport(workerName, days[0], days[6]);
-                } catch (e) { console.error('Failed to fetch work allowance approvals:', e); }
-
-                workersDataList.push({
-                    workerName,
-                    days,
-                    recordsData,
-                    projects,
-                    subcontractorsData,
-                    overtimeApprovals,
-                    workAllowanceApprovals
-                });
-            }
 
             if (workersDataList.length > 0) {
                 generateMultipleWorkersReportExcel(workersDataList, weekPrefix);
@@ -390,59 +346,18 @@ const App = () => {
         const workerNames = Array.isArray(modalVal) ? modalVal : [modalVal];
         setIsLoading(true);
         try {
-            const startDate = new Date(exportWeekStart);
-            const days = Array.from({ length: 7 }, (_, i) => {
-                const d = new Date(startDate);
-                d.setDate(d.getDate() + i);
-                return d.toISOString().split('T')[0];
-            });
-            const weekPrefix = exportWeekStart.replace(/-/g, '').slice(0, 8);
+            const days = buildWeekDays(exportWeekStart);
+            const weekPrefix = buildWeekPrefix(exportWeekStart);
 
             // 会社休日の取得
             const holidayData = await fetchCompanyHolidays();
 
-            const workersDataList = [];
-
-            for (const workerName of workerNames) {
-                const { data: recordsData } = await supabase.from('TaskRecords')
-                    .select('*, ProjectTasks(name, projectId)')
-                    .eq('worker_name', workerName)
-                    .gte('date', days[0])
-                    .lte('date', days[6]);
-
-                const foremanProjects = projects.filter(p => p.foreman_worker_id === workers.find(w => w.name === workerName)?.id);
-                let subcontractorsData = [];
-                if (foremanProjects.length > 0) {
-                    const { data: subData } = await supabase.from('SubcontractorRecords')
-                        .select('*')
-                        .in('project_id', foremanProjects.map(p => p.id))
-                        .gte('date', days[0])
-                        .lte('date', days[6]);
-                    if (subData) subcontractorsData = subData;
-                }
-
-                // 残業承認状況（未承認の判定に使用）
-                let overtimeApprovals = [];
-                try {
-                    overtimeApprovals = await fetchApprovalsForReport(workerName, days[0], days[6]);
-                } catch (e) { console.error('Failed to fetch overtime approvals:', e); }
-
-                // 作業手当承認状況（未承認の判定に使用）
-                let workAllowanceApprovals = [];
-                try {
-                    workAllowanceApprovals = await fetchWorkAllowanceApprovalsForReport(workerName, days[0], days[6]);
-                } catch (e) { console.error('Failed to fetch work allowance approvals:', e); }
-
-                workersDataList.push({
-                    workerName,
-                    days,
-                    recordsData,
-                    projects,
-                    subcontractorsData,
-                    overtimeApprovals,
-                    workAllowanceApprovals
-                });
-            }
+            const workersDataList = await fetchWeeklyReportData({
+                workerNames,
+                days,
+                projects,
+                workers,
+            });
 
             if (workersDataList.length > 0) {
                 generateMultipleWorkersReportPDF(workersDataList, weekPrefix, holidayData || []);

@@ -584,8 +584,8 @@ WorkerApp・週報出力・在庫・工程表は **E2Eの射程外**。
 | **2** | `MasterTab`(3) | 新規 `useProjectSuspensions` | 完全に独立したCRUD。重複ゼロ |
 | **3** | `CertificationManager`(5) | 新規 `useCertifications` | 全部単一行。`settings_flow` E2Eが（弱いが）通る唯一の画面 |
 | **4** | **休日CRUDの統合** | `useCompanyHolidays` に一本化 | `HolidayCalendar`(4) + `InputTab`の読み + `useAssignmentState` L1025-1041 + `useWorkerAssignments` L39 を集約。§8.1と§8.2を同時解消 |
-| **5** | **週報フックの新設** | `useWeeklyReportData` | `AdminApp`(5) + `WorkerApp` L392-419 を同時解消。**3コピー→1つ** |
-| **6** | `WorkerApp` 残り（**23**） | 日報CRUDのフック化 | 5で週報が抜けた後なので見通しが良い |
+| **5** | **週報フックの新設** | `useWeeklyReportData` | ~~`AdminApp`(5)~~ → **`AdminApp`(4)** + `WorkerApp`(2) を同時解消。**3コピー→1つ**。これで **`AdminApp` の supabase 直呼びはゼロ**（着手前精査で修正） |
+| **6** | `WorkerApp` 残り（~~23~~ → **22**） | 日報CRUDのフック化 | 5で週報が抜けた後なので見通しが良い。総数は24（複数行呼び出し2件を `.from` grep が取りこぼしていた） |
 | **7** | `PurchaseLedgerTab`(6) | 単独 | 1,416行。フェーズ3対象でもあるので最後 |
 
 **採用した方針 = (B)**（＝**進め方**の選択。手順1のスコープの (A)/(B) とは無関係）
@@ -616,7 +616,7 @@ WorkerApp・週報出力・在庫・工程表は **E2Eの射程外**。
 | 2 | ✅ **完了（2026-09-15）** | 下記「手順2の完了記録」 |
 | 3 | ✅ **完了（2026-09-15）** | 下記「手順3の完了記録」 |
 | 4 | ✅ **完了（2026-09-16）** | 下記「手順4の完了記録」 |
-| 5 | ⬜ 未着手 | |
+| 5 | ✅ **完了（2026-09-16）** | 下記「手順5の完了記録」 |
 | 6 | ⬜ 未着手 | |
 | 7 | ⬜ 未着手 | |
 
@@ -758,6 +758,150 @@ import していたが未使用だったため削除（実際の利用箇所は 
 
 **手順5への影響**: 判断5の境界決定どおり、週報系（#11/#12）の `CompanyHolidays` 行は本手順で片付いた。
 手順5 `useWeeklyReportData` は「残りの週報クエリの集約」だけを担当する（スコープは縮小）。
+
+#### 🔍 手順5の着手前精査（2026-09-16）
+
+**鉄則どおり、doc の §8.1.1 スコープ行（L587「AdminApp(5) + WorkerApp L392-419」）を信用せず実コードを数え直した。結果、両方とも不正確だった。**
+
+**実測（生 grep の行数から引き算で導出）**
+
+| 対象 | doc の記述 | 実測 | 差分の理由 |
+|---|---|---|---|
+| `AdminApp.jsx` 週報 | 5件 | **4件** | 単純な数え間違い |
+| `AdminApp.jsx` 全体 | — | **4件** | **週報以外に `supabase` 参照が1つも無い** |
+| `WorkerApp.jsx` 週報 | L392-419 | **L400 / L409 の2件**（関数は L381-441） | 行番号がズレていた |
+| `WorkerApp.jsx` 全体 | 約23件 | **24件** | 下記の計数ハザード |
+
+**⚠️ 計数ハザードを1件発見**: `grep -c "supabase\.from"` は `WorkerApp.jsx` で **22** を返すが、
+`L964` と `L973` は `await supabase` で改行してから `.from('TaskRecords')` と続く**複数行呼び出し**のため
+このパターンに引っかからない。**真の総数は 24。** したがって手順6の残件は
+24 − 2（週報）= **22件**（doc の「約23件」を修正）。
+今後 `supabase` の呼び出しを数えるときは `grep -c "supabase\.from"` ではなく
+`grep -c "supabase"` から import 行などを引くこと。
+
+**最大の収穫**: 手順5を終えると **`AdminApp.jsx` の `supabase` 参照はゼロになり、L14 の import ごと削除できる。**
+1,000行超の中心ファイルのレイヤ違反が完全に解消する。手順5は当初の想定より価値が高い。
+（地雷1の教訓により、**import の削除は4箇所すべての移行が終わった後**に行う。）
+
+**3コピーの差分（精査で確定）**
+
+3箇所は「作業員ごとにデータを集めて `workersDataList` を作る」ループが**ほぼ逐語的に同一**。
+違うのは以下だけで、いずれも**呼び出し側の都合（出力形式）**である。
+
+| 観点 | `AdminApp.exportWorkerReport`(L308/Excel) | `AdminApp.exportWorkerReportPDF`(L387) | `WorkerApp.handleExportReportPDF`(L381) |
+|---|---|---|---|
+| 対象作業員 | モーダルで選んだ複数名 | 同左 | **ログイン中の本人1名のみ** |
+| 週の起点 | `exportWeekStart`（既に月曜） | 同左 | `selectedDate` から**月曜を計算** |
+| 日付文字列 | `toISOString()` | 同左 | `formatDateLocal()` |
+| 休日取得 | **しない** | `fetchCompanyHolidays()` | 同左 |
+| 生成関数 | `generateMultipleWorkersReportExcel(list, weekPrefix)` | `...PDF(list, weekPrefix, holidays)` | `...PDF(list, weekPrefix, holidays, false)` |
+| `recordsData` | 素のまま渡す | 素のまま渡す | **`recordsData \|\| []`** |
+| トースト | 件数で出し分け | 件数で出し分け | 「プレビューを表示しました」 |
+
+**⚠️ 日付生成は安易に統一してはいけない（実害のある差）**
+
+`toISOString()` は UTC 変換を伴う。AdminApp が正しく動いているのは
+入力 `exportWeekStart` が `'2026-09-14'` のような**日付のみの文字列**で、
+`new Date()` が UTC 0時として解釈し `toISOString()` がそれをそのまま返すから。
+一方 WorkerApp の入力はローカルの `Date` なので、JST(UTC+9)で `toISOString()` を使うと
+**1日前にずれる**。だから `formatDateLocal` が使われている。
+→ **フックの中では必ずローカル基準（`toDateStr` 相当）に統一する。**
+　AdminApp 側は入力が日付文字列なので結果は変わらない（安全側への統一）。
+
+**ついでに見つかった重複（手順5の隣接領域）**
+
+`src/utils/dateUtils.ts` に**すでに正解が存在していた**:
+
+| 既存の正解 | 重複している実装 |
+|---|---|
+| `toDateStr(d)` | `WorkerApp.jsx:20` の `formatDateLocal`（**逐語的に同一**） |
+| `getMonday(d)` | `WorkerApp.jsx:386-389` の `dow === 0 ? -6 : 1 - dow` 計算（**同一ロジック**） |
+| `addDays(d, n)` | 3箇所の `d.setDate(d.getDate() + i)` |
+
+いずれも `src/utils/dateUtils.test.ts` で**ユニットテスト済み**（`getMonday` は日曜跨ぎのケースもある）。
+→ フックはこれらを再利用する。`formatDateLocal` は他でも使われている（L101/L1404/L1434）ため
+**手順5では削除せず**、フック側が `toDateStr` を使うだけに留める（スコープを広げない）。
+
+**設計方針**
+
+`src/hooks/useWeeklyReportData.js` を新設し、**データ収集だけ**を担当させる。
+出力形式・トースト・休日の扱いは呼び出し側に残す（手順2で確立した
+「トースト通知は呼び出し側の責務」の規約を踏襲）。
+
+| API | 種別 | 役割 |
+|---|---|---|
+| `buildWeekDays(startOrDate, {alignToMonday})` | 純関数 | 月曜起点の7日分を `toDateStr` で生成 |
+| `fetchWeeklyReportData({workerNames, days, projects, workers})` | 非同期関数 | `TaskRecords` / `SubcontractorRecords` / 各承認を集めて `workersDataList` を返す |
+
+`fetchApprovalsForReport` / `fetchWorkAllowanceApprovalsForReport` は
+すでに `src/lib/` にあり層として正しいので**そのまま利用**する（移動しない）。
+
+**検証ゲート**: `npm run build` と `npm test`。
+（ESLint はこのリポジトリでは `eslint.config.*` が無く実行不能なのでゲートに使えない。）
+
+#### ✅ 手順5の完了記録（2026-09-16）
+
+**着手前精査（下記）の計画どおり、3コピーを1つに集約した。**
+
+**新設**: `src/hooks/useWeeklyReportData.js`（141行）
+
+| エクスポート | 種別 | 役割 |
+|---|---|---|
+| `buildWeekDays(start, {alignToMonday})` | 純関数 | 7日分の `'YYYY-MM-DD'` を **ローカル時刻の `toDateStr`** で生成 |
+| `buildWeekPrefix(dayStr)` | 純関数 | `'YYYY-MM-DD'` → `'YYYYMMDD'`（ファイル名接頭辞） |
+| `fetchWorkerReportData({workerName, days, projects, foremanWorkerId, workers})` | 非同期 | 作業員1人分を収集 |
+| `fetchWeeklyReportData({workerNames, days, projects, workers})` | 非同期 | 複数人をループして `workersDataList` を返す |
+
+**移行した3箇所**
+
+| 呼び出し元 | 関数 | 解消した `supabase` 直呼び |
+|---|---|---|
+| `AdminApp.jsx` | `exportWorkerReport`（Excel） | 2件 |
+| `AdminApp.jsx` | `exportWorkerReportPDF` | 2件 |
+| `WorkerApp.jsx` | `handleExportReportPDF` | 2件 |
+
+**🎉 `AdminApp.jsx` の `supabase` 直呼びはゼロになり、`import { supabase }` ごと削除した。**
+1,000行超の中心ファイルのレイヤ違反が完全に解消。残る `supabase` 文字列は
+L36 `import { fetchEstimates } from './supabaseEstimates';` のみで、これは
+CLAUDE.md が明示的に許可しているデータアクセス層なので違反ではない。
+
+**ついでに直した実バグ（副次的効果）**
+
+移行前の3コピーはいずれも `const { data } = await supabase.from(...)` と書いており、
+**`error` を受け取っていなかった**。supabase-js は失敗時も reject せず resolve するため、
+DB エラー時は `data` が `undefined` のまま**無言で空の週報が出力される**状態だった
+（囲っていた `try/catch` は構造上デッドコード）。
+フック側で `error` を分割代入して `throw` するようにしたので、
+呼び出し側の既存 `catch` が `showToast(..., 'error')` で拾えるようになった。
+
+**意図的に潰さなかった差分**
+
+- `AdminApp` は作業員を**名前で引いて** `id` を得る / `WorkerApp` は `loggedInWorker.id` を既に持っている
+  → `foremanWorkerId` を任意の上書き引数にして両方を素直に表現した（フラットに統一しない）。
+- `WorkerApp` だけ `generateMultipleWorkersReportPDF(..., false)` と **第4引数 `autoPrint=false`** を渡す
+  → 出力の責務は呼び出し側に残す設計なので、そのまま維持。
+- `WorkerApp` は `setIsExportingPDF` / トースト `'日報プレビューを表示しました'`
+  → 手順2で確立した「トースト通知は呼び出し側の責務」に従い、フックには一切入れていない。
+
+**スコープを広げなかった点（意識的な判断）**
+
+`WorkerApp.jsx` L20 の `formatDateLocal` は `toDateStr` と完全に等価だが、
+L101 / L1404 / L1434 でまだ使われているため**本手順では削除しない**。
+`WorkerApp` の `import { supabase }` も残り22箇所が使うので残す（手順6の範囲）。
+
+**検証ゲート**
+
+```
+$ npm run build
+✓ built in 11.28s   （PWA precache 42 entries も再生成・エラーなし）
+
+$ npm test
+Test Files  2 passed (2)
+     Tests  26 passed (26)
+```
+
+**手順6への申し送り**: `WorkerApp.jsx` の `supabase` 出現は **23**（= import 1 + 呼び出し22）。
+着手前精査で修正した「22件」と一致することを移行後に再確認済み。
 
 #### ✅ 手順1の完了記録（2026-09-16）
 

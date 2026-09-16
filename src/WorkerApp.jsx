@@ -9,12 +9,13 @@ import { useToast } from './components/Toast';
 import { useConfirm } from './components/ConfirmProvider';
 import { calculateWorkHours, calculateNinku, getSeasonConfig, formatTimeDisplay } from './utils/workTimeUtils';
 import { PROJECT_STATUS, WORKER_TYPE } from './utils/constants';
-import { syncOvertimeApproval, fetchPendingApprovals, approveOvertime, fetchApprovalReason, fetchApprovalsForReport } from './lib/overtimeApprovals';
-import { syncWorkAllowanceApproval, fetchPendingWorkAllowanceApprovals, approveWorkAllowance, fetchWorkAllowanceApprovalsForReport } from './lib/workAllowanceApprovals';
+import { syncOvertimeApproval, fetchPendingApprovals, approveOvertime, fetchApprovalReason } from './lib/overtimeApprovals';
+import { syncWorkAllowanceApproval, fetchPendingWorkAllowanceApprovals, approveWorkAllowance } from './lib/workAllowanceApprovals';
 import { fetchWithCache, getDraftQueue, upsertDraft, removeDraft } from './utils/offlineCache';
 import { fetchSystemSettings } from './hooks/useSystemSettings';
 import { fetchCompanyHolidays } from './hooks/useCompanyHolidays';
 import { generateMultipleWorkersReportPDF } from './utils/pdfExportUtils';
+import { buildWeekDays, buildWeekPrefix, fetchWorkerReportData } from './hooks/useWeeklyReportData';
 
 // ローカルタイムゾーンで 'YYYY-MM-DD' を生成する（toISOString はUTC変換されるため日付がずれる）
 const formatDateLocal = (date) => {
@@ -383,56 +384,19 @@ const WorkerApp = () => {
         if (!loggedInWorker) return;
         setIsExportingPDF(true);
         try {
-            const base = new Date(selectedDate);
-            const dow = base.getDay(); // 0=日,1=月,...6=土
-            const mondayOffset = dow === 0 ? -6 : 1 - dow;
-            const monday = new Date(base);
-            monday.setDate(monday.getDate() + mondayOffset);
-            const days = Array.from({ length: 7 }, (_, i) => {
-                const d = new Date(monday);
-                d.setDate(d.getDate() + i);
-                return formatDateLocal(d);
-            });
-            const weekPrefix = days[0].replace(/-/g, '').slice(0, 8);
+            const days = buildWeekDays(selectedDate, { alignToMonday: true });
+            const weekPrefix = buildWeekPrefix(days[0]);
 
             const holidayData = await fetchCompanyHolidays();
 
-            const { data: recordsData } = await supabase.from('TaskRecords')
-                .select('*, ProjectTasks(name, projectId)')
-                .eq('worker_name', loggedInWorker.name)
-                .gte('date', days[0])
-                .lte('date', days[6]);
-
-            const foremanProjects = projects.filter(p => p.foreman_worker_id === loggedInWorker.id);
-            let subcontractorsData = [];
-            if (foremanProjects.length > 0) {
-                const { data: subData } = await supabase.from('SubcontractorRecords')
-                    .select('*')
-                    .in('project_id', foremanProjects.map(p => p.id))
-                    .gte('date', days[0])
-                    .lte('date', days[6]);
-                if (subData) subcontractorsData = subData;
-            }
-
-            let overtimeApprovals = [];
-            try {
-                overtimeApprovals = await fetchApprovalsForReport(loggedInWorker.name, days[0], days[6]);
-            } catch (e) { console.error('Failed to fetch overtime approvals:', e); }
-
-            let workAllowanceApprovals = [];
-            try {
-                workAllowanceApprovals = await fetchWorkAllowanceApprovalsForReport(loggedInWorker.name, days[0], days[6]);
-            } catch (e) { console.error('Failed to fetch work allowance approvals:', e); }
-
-            generateMultipleWorkersReportPDF([{
+            const workerData = await fetchWorkerReportData({
                 workerName: loggedInWorker.name,
                 days,
-                recordsData: recordsData || [],
                 projects,
-                subcontractorsData,
-                overtimeApprovals,
-                workAllowanceApprovals,
-            }], weekPrefix, holidayData || [], false);
+                foremanWorkerId: loggedInWorker.id,
+            });
+
+            generateMultipleWorkersReportPDF([workerData], weekPrefix, holidayData || [], false);
             showToast('日報プレビューを表示しました', 'success');
         } catch (e) {
             console.error(e);
