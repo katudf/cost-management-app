@@ -12,8 +12,16 @@
 - 進捗は **フェーズ0・フェーズ1 完了 / フェーズ2 進行中 / フェーズ3 未着手**。
 - **§8.1（レイヤ違反の解消・手順1〜7）は 2026-09-16 に全て完了した**（`cd63c7b`）。
   2026-09-15の再スキャンで見つかった52箇所/8ファイルは、すべてフック層へ集約済み。
-- **次にやるのは §8.2（その他の観察事項）→ §9 フェーズ3（巨大コンポーネントの分割）。**
+- **§8.2（その他の観察事項）も 2026-09-16 に全件処理した。**
+  内訳: マジック文字列（ステータス）是正不要 / 休日判定17箇所を `holidayUtils.js` に集約✅ /
+  人工計算は統一済み✅・**原価計算は3重実装を発見しフェーズ3へ送った⚠️** /
+  `docs/archive/` は方針で保持されており死んだコードではない /
+  `Workers` のポリシー欠如は**本文の前提が誤り**だった（真の論点は
+  `workers_directory` の `security_invoker=false` によるRLS迲回）/
+  購買台帳のエラー通知が画面に出ていなかった不具合を是正✅。
+- **次にやるのは §9 フェーズ3（巨大コンポーネントの分割）。**
   フェーズ3の最大の対象は `PurchaseLedgerTab.jsx`（1,416行）と `WorkerApp.jsx`。
+  **`WorkerApp.jsx` を分割する際に、§8.2 で発見した原価計算の3重実装を同時に片付けること。**
 
 ### ⚠️ 名前がぶつかっているので必ず区別すること
 
@@ -1530,15 +1538,114 @@ finally { setCompanyLoaded(true) }   // ← 失敗でも必ず true
   `holidayUtils.js` 自身の定義 4。
 
   **ゲート**: `npm run build` ✓（既知の >500kB chunk 警告のみ） / `npm test` ✓ 26/26
-- 原価・人工の計算ロジックの重複 — **ダッシュボード/Excel出力の人工数計算（総時間÷7.5のショートカット）は
-  `8d17193` で `workTimeUtils.ts` の季節対応 `calculateNinku`/`getSeasonConfig` に統一済み ✅**
-  （`DashboardTab.jsx` / `useDashboardStats.js` / `excelExportUtils.js` 修正）。
-  他に同種の重複が残っていないかは未調査。
-- **死んだコード** — `docs/archive/` に45以上のフォルダがある。
-  加えて **`overwrite_paste` はDB側に残っているが呼び出し元が無い**（§5.1で判明）— 未対応
-- **`Workers` にだけ worker/viewer 用のSELECTポリシーが無い**
-  （`Projects` / `Assignments` にはある）。より厳しい方向の非対称なので穴ではないが、
-  意図的かどうか要確認。— 未調査
+- 原価・人工の計算ロジックの重複 — **調査済み（2026-09-16）。人工は ✅ / 原価は ⚠️ 3重実装。**
+
+  **人工（✅ 是正不要）**: `8d17193` で `workTimeUtils.ts` の季節対応
+  `calculateNinku`/`getSeasonConfig` に統一済み（`DashboardTab.jsx` / `useDashboardStats.js` /
+  `excelExportUtils.js`）。今回 `7.5` を生grepしたところ、残るのは `workTimeUtils.test.ts` の
+  テスト期待値のみ。ショートカット実装は全滅している。`DashboardTab.jsx` はもうgrepに現れない
+  （`8d17193` で `useDashboardStats` 経由に移ったため）。
+
+  **原価（⚠️ 未是正 — 同じ4本の式が3箇所に独立実装されている）**:
+
+  | 式 | `projectUtils.js`<br>`calculateProjectsSummary` | `useDashboardStats.js`<br>36-70 | `WorkerApp.jsx`<br>1218-1240 (`foremanSummary`) |
+  |---|---|---|---|
+  | 予測着地 | `actual / (progress/100)` | 同左（手書き） | 同左（手書き） |
+  | 予測損益 | `(target - 予測着地) * hourlyWage` | 同左（手書き） | 同左（手書き） |
+  | 協力業者原価 | `Σ worker_count * unit_price` | 同左（手書き） | 同左（手書き） |
+  | 加重平均進捗 | `Σ(progress*target) / Σtarget` | 同左（手書き） | 同左（手書き） |
+
+  **なぜ統合されずに残ったか**: `WorkerApp.jsx` だけ**データ形状が違う**。
+  他2箇所は `m.target` / `progressData[m.id]` / `r.taskId`（camelCase・進捗は別オブジェクト）だが、
+  `WorkerApp.jsx` は `t.target_hours` / `t.progress_percentage` / `r.project_task_id`
+  （snake_case・進捗はタスク行に同居）。単純に呼び出しへ置き換えられないので取り残された。
+
+  **付随して見つかった重複**: `hourlyWage` の既定値 `3500` が
+  `WorkerApp.jsx:109`（`useState(3500)`）と `supabaseEstimates.js:443`（`|| 3500`）に
+  独立して直書きされている。片方だけ変えると無言でズレる。
+
+  **判断: フェーズ3へ送る（今は直さない）**。理由は、正しい直し方が
+  「`projectUtils.js` に形状非依存のコア関数を切り出し、3箇所からアダプタ経由で呼ぶ」であり、
+  これは `WorkerApp.jsx`（1924行）の構造に手を入れる作業だから。
+  §9 のフェーズ3で `WorkerApp.jsx` を分割するときに同時に片付けるのが自然。
+  **単独で先に触ると、分割時にもう一度同じ場所を触ることになる。**
+
+- **死んだコード** — **調査済み（2026-09-16）。両方とも是正不要。**
+
+  **`docs/archive/`（✅ 死んだコードではない）**: 実測 **76フォルダ / 1.6MB**
+  （本文の「45以上」は過小。76に訂正）。ただしこれは**方針として意図的に保持されている**。
+  `docs/README.md:12,31,44` / `docs/design.md:8` / `README.md:198` に明記があり、
+  方針は「**参照のみ。現行仕様の根拠にしない**」。削除対象ではないので**何もしない**。
+
+  **`overwrite_paste`（✅ フェーズ1で対処済み）**: §5.1 の指摘は既に解消している。
+  マイグレーション `20260910231843` で `REVOKE EXECUTE ... FROM anon, PUBLIC` 済み、
+  `search_path` は `20260709075345` で固定済み。現在 `prosecdef=false`、
+  権限は `service_role` / `authenticated` / `postgres` のみ。アプリからは到達不能のまま。
+  DB上に残ってはいるが、攻撃面としては閉じている。
+
+- **`Workers` にだけ worker/viewer 用のSELECTポリシーが無い** —
+  **調査済み（2026-09-16）。⚠️ 本文の前提が誤りだった。真の論点は別にある。**
+
+  **誤りの訂正**: `Workers` には `workers_select_worker [SELECT] roles=authenticated`、
+  qual `current_staff_role() = 'worker'` が**存在する**。
+  `Projects` / `Assignments` の `..._select_worker_viewer`
+  （`current_staff_role() = ANY (ARRAY['worker','viewer'])`）との差分は
+  **`viewer` が無いことだけ**で、「ポリシーが無い」わけではない。
+
+  **`viewer` が無いのは意図通り**: 閲覧者向け画面（`ScheduleViewApp.jsx`）の唯一のデータ取得は
+  `useScheduleViewData.js:19-24` で、読むのは `Assignments` / `Projects` / **`workers_directory`**。
+  `Workers` 本体は一度も触らない。よって `viewer` を足す必要は無い。
+
+  **真の論点（新規発見）**: `workers_directory` は **`security_invoker = false`（既定）/ owner = `postgres`**。
+  つまりビューは**所有者権限で実行され、`Workers` の RLS を完全に迂回する**。
+  実際のアクセス境界は `Workers` のRLSポリシーではなく、**ビューの列リストそのもの**。
+
+  | | 内容 |
+  |---|---|
+  | `Workers` の全列 | `id, created_at, name, order, birthDate, hireDate, address, contactInfo, cpdsNumber, kana, display_order, resignation_date, stamp_url, worker_type, lineworks_user_id` |
+  | ビューが公開する列 | `id, name, display_order, worker_type, resignation_date`（5列） |
+  | アプリが実際に使う列 | `id, name, display_order, worker_type`（4列） |
+
+  `birthDate` / `address` / `contactInfo` / `cpdsNumber` / `lineworks_user_id` は
+  ビューに含まれないので**閲覧者には出ない**。境界としては成立している。
+  ただし **`resignation_date` は公開されているのにアプリは使っていない**（1列の余剰）。
+
+  **権限の実測**: `Workers` は `anon:SELECT` グラントを持つが、RLSポリシーは全て
+  `{authenticated}` 向けなので anon の読み取りは空を返す。
+  `workers_directory` は `service_role` / `authenticated` / `postgres` のみで anon グラント無し。
+
+  **判断: 是正不要（穴ではない）**。ただし以下2点は**次に `workers_directory` を触る人が知っておくべき**:
+  1. **このビューに列を足すことは、RLSを一切経由せず閲覧者へ列を開くことと同義**。
+     `Workers` にRLSがあるから安全、という思い込みは成り立たない。
+  2. `resignation_date` は現在未使用。将来ビューを整理するなら外す候補。
+
+- **手順7から §8.2 に送られていた2件**（L1193）— **処理済み（2026-09-16）**
+
+  **(a) `error` ステートが描画されていない — ✅ 是正済み（実害ありだった）**
+
+  `PurchaseLedgerTab.jsx:115` の `const [error, setError] = useState(null)` は
+  `setError` が2箇所から呼ばれる一方で、**`error` を読む箇所が0件**だった
+  （生grepで確認。`err` / `errors` / `console.error` / 文字列 `'error'` を除いて、
+  裸の `error` 識別子は宣言行の1行のみ）。
+
+  **単なるデッドコードではなく、ユーザーに見える不具合だった**:
+  購買台帳の取得に失敗すると `onError` が「データの読み込み中にエラーが発生しました。」を
+  この誰も描画しないステートに書き込むだけなので、**画面には何も出ず表が空のままになる**。
+  ユーザーは「データが0件」なのか「読み込みに失敗した」のか区別できない。
+
+  **対応**: CLAUDE.md の規約どおり `showToast('...', 'error')` に差し替え、
+  デッドステートを削除。`showToast` は同ファイル `:114` で既に取得済みだったので
+  import 追加は不要。あわせて `fetchPurchaseData` の `setError(null)` も不要になり除去。
+  これで同ファイル内の失敗通知が**全部トーストに統一**された（従来 #2〜#6 はトースト、#1 だけがステートだった）。
+
+  **(b) insert/update の正規化対象フィールドの非対称 — ✅ 調査済み・是正不要（無害）**
+
+  insert は3項目（`quantity` / `unit_price` / `amount`）、
+  update は4項目（＋`paint_product_id`）を `'' → null` に正規化している。
+  しかし **`paint_product_id` は `''` になり得ない**:
+  初期値は `:110` で `null`、書き換えるのは `:499`（`product.id`）と `:506`（`null`）だけで、
+  空文字列を入れる経路がない。update 側の `:707` は**防御的な死にコード**。
+  振る舞いの差は生じないので**触らない**。
 
 ---
 

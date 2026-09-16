@@ -112,7 +112,6 @@ const initialFormData = {
 
 const PurchaseLedgerTab = () => {
     const { showToast } = useToast();
-    const [error, setError] = useState(null);
     // 一覧の取得・保持は usePurchaseLedger に集約（従来の data / isLoading と同じ役割）
     const {
         records: data,
@@ -120,7 +119,7 @@ const PurchaseLedgerTab = () => {
         isLoading,
         refetch: refetchPurchaseData
     } = usePurchaseLedger({
-        onError: () => setError('データの読み込み中にエラーが発生しました。')
+        onError: () => showToast('データの読み込み中にエラーが発生しました。', 'error')
     });
     const [searchTerm, setSearchTerm] = useState('');
 
@@ -189,9 +188,8 @@ const PurchaseLedgerTab = () => {
     const fetchPurchaseData = async () => {
         try {
             await refetchPurchaseData();
-            setError(null);
         } catch {
-            // onError で setError 済み
+            // onError で showToast 済み
         }
     };
 
