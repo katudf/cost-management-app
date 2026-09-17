@@ -5,9 +5,7 @@
 // draftQueueUtils が持っている。このファイルは localStorage への副作用だけを持つ。
 
 import {
-    draftKey,
     draftKeyOf,
-    isSameDraftTarget,
     upsertIntoQueue,
     removeFromQueue,
 } from './draftQueueUtils';
@@ -19,8 +17,9 @@ const QUEUE_KEY = 'cost-app-draft-queue';
 
 /**
  * キャッシュへ書き込む。取得成功時に呼び出す。
+ * モジュール内部専用（`fetchWithCache` が呼ぶ）。外部に公開しない。
  */
-export function setCache(key, data) {
+function setCache(key, data) {
     try {
         localStorage.setItem(CACHE_PREFIX + key, JSON.stringify({ data, cachedAt: new Date().toISOString() }));
     } catch (e) {
@@ -30,23 +29,14 @@ export function setCache(key, data) {
 
 /**
  * キャッシュから読み出す。存在しなければ null。
+ * モジュール内部専用（`fetchWithCache` が呼ぶ）。外部に公開しない。
  */
-export function getCache(key) {
+function getCache(key) {
     try {
         const raw = localStorage.getItem(CACHE_PREFIX + key);
         if (!raw) return null;
         const parsed = JSON.parse(raw);
         return parsed.data;
-    } catch (e) {
-        return null;
-    }
-}
-
-export function getCacheTimestamp(key) {
-    try {
-        const raw = localStorage.getItem(CACHE_PREFIX + key);
-        if (!raw) return null;
-        return JSON.parse(raw).cachedAt || null;
     } catch (e) {
         return null;
     }
@@ -82,8 +72,7 @@ export async function fetchWithCache(key, fetcher) {
 
 // 「現場+日付 が同じか」の判定と、キューへの追加/削除は draftQueueUtils が持ち主。
 // ここは localStorage への読み書き（副作用）だけを担当する。
-// draftKey は既存の import 元を壊さないために再輸出する。
-export { draftKey };
+// 判定関数が要るなら draftQueueUtils から直接 import すること（ここでは再輸出しない）。
 
 /**
  * キューを localStorage から読む。壊れていれば空配列。
@@ -148,10 +137,3 @@ export function removeDraft(projectId, date) {
     return { queue, saved };
 }
 
-export function getDraft(projectId, date) {
-    return getDraftQueue().find(d => isSameDraftTarget(d, projectId, date)) || null;
-}
-
-export function clearDraftQueue() {
-    localStorage.removeItem(QUEUE_KEY);
-}
