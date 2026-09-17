@@ -1,5 +1,16 @@
 // 作業日報システム（WorkerApp）のオフライン対応ユーティリティ。
 // マスタデータのキャッシュと、未送信の日報下書きキューをlocalStorageで管理する。
+//
+// ドラフトキューの「同一性判定」と「積み下ろし」は純粋関数として
+// draftQueueUtils が持っている。このファイルは localStorage への副作用だけを持つ。
+
+import {
+    draftKey,
+    draftKeyOf,
+    isSameDraftTarget,
+    upsertIntoQueue,
+    removeFromQueue,
+} from './draftQueueUtils';
 
 const CACHE_PREFIX = 'cost-app-cache-';
 const QUEUE_KEY = 'cost-app-draft-queue';
@@ -69,10 +80,14 @@ export async function fetchWithCache(key, fetcher) {
 
 // ---------- 未送信ドラフトキュー（現場×日付単位） ----------
 
-function draftKey(projectId, date) {
-    return `${projectId}__${date}`;
-}
+// 「現場+日付 が同じか」の判定と、キューへの追加/削除は draftQueueUtils が持ち主。
+// ここは localStorage への読み書き（副作用）だけを担当する。
+// draftKey は既存の import 元を壊さないために再輸出する。
+export { draftKey };
 
+/**
+ * キューを localStorage から読む。壊れていれば空配列。
+ */
 export function getDraftQueue() {
     try {
         const raw = localStorage.getItem(QUEUE_KEY);
@@ -84,40 +99,57 @@ export function getDraftQueue() {
     }
 }
 
+/**
+ * キューを localStorage に書く。
+ *
+ * ⚠️ ここで例外を外に出してはいけない。
+ * `upsertDraft` は WorkerApp の送信失敗時 catch ブロックの中から呼ばれる。
+ * QuotaExceededError がそのまま伝播すると catch の残り（未送信として保存した旨の
+ * トースト表示）が丸ごと飛ばされ、作業員には「保存された」とも「失敗した」とも
+ * 表示されないまま1日分の入力が消える。
+ *
+ * @returns {boolean} 書き込めたら true
+ */
 function saveDraftQueue(queue) {
-    localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+    try {
+        localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+        return true;
+    } catch (e) {
+        console.error('offlineCache: failed to save draft queue', e);
+        return false;
+    }
 }
 
 /**
  * ドラフトをキューに追加/上書き保存する（同一 現場+日付 は上書き）。
+ *
+ * @returns {{entry: object, saved: boolean}} `saved` が false なら localStorage に
+ *   書けていない（容量超過など）。呼び出し側はユーザーに知らせること。
  */
 export function upsertDraft(draft) {
-    const key = draftKey(draft.selectedProjectId, draft.selectedDate);
-    const queue = getDraftQueue();
-    const idx = queue.findIndex(d => draftKey(d.selectedProjectId, d.selectedDate) === key);
-    const entry = { ...draft, queueKey: key, timestamp: new Date().toISOString() };
-    if (idx >= 0) {
-        queue[idx] = entry;
-    } else {
-        queue.push(entry);
-    }
-    saveDraftQueue(queue);
-    return entry;
+    const entry = {
+        ...draft,
+        queueKey: draftKeyOf(draft),
+        timestamp: new Date().toISOString(),
+    };
+    const saved = saveDraftQueue(upsertIntoQueue(getDraftQueue(), entry));
+    return { entry, saved };
 }
 
 /**
  * 指定した 現場+日付 のドラフトをキューから削除する。
+ *
+ * @returns {{queue: object[], saved: boolean}} `saved` が false なら削除が
+ *   localStorage に反映されていない（次回起動時に復活する）。
  */
 export function removeDraft(projectId, date) {
-    const key = draftKey(projectId, date);
-    const queue = getDraftQueue().filter(d => draftKey(d.selectedProjectId, d.selectedDate) !== key);
-    saveDraftQueue(queue);
-    return queue;
+    const queue = removeFromQueue(getDraftQueue(), projectId, date);
+    const saved = saveDraftQueue(queue);
+    return { queue, saved };
 }
 
 export function getDraft(projectId, date) {
-    const key = draftKey(projectId, date);
-    return getDraftQueue().find(d => draftKey(d.selectedProjectId, d.selectedDate) === key) || null;
+    return getDraftQueue().find(d => isSameDraftTarget(d, projectId, date)) || null;
 }
 
 export function clearDraftQueue() {

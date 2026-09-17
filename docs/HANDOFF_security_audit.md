@@ -1971,23 +1971,178 @@ jsdom に切り替えると既存4ファイルすべてに影響が出るため�
 | `npm run build` | ✅ 10.96s |
 | ESLint | ⛔ 9.1・9.3・9.4と同じ（`eslint.config.*` が無い。§11参照） |
 
-### 9.6 次の一手
+### 9.6 ✅ 未送信ドラフトキューの切り出しと、保存失敗の握り潰しの修正
+
+**着手前の状態**: `src/WorkerApp.jsx` 1754行 / `src/utils/offlineCache.js` 91行。
+
+#### なぜこれを選んだか
+
+§9.3 と同じ基準、**「壊れても気付けない」** ものを優先した。ここは3つ重なっていた。
+
+- **保存失敗が誰にも伝わらない。** `offlineCache.js` の中で `localStorage.setItem` を
+  try/catch していないのは、ドラフトキューの保存だけだった（キャッシュ側4関数は全部囲ってある）。
+  そしてこの保存は、**`WorkerApp` の送信失敗時の `catch` ブロックの中から呼ばれる**。
+- **同じ概念が何箇所にも別々に書かれていた。** 「現場+日付 が同じか」の判定が、
+  文字列連結・`String()` 比較・JSXの `key` と、書き方を変えて散らばっていた。
+- **どちらもテストが1件も無い。** 日報1日分＝作業員の1日の入力が乗っている経路なのに。
+
+#### 実バグ: 容量超過で1日分の入力が黙って消える
+
+`WorkerApp.jsx` の送信処理は、こういう形をしていた。
+
+```js
+try {
+    // ...送信...
+} catch (err) {
+    upsertDraft({ ... });                  // ← localStorage に退避
+    showToast('通信エラーが発生したため、未送信の下書きとして保存しました。', 'warning');
+} finally {
+    setIsSaving(false);
+}
+```
+
+`upsertDraft` の中の `localStorage.setItem` が `QuotaExceededError` を投げると:
+
+1. 例外が `upsertDraft` を素通りして `catch` ブロックの**途中**で飛ぶ
+2. その下の `showToast(...)` が**実行されない**
+3. それでも `finally` は走るので `setIsSaving(false)` だけは実行され、
+   **画面は何事もなかったかのように通常状態に戻る**
+
+結果、作業員には「保存された」とも「失敗した」とも表示されないまま、
+端末にも保存されず、サーバーにも送られていない状態になる。画面を閉じれば1日分が消える。
+**気付く手段が無い**という点で §9.3 の `toMinutes` の `NaN` と同じ質の欠陥。
+
+修正は try/catch で囲んで**握り潰すのではなく**、`saved` の真偽を呼び出し側まで返し、
+失敗時には別文面のトーストを出すようにした。
+
+```js
+} else {
+    // 端末に保存すらできていない。画面を閉じると入力が消えるので強く警告する。
+    showToast('通信エラーが発生し、下書きの保存にも失敗しました。この画面を閉じずに電波の良いところで再送信してください。', 'error');
+}
+```
+
+#### 監査自身の数え間違い: 「4箇所」ではなく**5箇所**だった
+
+着手前の §9.6 には「同一性判定が4箇所」と書いてあった。4箇所を潰し、
+ゲートも両方green になった後、念のため古い綴りが残っていないか grep したところ **1件残っていた**。
+
+```
+src/WorkerApp.jsx:1195
+<div key={`${draft.selectedProjectId}__${draft.selectedDate}`} ...>
+```
+
+JSXの `key` に書かれた**5つ目**の綴りで、監査時に数え漏らしていた。`draftKeyOf(draft)` に置換。
+
+> この文書の §0 にある「**書いた本人の算術を信用せず、着手前に必ず grep で数え直す**」は、
+> **着手後にも1回やること**。今回はそれをやったから見つかった。
+> 「4箇所」と書いた監査メモ自体が間違っていた、という実例。
+
+#### 新しい構成
+
+| ファイル | 行数 | 中身 |
+|---|---|---|
+| `src/utils/draftQueueUtils.ts` | **97**（新規） | 純粋関数のみ。`draftKey` / `draftKeyOf` / `isSameDraftTarget` / `upsertIntoQueue` / `removeFromQueue` / `selectNotifiableDrafts` |
+| `src/utils/draftQueueUtils.test.ts` | **203**（新規） | 33件 |
+| `src/utils/offlineCache.js` | 91 → **157** | localStorage への副作用だけ。判定ロジックは委譲し、`draftKey` は再輸出 |
+| `src/WorkerApp.jsx` | 1754 → **1757** | 5箇所の綴りを置換、保存失敗の分岐を追加 |
+
+`WorkerApp.jsx` が **3行増えている**。重複を5箇所潰した分より、
+足したエラー処理の分岐のほうが大きかった。**行数削減はこの作業の目的ではない**ので、
+減ったように見せず素直に記録しておく。
+
+`offlineCache.js` が66行増えたのも同じ理由で、**大半がコメントとJSDoc**。
+なぜ握り潰してはいけないかを、次に触る人が読めるようコードのそばに書いた。
+
+#### 振る舞いの差
+
+| # | 変更点 | 変更前 | 変更後 | 影響 |
+|---|---|---|---|---|
+| 1 | キュー保存の例外 | `QuotaExceededError` が呼び出し元の `catch` を貫通 | 内部で捕捉し `saved: false` を返す | **送信失敗時のトーストが実際に出るようになった**（本命の修正） |
+| 2 | `upsertDraft` / `removeDraft` の戻り値 | `entry` / `queue` | `{entry, saved}` / `{queue, saved}` | **破壊的変更**。呼び出し側は全て追従済み（外部利用は `WorkerApp.jsx` のみ） |
+| 3 | 同一 現場+日付 の上書き位置 | `[...others, entry]` で**末尾に移動** | `upsertIntoQueue` が**元の位置を保つ** | 未送信一覧の並びが編集のたびに飛ばなくなる |
+| 4 | 下書き破棄の失敗 | 何も出ない | `error` トーストで通知 | 「消したのに次回復活する」が予告される |
+| 5 | 自動保存の失敗 | 何も出ない | **意図的に何も出さない** | 1秒デバウンスなので、鳴らすとトーストが鳴り続ける。送信時の失敗は #1 で必ず拾われる |
+
+#### 設計判断: `draftQueueUtils.ts` を**100%純粋**に保った
+
+§9.5 の `taskOrderUtils.ts` では、テストが `environment: 'node'` に `localStorage` が無いせいで
+`vi.stubGlobal` のスタブを要した。今回は **localStorage を一切 import しない**設計にしたので、
+テストファイルは環境セットアップ**ゼロ行**で最初から通った。
+
+境界は「判定と積み下ろし（純粋）」対「読み書き（副作用）」で引いてある。
+
+**そのコストも書いておく**: 本命の欠陥修正である `saveDraftQueue` の try/catch は
+副作用側の `offlineCache.js` にあり、**ユニットテストで覆われていない**。
+33件のテストが守っているのはキーの同一性とキュー操作であって、**容量超過の挙動ではない**。
+ここを本当に固めるなら `localStorage` を注入可能にする必要があるが、
+今回はそこまで広げなかった。
+
+#### 直さずに記録した制約: 区切り文字は衝突しうる
+
+`draftKey` は `` `${a}__${b}` `` だが、区切りを2文字にしても曖昧さは消えない。
+
+```
+draftKey('1_', '2026-09-17')  ===  draftKey('1', '_2026-09-17')   // どちらも '1___2026-09-17'
+```
+
+固定の区切り文字を選ぶ限り避けられない。実運用では id は数値、日付は `'YYYY-MM-DD'` 固定なので
+衝突しないが、「衝突しない」と誤解されないよう **JSDoc とテストの両方に明示**した
+（§9.3 で `timeOverlapUtils` の日跨ぎ制約をそうしたのと同じ扱い）。
+
+#### ついでに判明: `offlineCache.js` の死んだ公開面
+
+| export | モジュール外の利用箇所 |
+|---|---|
+| `fetchWithCache` | 18 |
+| `getDraftQueue` / `upsertDraft` / `removeDraft` | 各 3 |
+| `setCache` / `getCache` / `getCacheTimestamp` / `getDraft` / `clearDraftQueue` | **0** |
+| `draftKey`（再輸出） | **0** |
+
+`draftKey` の再輸出は「既存の import 元を壊さない」ために足したが、**実際には import 元が無い**。
+残してあるのは §9.3 の `timeOverlapUtils` が `toMinutes` を再輸出したのと揃えるため。
+削除は公開面の整理としてまとめてやるほうがよい（次の一手に送る）。
+
+> ⚠️ **grep の罠**: `grep -rn '\bdraftKey\b' src` は **8件**返すが、
+> これは全て `estimateDraftV2.js` / `estimateDraft.js` が持つ**別物のローカル定義**
+> （見積の下書きキー空間）で、`offlineCache` とは無関係。数えるときは import 元を見ること。
+
+#### ゲート（§9.0 の差し替え後の基準）
+
+| ゲート | 結果 |
+|---|---|
+| `npm test` | ✅ **137件 / 6ファイル**（着手前 104件 / 5ファイル … **+33件**） |
+| `npm run build` | ✅ 11.28s |
+| ESLint | ⛔ `eslint.config.*` がリポジトリに無く、ゲートとして使えない |
+| 古い綴りの残留 grep | ✅ 0件（**修正後に実行して5つ目を発見**） |
+
+ブラウザプレビューでの確認は**していない**。#1 と #4 のトーストは `QuotaExceededError`
+でしか分岐しないため、通常のプレビュー操作では発火させられない。
+
+---
+
+### 9.7 次の一手
 
 行数は動くので**引用前に必ず grep で数え直すこと**。
-現在: `src/WorkerApp.jsx` **1754行**。
+現在: `src/WorkerApp.jsx` **1757行**。
 
 **(a) `WorkerApp.jsx` に残っている純粋ロジック**
 
-モジュールレベルのべた書きは**9.5で無くなった**。残りは `WorkerApp` コンポーネント内部で、
-切り出すなら state / ref への依存を引き剥がす必要がある:
+9.6 で `notifiableDraftQueue` が抜けたので、モジュール内の純粋な塊はほぼ無くなった。
 
 | 箇所 | 内容 | 所感 |
 |---|---|---|
-| `notifiableDraftQueue`（762行目） | 通知対象の下書きの絞り込み | **純粋。次に抜くならここ** |
-| `tasksWithCalculation`（730行目） | 各スロットの労働時間集計 | 純粋だが中身は `calculateWorkHours` への委譲。価値は低め |
-| `reorderTasks`（375行目）/ 端部オートスクロール系 | `setTasks`・`dragRef` に依存 | 純粋ではない。切り出すなら設計判断が要る |
+| `tasksWithCalculation` | 各スロットの労働時間集計 | 純粋だが中身は `calculateWorkHours` への委譲。**価値は低め** |
+| `reorderTasks` / 端部オートスクロール系 | `setTasks`・`dragRef` に依存 | 純粋ではない。切り出すなら設計判断が要る |
 
-**(b) 積み残し（着手していない分割候補）**
+**(b) `offlineCache.js` の公開面の整理**
+
+上表の 0件 exports（`setCache` / `getCache` / `getCacheTimestamp` / `getDraft` /
+`clearDraftQueue` / 再輸出の `draftKey`）。**削除前に必ず grep で再確認**すること。
+`setCache` / `getCache` はモジュール内で `fetchWithCache` が使っているので、
+**export を外すだけで関数自体は残す**のが正しい。
+
+**(c) 積み残し（着手していない分割候補）**
 
 `EstimateEditor.jsx` 1679 / `PurchaseLedgerTab.jsx` 1378 / `useAssignmentState.js` 1290 /
 `SheetPaper.jsx` 1105 / `EstimatePDF.jsx` 969 / `AdminApp.jsx` 889。

@@ -28,6 +28,7 @@ import { PROJECT_STATUS, WORKER_TYPE } from './utils/constants';
 import { syncOvertimeApproval, fetchPendingApprovals, approveOvertime, fetchApprovalReason } from './lib/overtimeApprovals';
 import { syncWorkAllowanceApproval, fetchPendingWorkAllowanceApprovals, approveWorkAllowance } from './lib/workAllowanceApprovals';
 import { fetchWithCache, getDraftQueue, upsertDraft, removeDraft } from './utils/offlineCache';
+import { draftKeyOf, upsertIntoQueue, selectNotifiableDrafts } from './utils/draftQueueUtils';
 import { fetchSystemSettings, DEFAULT_HOURLY_WAGE } from './hooks/useSystemSettings';
 import { summarizeTaskCosts } from './utils/projectUtils';
 import { calculateTimeOverlapWarnings } from './utils/timeOverlapUtils';
@@ -708,7 +709,7 @@ const WorkerApp = () => {
     useEffect(() => {
         if (hasUnsavedChanges && selectedProjectId && tasks.length > 0) {
             const timer = setTimeout(() => {
-                const entry = upsertDraft({
+                const { entry } = upsertDraft({
                     selectedProjectId,
                     selectedDate,
                     tasks,
@@ -716,11 +717,10 @@ const WorkerApp = () => {
                     deletedSubcontractorIds,
                     isAutoSaved: true,
                 });
-                setDraftQueue(prev => {
-                    const key = `${entry.selectedProjectId}__${entry.selectedDate}`;
-                    const others = prev.filter(d => `${d.selectedProjectId}__${d.selectedDate}` !== key);
-                    return [...others, entry];
-                });
+                // 自動保存の失敗（容量超過など）はここでは通知しない。
+                // 1秒ごとに走るのでトーストが鳴り続けてしまう。
+                // 送信時の失敗は下の catch で必ず通知される。
+                setDraftQueue(prev => upsertIntoQueue(prev, entry));
             }, 1000);
             return () => clearTimeout(timer);
         }
@@ -759,12 +759,10 @@ const WorkerApp = () => {
     // 現在編集中の 現場+日付 のドラフトは「入力中の自動保存」であり、
     // ユーザーが今まさに見ている内容そのものなので通知不要。
     // 通信エラーで保存された下書き、または他の現場/日付の未送信下書きのみを通知対象とする。
-    const notifiableDraftQueue = useMemo(() => {
-        return draftQueue.filter(d => {
-            const isCurrent = String(d.selectedProjectId) === String(selectedProjectId) && d.selectedDate === selectedDate;
-            return !d.isAutoSaved || !isCurrent;
-        });
-    }, [draftQueue, selectedProjectId, selectedDate]);
+    const notifiableDraftQueue = useMemo(
+        () => selectNotifiableDrafts(draftQueue, selectedProjectId, selectedDate),
+        [draftQueue, selectedProjectId, selectedDate]
+    );
 
     // ========== ドラフト（オフライン下書き）操作 ==========
     const handleRestoreDraft = async (draft) => {
@@ -791,8 +789,11 @@ const WorkerApp = () => {
             confirmText: '破棄する',
         });
         if (!ok) return;
-        const remaining = removeDraft(draft.selectedProjectId, draft.selectedDate);
-        setDraftQueue(remaining);
+        const { queue, saved } = removeDraft(draft.selectedProjectId, draft.selectedDate);
+        setDraftQueue(queue);
+        if (!saved) {
+            showToast('下書きの破棄を保存できませんでした。次回起動時に復活する可能性があります。', 'error');
+        }
     };
 
     // ========== 入力済み現場レコードの削除 ==========
@@ -1005,7 +1006,8 @@ const WorkerApp = () => {
                 showToast('保存しましたが、一覧の更新に失敗しました。再読み込みしてください。', 'warning');
             }
 
-            setDraftQueue(removeDraft(selectedProjectId, selectedDate));
+            // 送信は成功しているので、下書きの掃除に失敗しても送信自体はエラーにしない。
+            setDraftQueue(removeDraft(selectedProjectId, selectedDate).queue);
             setHasUnsavedChanges(false);
 
             setSaveMessage('日報を送信しました！お疲れ様です。');
@@ -1013,19 +1015,20 @@ const WorkerApp = () => {
         } catch (error) {
             console.error('Submit error:', error);
             if (!navigator.onLine || error.message?.includes('fetch') || error.message?.includes('Network')) {
-                const entry = upsertDraft({
+                const { entry, saved } = upsertDraft({
                     selectedProjectId,
                     selectedDate,
                     tasks,
                     subcontractors,
                     deletedSubcontractorIds,
                 });
-                setDraftQueue(prev => {
-                    const key = `${entry.selectedProjectId}__${entry.selectedDate}`;
-                    const others = prev.filter(d => `${d.selectedProjectId}__${d.selectedDate}` !== key);
-                    return [...others, entry];
-                });
-                showToast('通信エラーが発生したため、未送信の下書きとして保存しました。', 'warning');
+                setDraftQueue(prev => upsertIntoQueue(prev, entry));
+                if (saved) {
+                    showToast('通信エラーが発生したため、未送信の下書きとして保存しました。', 'warning');
+                } else {
+                    // 端末に保存すらできていない。画面を閉じると入力が消えるので強く警告する。
+                    showToast('通信エラーが発生し、下書きの保存にも失敗しました。この画面を閉じずに電波の良いところで再送信してください。', 'error');
+                }
             } else {
                 showToast('保存に失敗しました。電波の良いところで再度お試しください。', 'error');
             }
@@ -1189,7 +1192,7 @@ const WorkerApp = () => {
                             {notifiableDraftQueue.map((draft) => {
                                 const projectName = projects.find(p => String(p.id) === String(draft.selectedProjectId))?.name || '（現場名不明）';
                                 return (
-                                    <div key={`${draft.selectedProjectId}__${draft.selectedDate}`} className="bg-white/60 rounded-lg p-2">
+                                    <div key={draftKeyOf(draft)} className="bg-white/60 rounded-lg p-2">
                                         <p className="text-xs text-orange-600 mb-2 font-medium">
                                             {projectName}（{draft.selectedDate}）<br />
                                             {draft.isAutoSaved ?
