@@ -2248,6 +2248,36 @@ src/WorkerApp.jsx:30                 import { fetchWithCache, getDraftQueue, ups
 0件 export が残っている可能性がある。ただし**やるなら §9.8 と同じ手順を守ること**——
 「0件だから消す」ではなく、**モジュール内部の利用を先に確認**してから
 「削除」と「`export` を外すだけ」を振り分ける。
+
+### 9.10 ✅ `src/utils/` 全体の未使用export棚卸し（`33e5461`）
+
+§9.9(c) の宿題を消化。`src/utils/` 配下の全モジュールの export を、
+§9.8 と同じ手順（①外部利用をgrep → ②0件なら内部利用をgrep → ③3分類）で棚卸しした。
+
+**判定結果（4件）:**
+
+| ファイル | 対象 | 外部利用 | 内部利用 | 判定 |
+|---|---|---|---|---|
+| `excelImportUtils.js` | `parseExcelForImport` | 0件 | 0件 | **完全削除** |
+| `constants.js` | `ESTIMATE_STATUS_LIST` | 0件 | 0件 | **完全削除** |
+| `stampStorage.js` | `stampPathFromValue` | 0件 | 1件（`getStampSignedUrl`内） | **`export`のみ除去** |
+| `excelExportUtils.js` | `buildWorkAllowanceLines` | 0件 | 1件（566行目） | **`export`のみ除去** |
+
+同ファイル内の他のexport（`parseExcelForEstimate` / `ESTIMATE_STATUS` /
+`ESTIMATE_STATUS_LABEL` / `getStampSignedUrl` / `uploadStamp` / `exportToExcel` /
+`generateWorkerReportExcel` / `generateMultipleWorkersReportExcel`）は
+外部利用ありのため対象外・変更なし。
+
+**ゲート結果:**
+- `npm test -- --run` → 変更前後とも **137 passed / 6 files**（回帰なし）
+- `npm run build` → 成功（1971 modules transformed, 18.09s）
+- 削除2件（`ESTIMATE_STATUS_LIST` / `parseExcelForImport`）: `src/` 全体で0件を確認
+- `export`除去2件: `export const stampPathFromValue` / `export const buildWorkAllowanceLines`
+  は0件、素の識別子（宣言＋内部呼び出し）は残存を確認
+
+`src/utils/` の未使用export棚卸しはこれで完了。他ディレクトリ（`hooks/` `components/` 等）
+への横展開は次の一手としてやり残し。
+
 ---
 
 ## 10. ⭐ 全フェーズ完了後に必ずやること
