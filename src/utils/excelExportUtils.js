@@ -7,7 +7,7 @@ import * as fflate from 'fflate';
  * 作業手当の対象作業（work_allowance=true）を作業項目ごとに集計し、
  * 「作業名 実働h」形式の行を返す。承認待ちの現場が含まれる場合は「（未承認）」を付与する。
  */
-export const buildWorkAllowanceLines = (dayRecords, date, workAllowanceApprovals = []) => {
+const buildWorkAllowanceLines = (dayRecords, date, workAllowanceApprovals = []) => {
     const taskMap = {};
     (dayRecords || []).forEach(r => {
         if (!r.work_allowance) return;

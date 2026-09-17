@@ -68,16 +68,6 @@ export const ESTIMATE_STATUS_LABEL = {
     [ESTIMATE_STATUS.ORDERED]:   '受注',
     [ESTIMATE_STATUS.LOST]:      '失注',
 };
-export const ESTIMATE_STATUS_LIST = [
-    ESTIMATE_STATUS.DRAFT,
-    ESTIMATE_STATUS.PENDING,
-    ESTIMATE_STATUS.APPROVED,
-    ESTIMATE_STATUS.RETURNED,
-    ESTIMATE_STATUS.SUBMITTED,
-    ESTIMATE_STATUS.ORDERED,
-    ESTIMATE_STATUS.LOST,
-];
-
 // === 担当者ロール（office_staff.role、DBのCHECK制約と一致させること） ===
 export const STAFF_ROLE = {
     ADMIN: 'admin',

@@ -9,7 +9,7 @@ const SIGNED_URL_EXPIRES_IN = 3600; // 1時間（PDF生成・プレビュー表�
 
 // DBにはバケット内パスを保存する。ただし private 化以前のデータは
 // 公開URL（.../object/public/stamps/xxx.png）のまま残っているため、両形式からパスを取り出す
-export const stampPathFromValue = (value) => {
+const stampPathFromValue = (value) => {
   if (!value) return null;
   const match = value.match(/\/stamps\/(.+)$/);
   return match ? decodeURIComponent(match[1]) : value;
