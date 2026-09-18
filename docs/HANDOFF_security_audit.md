@@ -2405,6 +2405,57 @@ grep→③3分類）で全47ファイルを棚卸しした。
 §9.9(b)の大きいファイル分割候補（`EstimateEditor.jsx`等）に着手するかはユーザーに
 確認すること。
 
+ユーザーが選択肢A（棚卸しの横展開継続）を選択。残る`src/`直下のエントリは
+`src/img`（SVG等の静的アセット、コードではないため対象外）と`src/types/`のみ。
+
+### 9.14 ✅ `src/types/index.ts` の削除（ファイル全体が未使用）
+
+`src/types/`には`index.ts`と`supabase.ts`の2ファイルがある。`supabase.ts`は
+自動生成ファイルであり§9.9(b)の時点で既に対象外と明記済み。残る`index.ts`を
+対象に棚卸しした。
+
+`index.ts`は7件のTypeScript `interface`（`WorkerCertification` / `Worker` /
+`Project` / `Assignment` / `TaskRecord` / `CompanyHoliday` / `ProjectSuspension`）
+のみを定義する型定義ファイルで、実装コードを含まない。これまでの棚卸し対象
+（値レベルのexport）と違い型レベルのexportなので、通常の呼び出し箇所grepでは
+なく型参照・import箇所のgrepで判定する必要がある。また`Worker`/`Project`/
+`Assignment`のような一般的な名前はDBテーブル名（`Workers`/`Projects`）やJSXの
+ローカル変数・コンポーネント名と衝突するため、識別子単体のgrep結果だけでは
+判定材料として弱い。
+
+**判定手順:**
+1. 7つの型名それぞれを`src/`全体（`src/types/`内の2ファイルを除く）でgrep → 全て0件
+2. 上記だけでは一般名の衝突リスクがあるため、ファイル自体のimport箇所を
+   `types/index` / `from '../types'` / `from './types'` / `@/types`で追加grep → 0件
+3. `tsconfig.json`に`paths`エイリアス設定がないことを確認 → 該当なし、
+   隠れたエイリアスimportの可能性を排除
+4. `git log --oneline -- src/types/index.ts` → `65605d9`
+   （「巨大コンポーネントのリファクタリング、TypeScript移行〜」統合コミット）
+   の1回のみ。作成後一度も更新も参照もされていない
+
+CLAUDE.mdのファイル構成表には`types/index.ts # 共通型定義（TypeScript段階移行中）`
+と記載があり、意図的な移行途中のプレースホルダーである可能性も検討したが、
+「ファイルそのものがどこからもimportされていない」という事実は変わらないため、
+ユーザーに判断を仰いだ。**ユーザー判断: ファイルごと削除**（必要になれば
+将来書き直せばよい）。
+
+**対応:** `src/types/index.ts` を削除（`git rm`ではなく`rm`、未commit）。
+
+**ゲート結果:**
+- `npm test` → **137 passed / 6 files**（回帰なし）
+- `npm run build` → 成功（1969 modules transformed, 15.61s）
+- 削除後、7つの型名で`src/`全体を再grep → 0件（`src/types/supabase.ts`にも
+  影響なし。同ファイルは`index.ts`を参照していない）
+- `git status` → `D src/types/index.ts`のみ（他の未追跡ファイルはこの監査と無関係）
+
+これで`src/`配下のコード全体（`utils` / `hooks` / `components` / `src`直下 /
+`estimate-editor` / `features` / `lib` / `types`）の未使用export棚卸しが完了。
+残る`src/img`は非コード資産のため対象外。**次の一手はユーザーに確認**：
+§9.9(b)の大きいファイル分割候補（`EstimateEditor.jsx` 1679行 /
+`PurchaseLedgerTab.jsx` 1378行 / `useAssignmentState.js` 1290行 /
+`SheetPaper.jsx` 1105行 / `EstimatePDF.jsx` 969行 / `AdminApp.jsx` 889行）
+に着手するか、他の作業に切り替えるか。
+
 ---
 
 ## 10. ⭐ 全フェーズ完了後に必ずやること
