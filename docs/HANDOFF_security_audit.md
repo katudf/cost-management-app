@@ -2278,7 +2278,7 @@ src/WorkerApp.jsx:30                 import { fetchWithCache, getDraftQueue, ups
 `src/utils/` の未使用export棚卸しはこれで完了。他ディレクトリ（`hooks/` `components/` 等）
 への横展開は次の一手としてやり残し。
 
-### 9.11 ✅ `src/hooks/` 全体の未使用export棚卸し（`<commit-hash>`）
+### 9.11 ✅ `src/hooks/` 全体の未使用export棚卸し（`5f1e9cc`）
 
 §9.10 の「次の一手」を消化。`src/hooks/` 配下の全18ファイルの export を、
 §9.8/§9.10 と同じ手順（①外部利用をgrep → ②0件なら内部利用をgrep → ③3分類）で棚卸しした。
