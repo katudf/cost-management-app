@@ -2456,6 +2456,50 @@ CLAUDE.mdのファイル構成表には`types/index.ts # 共通型定義（TypeS
 `SheetPaper.jsx` 1105行 / `EstimatePDF.jsx` 969行 / `AdminApp.jsx` 889行）
 に着手するか、他の作業に切り替えるか。
 
+**ユーザー判断: §9.9(b)の大きいファイル分割へ進む。** `EstimateEditor.jsx`から着手。
+
+### 9.15 ✅ `EstimateEditor.jsx`内の小計行注入ロジックの重複解消
+
+§9.9(b)を受けて`EstimateEditor.jsx`（1679行）を調査。§9.2の選定基準
+（行数ではなく「同じ計算が複数箇所に書かれていないか」／§9.3と同じ
+「純粋・無テスト・条件分岐が密・壊れても静かに失敗しユーザーに直撃する」基準）
+で見ると、ファイル内に**ほぼ同一の小計行注入ロジックが2箇所**にべた書きされていた。
+
+**重複の内容:** 工種（`ITEM_TYPE.CATEGORY`）行が現れるたびに、直前の工種の
+明細（`ITEM_TYPE.ITEM`）金額を合算した「合　計」行（`ITEM_TYPE.SUBTOTAL`）を
+カテゴリの境目に挿入するループ。
+- 1箇所目: PDFプレビュー構築（`buildPreviewEstimate`内`buildSheetItems`）—
+  生成する小計行に`sort_order`を付与
+- 2箇所目: 保存ペイロード構築（`handleSave`内）— 生成する小計行に`sheet_id`を付与
+
+2箇所は付加フィールド（`sort_order` vs `sheet_id`）以外ほぼ同一で、
+§9.1（原価計算3重実装）と同じ種類の「同じ計算が複数箇所」欠陥。かつ
+どちらも無テストの純粋ロジックで、プレビューと保存で挙動がズレても
+気付きにくい（§9.3と同じ危険性）ため、分割候補として選定した。
+
+**対応:** `src/estimate-editor/estimateCalc.js`（見積エディタの計算・
+リンクエンジン、`computeEstimateCalc`/`wouldCreateCycle`と同居）に
+`injectCategorySubtotals(items, extraFields)`として一本化。`extraFields(index)`
+コールバックで呼び出し側ごとの付加フィールド（`sort_order`／`sheet_id`）を
+注入できるようにし、フラグ分岐ではなく関数合成で差分を表現した。
+`EstimateEditor.jsx`側の2箇所を両方この関数呼び出しに置き換え。
+
+**ゲート結果:**
+- 新規テスト`src/estimate-editor/estimateCalc.test.js`（6件、§9.3の
+  `timeOverlapUtils.test.ts`のスタイルに準拠）: カテゴリ境目ごとの挿入、
+  先頭にカテゴリ行が無い場合、空配列、`amount`が空文字/null/undefinedでも
+  NaNを伝播させないこと、`extraFields`での`sort_order`/`sheet_id`付与を検証
+- `npm test` → **143 passed / 7 files**（回帰なし、新規6件を含む）
+- `npm run build` → 成功（1969 modules transformed, 15.68s）
+- 旧インライン変数名`withSubtotals`の残存: `EstimateEditor.jsx`内で0件を確認
+- `injectCategorySubtotals`の参照箇所: `estimateCalc.js`（定義）・
+  `estimateCalc.test.js`（テスト）・`EstimateEditor.jsx`（2箇所の呼び出し）の
+  3ファイルのみであることを確認
+
+`EstimateEditor.jsx`は他にも分割候補（残り約1650行）が残っている。
+次に着手する場合も**行数ではなく同じ基準（重複・無テスト・密な条件分岐・
+静かに失敗する箇所）で対象を選ぶこと**。
+
 ---
 
 ## 10. ⭐ 全フェーズ完了後に必ずやること

@@ -56,7 +56,7 @@ import PageNav from './PageNav';
 import CoverPaper from './CoverPaper';
 import SheetPaper, { calcSheetPageCount } from './SheetPaper';
 import SettingsPanel from './SettingsPanel';
-import { computeEstimateCalc, wouldCreateCycle } from './estimateCalc';
+import { computeEstimateCalc, wouldCreateCycle, injectCategorySubtotals } from './estimateCalc';
 
 // 今日の日付を YYMMDD 形式で返す
 const todayPrefix = () => {
@@ -964,25 +964,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
 
       if (!header.show_subtotals) return sheetItems;
 
-      const withSubtotals = [];
-      let currentCatKey = null;
-      let catAmount = 0;
-      sheetItems.forEach((item, idx) => {
-        if (item.item_type === ITEM_TYPE.CATEGORY) {
-          if (currentCatKey !== null) {
-            withSubtotals.push({ item_type: ITEM_TYPE.SUBTOTAL, name: '合　計', amount: catAmount, sort_order: withSubtotals.length });
-          }
-          currentCatKey = item.id || idx;
-          catAmount = 0;
-        } else if (item.item_type === ITEM_TYPE.ITEM) {
-          catAmount += Number(item.amount) || 0;
-        }
-        withSubtotals.push(item);
-      });
-      if (currentCatKey !== null) {
-        withSubtotals.push({ item_type: ITEM_TYPE.SUBTOTAL, name: '合　計', amount: catAmount, sort_order: withSubtotals.length });
-      }
-      return withSubtotals;
+      return injectCategorySubtotals(sheetItems, (sortOrder) => ({ sort_order: sortOrder }));
     };
 
     const pdfSheets = sheets.map((sheet) => ({
@@ -1094,25 +1076,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
           });
 
         if (header.show_subtotals) {
-          const withSubtotals = [];
-          let currentCatKey = null;
-          let catAmount = 0;
-          sheetItems.forEach((item, idx) => {
-            if (item.item_type === ITEM_TYPE.CATEGORY) {
-              if (currentCatKey !== null) {
-                withSubtotals.push({ sheet_id: sheet.id, item_type: ITEM_TYPE.SUBTOTAL, name: '合　計', amount: catAmount });
-              }
-              currentCatKey = item.id || idx;
-              catAmount = 0;
-            } else if (item.item_type === ITEM_TYPE.ITEM) {
-              catAmount += Number(item.amount) || 0;
-            }
-            withSubtotals.push(item);
-          });
-          if (currentCatKey !== null) {
-            withSubtotals.push({ sheet_id: sheet.id, item_type: ITEM_TYPE.SUBTOTAL, name: '合　計', amount: catAmount });
-          }
-          sheetItems = withSubtotals;
+          sheetItems = injectCategorySubtotals(sheetItems, () => ({ sheet_id: sheet.id }));
         }
 
         savingItems.push(...sheetItems);

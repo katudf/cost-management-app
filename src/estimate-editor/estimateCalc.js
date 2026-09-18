@@ -343,3 +343,49 @@ export const wouldCreateCycle = (sheets, items, row, kind, targetRef) => {
 
   return dfs(startNode);
 };
+
+// ============================================================
+// injectCategorySubtotals(items, extraFields) → 小計行を注入した明細配列
+// ============================================================
+// 工種（ITEM_TYPE.CATEGORY）行が現れるたびに、直前の工種の明細
+// （ITEM_TYPE.ITEM）金額を合算した「合　計」行（ITEM_TYPE.SUBTOTAL）を
+// カテゴリの境目に挿入する。PDFプレビュー（明細書No.単位）と保存ペイロード
+// （シート単位）の双方で同一のアルゴリズムが必要なため、ここに集約する。
+//
+// extraFields(index) … 生成する SUBTOTAL 行に追加するフィールドを返す関数。
+//   呼び出し側の用途に応じて sort_order（プレビュー）や sheet_id（保存）を
+//   付与できるようにするための拡張ポイント。省略時は追加フィールドなし。
+export const injectCategorySubtotals = (items, extraFields = () => ({})) => {
+  const withSubtotals = [];
+  let currentCatKey = null;
+  let catAmount = 0;
+
+  items.forEach((item, idx) => {
+    if (item.item_type === ITEM_TYPE.CATEGORY) {
+      if (currentCatKey !== null) {
+        withSubtotals.push({
+          item_type: ITEM_TYPE.SUBTOTAL,
+          name: '合　計',
+          amount: catAmount,
+          ...extraFields(withSubtotals.length),
+        });
+      }
+      currentCatKey = item.id || idx;
+      catAmount = 0;
+    } else if (item.item_type === ITEM_TYPE.ITEM) {
+      catAmount += toNum(item.amount);
+    }
+    withSubtotals.push(item);
+  });
+
+  if (currentCatKey !== null) {
+    withSubtotals.push({
+      item_type: ITEM_TYPE.SUBTOTAL,
+      name: '合　計',
+      amount: catAmount,
+      ...extraFields(withSubtotals.length),
+    });
+  }
+
+  return withSubtotals;
+};
