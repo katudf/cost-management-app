@@ -330,4 +330,3 @@ ${exampleTag ? `- ${FIELD_LABELS.tags}: ${exampleTag}` : ''}
 `;
 };
 
-export { FIELD_LABELS };

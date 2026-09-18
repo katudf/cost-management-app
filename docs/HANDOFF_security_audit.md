@@ -2361,6 +2361,52 @@ grep→③3分類）で全47ファイルを棚卸しした。
 
 ---
 
+### 9.13 ✅ `src/`直下・`src/estimate-editor/`・`src/features/`・`src/lib/`の未使用export棚卸し（`<commit_hash>`）
+
+§9.12の結果を受けてユーザーに確認したところ、他ディレクトリへの横展開が承認された。
+§9.8/§9.10/§9.11/§9.12と同じ手順（①外部利用をgrep→②0件なら内部利用をgrep→
+③3分類）で、`src/`直下の各ファイル・`src/estimate-editor/`・`src/features/`・
+`src/lib/`配下の全named exportを棚卸しした。
+
+**判定結果（3ファイルで計11件）:**
+
+| ファイル | 対象 | 外部利用 | 内部利用 | 判定 |
+|---|---|---|---|---|
+| `src/features/paint/supabasePaint.js` | `saveCoatingSystemVariants` | 0件 | 0件 | **完全削除** |
+| `src/features/paint/supabasePaint.js` | `createPaintStandard` | 0件 | 0件 | **完全削除** |
+| `src/features/paint/supabasePaint.js` | `updatePaintStandard` | 0件 | 0件 | **完全削除** |
+| `src/features/paint/supabasePaint.js` | `deletePaintStandard` | 0件 | 0件 | **完全削除** |
+| `src/features/paint/supabasePaint.js` | `createPaintAbbreviation` | 0件 | 0件 | **完全削除** |
+| `src/features/paint/supabasePaint.js` | `updatePaintAbbreviation` | 0件 | 0件 | **完全削除** |
+| `src/features/paint/supabasePaint.js` | `deletePaintAbbreviation` | 0件 | 0件 | **完全削除** |
+| `src/features/paint/supabasePaint.js` | `saveCoatingSystemAbbreviations` | 0件 | 0件 | **完全削除** |
+| `src/features/paint/supabasePaint.js` | `fetchCoatingSystemsByProduct` | 0件 | 0件 | **完全削除** |
+| `src/estimate-editor/estimateDraftV2.js` | `clearLastSavedSnapshot` | 0件 | 1件（`loadLastSavedSnapshot`内） | **`export`のみ除去** |
+| `src/features/paint/paintImportFormat.js` | `FIELD_LABELS`（標準の`export { FIELD_LABELS }`宣言） | 0件 | 多数（ファイル内で広く参照） | **`export`のみ除去** |
+
+`src/`直下の他ファイル、`src/estimate-editor/`の他の全export（`saveEstimateDraft` /
+`loadEstimateDraft` / `clearEstimateDraft` / `formatDraftAge` / `saveLastSavedSnapshot` /
+`loadLastSavedSnapshot` 等）、`src/features/`配下の他の全export（`supabaseEstimates.js`の
+27件全てを含む）、`src/lib/`配下の全exportは、いずれも外部利用ありのため
+対象外・変更なし。
+
+**ゲート結果:**
+- `npm test -- --run` → 変更前後とも **137 passed / 6 files**（回帰なし）
+- `npm run build` → 成功（チャンクサイズ警告のみ、本棚卸しと無関係の既存warning）
+- 完全削除9件（`supabasePaint.js`の各関数）: 削除後、識別子9件すべてが
+  `src/`全体で0件であることを確認済み
+- `export`除去2件（`clearLastSavedSnapshot` / `FIELD_LABELS`）:
+  いずれも定義ファイル以外の`src/`全体で0件を確認。素の識別子（宣言＋内部利用）は
+  各ファイル内に残存していることを確認済み
+
+これで§9.8/§9.10/§9.11/§9.12/§9.13により、`src/utils/` / `src/hooks/` /
+`src/components/` / `src/`直下 / `src/estimate-editor/` / `src/features/` /
+`src/lib/`の未使用export棚卸しが完了した。残るディレクトリへさらに横展開するか、
+§9.9(b)の大きいファイル分割候補（`EstimateEditor.jsx`等）に着手するかはユーザーに
+確認すること。
+
+---
+
 ## 10. ⭐ 全フェーズ完了後に必ずやること
 
 > ユーザー指示（原文）:

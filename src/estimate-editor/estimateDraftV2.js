@@ -138,7 +138,7 @@ export const loadLastSavedSnapshot = (estimateId) => {
 };
 
 // 保存済みIDが確定した直後（新規作成時など）にキーを付け替えるためのヘルパー
-export const clearLastSavedSnapshot = (estimateId) => {
+const clearLastSavedSnapshot = (estimateId) => {
   try {
     localStorage.removeItem(lastSavedKey(estimateId));
   } catch {
