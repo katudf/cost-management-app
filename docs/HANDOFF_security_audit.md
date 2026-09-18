@@ -2316,6 +2316,51 @@ src/WorkerApp.jsx:30                 import { fetchWithCache, getDraftQueue, ups
 
 ---
 
+### 9.12 ✅ `src/components/` 全体の未使用export棚卸し（変更なし）
+
+§9.11の結果を受けてユーザーに確認したところ、`src/components/`への横展開が
+承認された。§9.8/§9.10/§9.11と同じ手順（①外部利用をgrep→②0件なら内部利用を
+grep→③3分類）で全47ファイルを棚卸しした。
+
+まず `export default ComponentName`（またはその `React.memo` ラップ）はコンポーネント
+本体そのものであり、本棚卸しの対象外（未使用ならファイル自体が丸ごとデッドコードという
+別種の問題になる）と整理した。対象は named export（`export const` / `export function` /
+`export class` 等）のみ。
+
+`grep -nE '^export '` から `export default` 行を除外して抽出した結果、named export は
+以下の5件のみだった：
+
+| ファイル | 対象 |
+|---|---|
+| `ConfirmProvider.jsx` | `ConfirmProvider` |
+| `ConfirmProvider.jsx` | `useConfirm` |
+| `ErrorBoundary.jsx` | `ErrorBoundary` |
+| `Toast.jsx` | `ToastProvider` |
+| `Toast.jsx` | `useToast` |
+
+**外部利用（定義ファイル以外の `src/` 全体）:**
+
+| 対象 | 外部利用 | 判定 |
+|---|---|---|
+| `ConfirmProvider` | 9件（`main.jsx` 等） | 対象外・変更なし |
+| `useConfirm` | 6ファイルで利用（`WorkerApp.jsx` / `useInventory.js` / `useProjects.js` / `useWorkers.js` 等） | 対象外・変更なし |
+| `ErrorBoundary` | `App.jsx` で4箇所利用 | 対象外・変更なし |
+| `ToastProvider` | `main.jsx` で利用 | 対象外・変更なし |
+| `useToast` | 20ファイル以上で利用 | 対象外・変更なし |
+
+5件とも外部利用が多数あり、**変更対象は0件**（§9.8/§9.10/§9.11と異なり、今回は
+削除も`export`除去も発生しなかった）。CLAUDE.mdが`useConfirm()`/`useToast()`の
+利用を全体ルールとして強制しているため、広く使われているのは想定通り。
+
+コード変更がないため `npm test` / `npm run build` のゲートは実施不要（判定のみで
+差分ゼロ）。コミットも発生しない。
+
+`src/components/` の未使用export棚卸しはこれで完了（変更なし）。次にさらに他ディレクトリへ
+横展開するか、§9.9(b)の大きいファイル分割候補（`EstimateEditor.jsx`等）に着手するかは
+ユーザーに確認すること。
+
+---
+
 ## 10. ⭐ 全フェーズ完了後に必ずやること
 
 > ユーザー指示（原文）:
