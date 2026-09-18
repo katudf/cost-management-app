@@ -2361,7 +2361,7 @@ grep→③3分類）で全47ファイルを棚卸しした。
 
 ---
 
-### 9.13 ✅ `src/`直下・`src/estimate-editor/`・`src/features/`・`src/lib/`の未使用export棚卸し（`<commit_hash>`）
+### 9.13 ✅ `src/`直下・`src/estimate-editor/`・`src/features/`・`src/lib/`の未使用export棚卸し（`d5aa1da`）
 
 §9.12の結果を受けてユーザーに確認したところ、他ディレクトリへの横展開が承認された。
 §9.8/§9.10/§9.11/§9.12と同じ手順（①外部利用をgrep→②0件なら内部利用をgrep→
