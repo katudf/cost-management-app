@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { injectCategorySubtotals } from './estimateCalc';
+import { injectCategorySubtotals, computeAutoAmount } from './estimateCalc';
 import { ITEM_TYPE } from '../utils/constants';
 
 // EstimateEditor.jsx のプレビュー構築（sort_order 付与）と保存ペイロード構築
@@ -72,5 +72,40 @@ describe('injectCategorySubtotals', () => {
         const subtotal = result[result.length - 1];
         expect(subtotal.sheet_id).toBe('sheet-A');
         expect(subtotal.sort_order).toBeUndefined();
+    });
+});
+
+// SheetPaper のセル編集（withAutoAmount）と TSV貼り付け（pasteTsv）の双方で
+// 「数量×単価→amount」の計算がべた書きされ重複していた。ここに一本化する。
+describe('computeAutoAmount', () => {
+    it('数量と単価が両方あれば amount = 数量×単価 を返す', () => {
+        const result = computeAutoAmount({ quantity: 3, unit_price: 500 });
+        expect(result.amount).toBe(1500);
+    });
+
+    it('数量が空文字なら amount は据え置き（手入力を尊重）', () => {
+        const result = computeAutoAmount({ quantity: '', unit_price: 500, amount: 999 });
+        expect(result.amount).toBe(999);
+    });
+
+    it('単価が空文字なら amount は据え置き', () => {
+        const result = computeAutoAmount({ quantity: 3, unit_price: '', amount: 999 });
+        expect(result.amount).toBe(999);
+    });
+
+    it('数量・単価が null/undefined なら amount は据え置き', () => {
+        expect(computeAutoAmount({ quantity: null, unit_price: 500, amount: 999 }).amount).toBe(999);
+        expect(computeAutoAmount({ quantity: 3, unit_price: undefined, amount: 999 }).amount).toBe(999);
+    });
+
+    it('数値変換できない文字列なら amount は据え置き（NaN を伝播させない）', () => {
+        const result = computeAutoAmount({ quantity: 'abc', unit_price: 500, amount: 999 });
+        expect(result.amount).toBe(999);
+    });
+
+    it('他のフィールドは変更せず保持する', () => {
+        const result = computeAutoAmount({ quantity: 2, unit_price: 100, name: '材料A' });
+        expect(result.name).toBe('材料A');
+        expect(result.amount).toBe(200);
     });
 });

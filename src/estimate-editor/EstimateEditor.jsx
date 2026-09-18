@@ -56,7 +56,7 @@ import PageNav from './PageNav';
 import CoverPaper from './CoverPaper';
 import SheetPaper, { calcSheetPageCount } from './SheetPaper';
 import SettingsPanel from './SettingsPanel';
-import { computeEstimateCalc, wouldCreateCycle, injectCategorySubtotals } from './estimateCalc';
+import { computeEstimateCalc, wouldCreateCycle, injectCategorySubtotals, computeAutoAmount } from './estimateCalc';
 
 // 今日の日付を YYMMDD 形式で返す
 const todayPrefix = () => {
@@ -634,14 +634,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   // 金額の自動計算（数量×単価。どちらか空なら amount は据え置き＝手入力を尊重）
   const withAutoAmount = useCallback((row, field, value) => {
     if (field !== 'quantity' && field !== 'unit_price') return { ...row, [field]: value };
-    const next = { ...row, [field]: value };
-    const q = Number(next.quantity);
-    const p = Number(next.unit_price);
-    if (next.quantity !== '' && next.quantity != null && next.unit_price !== '' && next.unit_price != null
-        && !Number.isNaN(q) && !Number.isNaN(p)) {
-      next.amount = q * p;
-    }
-    return next;
+    return computeAutoAmount({ ...row, [field]: value });
   }, []);
 
   // セル値の更新（1フィールド）
@@ -762,14 +755,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
           }
           next[col] = v;
         });
-        // 数量×単価を再計算
-        const q = Number(next.quantity);
-        const p = Number(next.unit_price);
-        if (next.quantity !== '' && next.quantity != null && next.unit_price !== '' && next.unit_price != null
-            && !Number.isNaN(q) && !Number.isNaN(p)) {
-          next.amount = q * p;
-        }
-        return next;
+        return computeAutoAmount(next);
       };
 
       const result = [...prev];

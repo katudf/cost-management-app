@@ -355,6 +355,23 @@ export const wouldCreateCycle = (sheets, items, row, kind, targetRef) => {
 // extraFields(index) … 生成する SUBTOTAL 行に追加するフィールドを返す関数。
 //   呼び出し側の用途に応じて sort_order（プレビュー）や sheet_id（保存）を
 //   付与できるようにするための拡張ポイント。省略時は追加フィールドなし。
+// ============================================================
+// computeAutoAmount(row) → amount を数量×単価で補完した行
+// ============================================================
+// quantity/unit_price が両方とも入力済み（空文字/null/undefinedでなく数値変換可能）
+// なら amount = quantity × unit_price を返す。どちらか未入力なら amount は
+// 据え置き＝手入力を尊重する。SheetPaper のセル編集（updateItem）と
+// TSV貼り付け（pasteTsv）の双方で同一の計算が必要なため、ここに集約する。
+export const computeAutoAmount = (row) => {
+  const q = Number(row.quantity);
+  const p = Number(row.unit_price);
+  if (row.quantity !== '' && row.quantity != null && row.unit_price !== '' && row.unit_price != null
+      && !Number.isNaN(q) && !Number.isNaN(p)) {
+    return { ...row, amount: q * p };
+  }
+  return row;
+};
+
 export const injectCategorySubtotals = (items, extraFields = () => ({})) => {
   const withSubtotals = [];
   let currentCatKey = null;

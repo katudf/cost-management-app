@@ -2502,6 +2502,43 @@ CLAUDE.mdのファイル構成表には`types/index.ts # 共通型定義（TypeS
 
 ---
 
+### 9.16 ✅ `EstimateEditor.jsx`内の金額自動計算ロジックの重複解消
+
+§9.15と同じ観点で`EstimateEditor.jsx`（1643行、§9.15適用後）を再調査。
+**ほぼ完全に同一の「数量×単価→amount」計算ロジックが2箇所**にべた書きされていた。
+
+**重複の内容:** `quantity`と`unit_price`が両方とも入力済み（空文字/null/undefined
+でなく数値変換可能）なら`amount = quantity × unit_price`を計算し、どちらか
+未入力なら`amount`は据え置く（手入力を尊重する）というガード付き計算。
+- 1箇所目: `withAutoAmount`（セル編集時、`updateItem`から呼ばれる）
+- 2箇所目: `pasteTsv`内`applyToRow`（TSV貼り付け時）
+
+2箇所はガード条件・計算式とも完全に同一で、`pasteTsv`側は貼り付けセル値の
+カンマ除去・数値変換という前処理を追加で行っているだけだった。§9.15の
+`injectCategorySubtotals`と同種の「同じ計算が複数箇所」欠陥であり、無テストの
+純粋ロジックで片方だけ修正されれば見積金額が静かにズレる（セル編集とTSV貼り付けで
+挙動が乖離する）サイレント障害リスクが高いため、対応対象として選定した。
+
+なお同じファイル内には`buildPreviewEstimate`の`buildSheetItems`と`handleSave`の
+保存ペイロード構築との間にもCOMMENT行エンコード＋SUBTOTAL除去のパイプライン重複が
+あるが、`injectCategorySubtotals`への付加フィールド引数が呼び出し側ごとに異なり
+分岐も浅いため、統合の複雑さに対して得られる安全性の向上が小さいと判断し、
+今回は見送った（次回以降の候補として残す）。
+
+**対応:** `src/estimate-editor/estimateCalc.js`に純粋関数`computeAutoAmount(row)`
+として一本化。`row.quantity`・`row.unit_price`を見て条件を満たせば`amount`を
+上書きした新オブジェクトを返し、満たさなければ元の`row`をそのまま返す。
+`withAutoAmount`と`pasteTsv`の`applyToRow`の両方をこの関数呼び出しに置き換え。
+
+**ゲート結果:**
+- 新規テスト`src/estimate-editor/estimateCalc.test.js`に6件追加
+  （数量・単価両方あり、数量が空文字、単価が空文字、null/undefined、
+  数値変換不可な文字列、他フィールドが保持されること）
+- `npm test` → **149 passed / 7 files**（回帰なし、新規6件を含む）
+- `npm run build` → 成功（1969 modules transformed, 12.62s）
+
+---
+
 ## 10. ⭐ 全フェーズ完了後に必ずやること
 
 > ユーザー指示（原文）:
