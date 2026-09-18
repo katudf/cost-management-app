@@ -15,17 +15,17 @@ import { supabase } from '../lib/supabase';
  */
 
 /** 自社情報の基本項目（印影は含まない） */
-export const COMPANY_BASIC_FIELDS =
+const COMPANY_BASIC_FIELDS =
     'company_name, company_zip, company_address, company_tel, company_fax';
 
 /** 自社情報の全項目（印影2列を含む）。設定画面の編集対象。 */
-export const COMPANY_ALL_FIELDS = `${COMPANY_BASIC_FIELDS}, stamp_company_url, stamp_representative_url`;
+const COMPANY_ALL_FIELDS = `${COMPANY_BASIC_FIELDS}, stamp_company_url, stamp_representative_url`;
 
 /** 時給の既定値（DB取得前の初期表示に使う） */
 export const DEFAULT_HOURLY_WAGE = 3500;
 
 /** 見積の有効期限（日数）の既定値 */
-export const DEFAULT_EST_VALID_DAYS = 30;
+const DEFAULT_EST_VALID_DAYS = 30;
 
 /**
  * system_settings（id=1）から指定カラムを取得する素の関数。
@@ -46,7 +46,7 @@ export async function fetchSystemSettings(columns = '*') {
  * system_settings（id=1）を更新する素の関数。updated_at は自動で付与する。
  * @param {object} patch 更新したいカラムだけを渡す
  */
-export async function updateSystemSettings(patch) {
+async function updateSystemSettings(patch) {
     const { error } = await supabase
         .from('system_settings')
         .update({ ...patch, updated_at: new Date().toISOString() })

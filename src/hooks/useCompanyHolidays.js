@@ -16,7 +16,7 @@ import { supabase } from '../lib/supabase';
  */
 
 /** 全画面で共通の取得列。`*` との差は created_at 等のみで、どの画面も参照していない。 */
-export const HOLIDAY_COLUMNS = 'id, date, description';
+const HOLIDAY_COLUMNS = 'id, date, description';
 
 /**
  * 休日データを取得する。エラーは throw する（トーストは呼び出し側の責務）。

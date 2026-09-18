@@ -23,7 +23,7 @@ const FETCH_PAGE_SIZE = 1000;
  * 仕入帳の全件を取得する（1000件ずつページングして連結）。
  * @returns {Promise<Array<object>>} id 昇順の全レコード
  */
-export const fetchPurchaseRecords = async () => {
+const fetchPurchaseRecords = async () => {
     let allRecords = [];
     let from = 0;
 

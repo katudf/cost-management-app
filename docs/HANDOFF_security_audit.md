@@ -2278,6 +2278,42 @@ src/WorkerApp.jsx:30                 import { fetchWithCache, getDraftQueue, ups
 `src/utils/` の未使用export棚卸しはこれで完了。他ディレクトリ（`hooks/` `components/` 等）
 への横展開は次の一手としてやり残し。
 
+### 9.11 ✅ `src/hooks/` 全体の未使用export棚卸し（`<commit-hash>`）
+
+§9.10 の「次の一手」を消化。`src/hooks/` 配下の全18ファイルの export を、
+§9.8/§9.10 と同じ手順（①外部利用をgrep → ②0件なら内部利用をgrep → ③3分類）で棚卸しした。
+
+**判定結果（6件）:**
+
+| ファイル | 対象 | 外部利用 | 内部利用 | 判定 |
+|---|---|---|---|---|
+| `useCompanyHolidays.js` | `HOLIDAY_COLUMNS` | 0件 | 3件（`fetchCompanyHolidays` / `upsertCompanyHoliday` 内） | **`export`のみ除去** |
+| `usePurchaseLedger.js` | `fetchPurchaseRecords` | 0件 | 1件（`usePurchaseLedger`の`refetch`内） | **`export`のみ除去** |
+| `useSystemSettings.js` | `COMPANY_BASIC_FIELDS` | 0件 | 1件（`useCompanyInfo`のデフォルト引数） | **`export`のみ除去** |
+| `useSystemSettings.js` | `COMPANY_ALL_FIELDS` | 0件 | 1件（`useCompanyInfoSettings`内） | **`export`のみ除去** |
+| `useSystemSettings.js` | `DEFAULT_EST_VALID_DAYS` | 0件 | 2件（`useSystemSettings`内） | **`export`のみ除去** |
+| `useSystemSettings.js` | `updateSystemSettings` | 0件 | 2件（`useSystemSettings`/`useCompanyInfoSettings`の`save`内） | **`export`のみ除去** |
+
+残る全ての export（他15ファイル全体、および上記3ファイルの他のexport——
+`fetchCompanyHolidays` / `fetchCompanyHolidaysResult` / `deleteCompanyHoliday` /
+`upsertCompanyHoliday` / `useCompanyHolidays` / `insertPurchaseRecord` /
+`insertPurchaseRecords` / `updatePurchaseRecord` / `deletePurchaseRecord` /
+`deletePurchaseRecords` / `usePurchaseLedger` / `DEFAULT_HOURLY_WAGE` /
+`fetchSystemSettings` / `useSystemSettings` / `useCompanyInfo` /
+`useCompanyInfoSettings` 等）は外部利用ありのため対象外・変更なし。
+**完全削除は0件**（§9.8/§9.10と異なり、今回は全て内部利用ありだった）。
+
+**ゲート結果:**
+- `npm test -- --run` → 変更前後とも **137 passed / 6 files**（回帰なし）
+- `npm run build` → 成功（チャンクサイズ警告のみ、本棚卸しと無関係の既存warning）
+- `export`除去6件（`HOLIDAY_COLUMNS` / `fetchPurchaseRecords` / `COMPANY_BASIC_FIELDS` /
+  `COMPANY_ALL_FIELDS` / `DEFAULT_EST_VALID_DAYS` / `updateSystemSettings`）:
+  いずれも定義ファイル以外の `src/` 全体で0件を確認。素の識別子（宣言＋内部呼び出し）は
+  各ファイル内に残存していることを確認済み
+
+`src/hooks/` の未使用export棚卸しはこれで完了。次に`src/components/`への横展開を
+やるかどうかはユーザーに確認すること。
+
 ---
 
 ## 10. ⭐ 全フェーズ完了後に必ずやること
