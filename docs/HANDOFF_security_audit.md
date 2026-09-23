@@ -2539,6 +2539,92 @@ CLAUDE.mdのファイル構成表には`types/index.ts # 共通型定義（TypeS
 
 ---
 
+### 9.17 ✅ `EstimateEditor.jsx`のCOMMENTエンコード＋SUBTOTAL除去パイプライン重複解消
+
+§9.16で「統合の複雑さに対して得られる安全性の向上が小さい」として見送った、
+`buildPreviewEstimate`の`buildSheetItems`と`handleSave`の保存ペイロード構築間の
+パイプライン重複を再調査し、対応した。
+
+**重複の内容:** 1シート分の明細に対して、以下3手順が2箇所に完全同一実装で存在。
+1. `SUBTOTAL`行を除去（再注入前提のため保持不要）
+2. `_tempId`を除去し、`COMMENT`行をDB制約上の表現
+   （`item_type: ITEM` + `category_symbol: '__comment__'`）へエンコード
+3. `header.show_subtotals`が真なら`injectCategorySubtotals`でカテゴリ小計行を注入
+
+差分は各行への付加フィールドのみ（プレビュー側は小計行に`sort_order`、保存側は
+各行と小計行の両方に`sheet_id`）で、§9.15/§9.16と同じ「同じ計算が複数箇所」欠陥。
+無テストの純粋ロジックで片方だけ改修されれば、PDFプレビューと実際にDBへ保存される
+内容が静かに乖離する（ユーザーがプレビューで見た内容と保存結果が一致しない）
+サイレント障害リスクがあるため、対応対象として選定した。
+
+**対応:** `src/estimate-editor/estimateCalc.js`に純粋関数
+`encodeSheetItemsForOutput(sheetItems, { showSubtotals, extraFields, subtotalExtraFields })`
+として一本化。`extraFields`は各行への付加フィールドを返す関数、
+`subtotalExtraFields`は注入される小計行への付加フィールドを返す関数
+（`injectCategorySubtotals`の第2引数へそのまま渡す）。
+`buildPreviewEstimate`の`buildSheetItems`と`handleSave`のシートループの両方を
+この関数呼び出しに置き換え、直接の`injectCategorySubtotals`呼び出しは
+`EstimateEditor.jsx`から消えた（importも削除）。
+
+**ゲート結果:**
+- 新規テスト`src/estimate-editor/estimateCalc.test.js`に9件追加
+  （SUBTOTAL行除去、`_tempId`除去、COMMENT行エンコード、COMMENT以外は無変更、
+  `extraFields`付与、`showSubtotals: false`で小計行を注入しないこと、
+  `showSubtotals: true`で小計行を注入すること、`subtotalExtraFields`付与、
+  既存SUBTOTAL行を除去した上で新しい小計行を再注入すること）
+- `npm test` → **158 passed / 7 files**（回帰なし、新規9件を含む）
+- `npm run build` → 成功（1971 modules transformed, 21.55s）
+- `injectCategorySubtotals`の`EstimateEditor.jsx`内残存参照: 0件を確認
+  （importも削除済み。定義元の`estimateCalc.js`と`encodeSheetItemsForOutput`
+  内部からの呼び出しのみが残る）
+
+---
+
+### 9.18 ✅ 鑑（トップシート）合計計算の3箇所重複解消
+
+`EstimateEditor.jsx`（プレビュー表示用`totals`、保存ペイロード用`savingTotals`の
+2箇所）と`EstimatePDF.jsx`（`EstimateDocument`コンポーネントの`totals`）で、
+以下の処理が完全に同一のロジックとして3箇所にべた書きされていた。
+
+**重複の内容:**
+1. トップシート（`sheets[0]`）の明細を`item_type === ITEM_TYPE.ITEM`で絞り込み
+2. `calcTotals(items, taxRate, netCalcSettings)`を呼び、`taxRate`と
+   `netCalcSettings`（`type`/`perc`/`manualAmount`）は
+   `header`（またはPDF側は`estimate`）の`tax_rate`・`net_calc_type`・
+   `net_perc`・`net_amount`から都度組み立てる
+
+§9.15/§9.16/§9.17と同じ「同じ計算が複数箇所」欠陥。さらに`calcTotals`自体が
+内部で同じ`item_type === ITEM_TYPE.ITEM`フィルタを既に行っており、3箇所の
+呼び出し元がそれぞれ事前フィルタを重ねる二重フィルタになっていた。
+`tax_rate`のフォールバック（`|| 0.1`）も`EstimatePDF.jsx`にはあったが
+`EstimateEditor.jsx`の2箇所には無いという不整合があった。
+無テストの純粋計算がプレビュー・保存・PDF出力の3箇所で個別に改修されれば、
+画面表示された見積金額とPDF・DB保存内容が静かに乖離するサイレント障害リスクが
+あるため、対応対象として選定した。
+
+**対応:** `src/supabaseEstimates.js`に`calcTotals`の直後、純粋関数
+`calcTopSheetTotals(topSheetItems, source)`として一本化。
+`source`（`header`または`estimate`）から`tax_rate`（`|| 0.1`フォールバックで統一）・
+`net_calc_type`・`net_perc`・`net_amount`を読み、`ITEM_TYPE.ITEM`フィルタは
+この関数内で一度だけ行い、内部で`calcTotals`に委譲する。
+呼び出し元3箇所（`EstimateEditor.jsx`の`totals`useMemoと`handleSave`内の
+`savingTotals`、`EstimatePDF.jsx`の`EstimateDocument`）は、いずれも
+トップシートの明細を絞り込んだ上で`calcTopSheetTotals`を呼ぶだけに簡略化し、
+直接の`calcTotals`呼び出しは両ファイルから消えた（importも置き換え）。
+
+**ゲート結果:**
+- 新規テスト`src/supabaseEstimates.test.js`を作成し6件追加
+  （`calcTotals`: ITEM行のみ合計・manual計算・netCalcSettings省略時のauto互換、
+  `calcTopSheetTotals`: sourceからの委譲・tax_rateフォールバック・manual計算）
+- `npm test -- --run` → **164 passed / 8 files**（回帰なし、新規6件を含む）
+- `npm run build` → 成功（1969 modules transformed, 12.58s）
+- `EstimateEditor.jsx`内の`calcTotals`残存参照: 0件を確認
+  （importも`calcTopSheetTotals`に置き換え済み）
+- `EstimatePDF.jsx`内の`ITEM_TYPE`残存参照: importと合わせて7件を確認
+  （他の表示・小計ロジックで使用中のため、importは削除不要と判断）
+
+---
+
 ## 10. ⭐ 全フェーズ完了後に必ずやること
 
 > ユーザー指示（原文）:

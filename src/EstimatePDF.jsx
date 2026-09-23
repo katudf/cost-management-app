@@ -5,7 +5,7 @@ import React from 'react';
 import {
   Document, Page, Text, View, StyleSheet, Font, pdf, Image
 } from '@react-pdf/renderer';
-import { calcTotals } from './supabaseEstimates';
+import { calcTopSheetTotals } from './supabaseEstimates';
 import { ITEM_TYPE } from './utils/constants';
 
 // ============================================================
@@ -822,12 +822,7 @@ const EstimateDocument = ({ estimate, settings }) => {
 
   // 鑑の合計はトップシートの明細から算出（リンク解決済みの値が渡る想定）。
   const topItems = sheets[0]?.items || [];
-  const visibleTopItems = topItems.filter(i => i.item_type === ITEM_TYPE.ITEM);
-  const totals = calcTotals(visibleTopItems, Number(estimate.tax_rate || 0.1), {
-    type: estimate.net_calc_type,
-    perc: estimate.net_perc,
-    manualAmount: estimate.net_amount
-  });
+  const totals = calcTopSheetTotals(topItems, estimate);
 
   // 他シートの合計を参照している sheet_id 一覧（①別シート合計リンクの参照先）
   const linkedSheetIds = new Set();

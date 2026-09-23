@@ -538,6 +538,18 @@ export const calcTotals = (items, taxRate = 0.1, netCalcSettings = {}) => {
   return { net, subtotal, tax, total };
 };
 
+// EstimateEditor（プレビュー表示・保存ペイロード構築）とEstimatePDF（PDF生成）の
+// 3箇所で、鑑の合計を「トップシートのITEM行 + header/estimateのtax_rate・net_calc系
+// フィールドから calcTotals を呼ぶ」処理がべた書きされ重複していたため一本化する。
+export const calcTopSheetTotals = (topSheetItems, source) => {
+  const visibleItems = topSheetItems.filter(i => i.item_type === ITEM_TYPE.ITEM);
+  return calcTotals(visibleItems, Number(source.tax_rate || 0.1), {
+    type: source.net_calc_type,
+    perc: source.net_perc,
+    manualAmount: source.net_amount,
+  });
+};
+
 // ============================================================
 // 金額フォーマット
 // ============================================================

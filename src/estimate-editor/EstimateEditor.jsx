@@ -34,7 +34,7 @@ import {
   createCustomer,
   fetchWorkers,
   getNextEstimateSeq,
-  calcTotals,
+  calcTopSheetTotals,
   formatCurrency,
   checkDuplicateNumber,
   findAvailableBranchNumber,
@@ -56,7 +56,7 @@ import PageNav from './PageNav';
 import CoverPaper from './CoverPaper';
 import SheetPaper, { calcSheetPageCount } from './SheetPaper';
 import SettingsPanel from './SettingsPanel';
-import { computeEstimateCalc, wouldCreateCycle, injectCategorySubtotals, computeAutoAmount } from './estimateCalc';
+import { computeEstimateCalc, wouldCreateCycle, computeAutoAmount, encodeSheetItemsForOutput } from './estimateCalc';
 
 // 今日の日付を YYMMDD 形式で返す
 const todayPrefix = () => {
@@ -822,12 +822,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   const totals = useMemo(() => {
     const topSheetId = sheets[0]?.id;
     const topItems = resolvedItems.filter(it => it.sheet_id === topSheetId);
-    const visibleItems = topItems.filter(i => i.item_type === ITEM_TYPE.ITEM);
-    return calcTotals(visibleItems, Number(header.tax_rate), {
-      type: header.net_calc_type,
-      perc: header.net_perc,
-      manualAmount: header.net_amount,
-    });
+    return calcTopSheetTotals(topItems, header);
   }, [resolvedItems, sheets, header.tax_rate, header.net_calc_type, header.net_perc, header.net_amount]);
 
   // 各シートの明細を sheet_id で束ねる（描画・保存で共用）。
@@ -937,21 +932,12 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
     const staff    = officeStaff.find(s => String(s.id) === String(header.staff_id))  || null;
 
     // 1シート分の明細を PDF 用に整形（COMMENTエンコード・SUBTOTAL除去・_tempId除去、
-    // show_subtotals ON なら工種ごとの小計行を注入）
-    const buildSheetItems = (sheet) => {
-      const sheetItems = (itemsBySheet.get(sheet.id) || [])
-        .filter(i => i.item_type !== ITEM_TYPE.SUBTOTAL)
-        .map(({ _tempId, ...item }) => {
-          if (item.item_type === ITEM_TYPE.COMMENT) {
-            return { ...item, item_type: ITEM_TYPE.ITEM, category_symbol: '__comment__' };
-          }
-          return item;
-        });
-
-      if (!header.show_subtotals) return sheetItems;
-
-      return injectCategorySubtotals(sheetItems, (sortOrder) => ({ sort_order: sortOrder }));
-    };
+    // show_subtotals ON なら工種ごとの小計行を注入）。保存用ペイロード構築と同一の
+    // パイプラインのため encodeSheetItemsForOutput に集約している（§9.17）。
+    const buildSheetItems = (sheet) => encodeSheetItemsForOutput(itemsBySheet.get(sheet.id) || [], {
+      showSubtotals: header.show_subtotals,
+      subtotalExtraFields: (sortOrder) => ({ sort_order: sortOrder }),
+    });
 
     const pdfSheets = sheets.map((sheet) => ({
       id: sheet.id,
@@ -1044,40 +1030,24 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
       }
 
       // 保存用明細を組み立てる（シート順に連結、COMMENTエンコード、SUBTOTAL注入）。
-      // buildSaveItemsPayload はフィルタせず全行を順序どおり保存するため、
       // 空行の除去や name 空フィルタは行わない（Phase 3: 空行保持）。
+      // プレビュー構築（buildSheetItems）と同一パイプラインのため
+      // encodeSheetItemsForOutput に集約している（§9.17）。
       const savingItems = [];
       sheets.forEach((sheet) => {
-        let sheetItems = (itemsBySheet.get(sheet.id) || [])
-          .filter(i => i.item_type !== ITEM_TYPE.SUBTOTAL)
-          .map(({ _tempId, ...i }) => {
-            // COMMENT行はDB制約上 item_type:'item' + category_symbol:'__comment__' としてエンコード
-            const isComment = i.item_type === ITEM_TYPE.COMMENT;
-            return {
-              ...i,
-              sheet_id: sheet.id,
-              item_type:       isComment ? ITEM_TYPE.ITEM : i.item_type,
-              category_symbol: isComment ? '__comment__' : i.category_symbol,
-            };
-          });
-
-        if (header.show_subtotals) {
-          sheetItems = injectCategorySubtotals(sheetItems, () => ({ sheet_id: sheet.id }));
-        }
+        const sheetItems = encodeSheetItemsForOutput(itemsBySheet.get(sheet.id) || [], {
+          showSubtotals: header.show_subtotals,
+          extraFields: () => ({ sheet_id: sheet.id }),
+          subtotalExtraFields: () => ({ sheet_id: sheet.id }),
+        });
 
         savingItems.push(...sheetItems);
       });
 
       // 税込合計はトップシートの明細から算出（鑑と一致させる）
       const topSheetId = sheets[0]?.id;
-      const savingVisibleItems = savingItems.filter(i =>
-        i.sheet_id === topSheetId && i.item_type === ITEM_TYPE.ITEM
-      );
-      const savingTotals = calcTotals(savingVisibleItems, Number(header.tax_rate), {
-        type: header.net_calc_type,
-        perc: header.net_perc,
-        manualAmount: header.net_amount,
-      });
+      const savingTopItems = savingItems.filter(i => i.sheet_id === topSheetId);
+      const savingTotals = calcTopSheetTotals(savingTopItems, header);
 
       // 他画面での工事削除により project_id が孤立参照（FK違反）になっていないか事前チェックする。
       // 孤立していれば連携を解除して保存を続行する（工事一覧から手動で再連携可能）。
