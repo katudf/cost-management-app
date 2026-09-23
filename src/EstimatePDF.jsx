@@ -5,7 +5,7 @@ import React from 'react';
 import {
   Document, Page, Text, View, StyleSheet, Font, pdf, Image
 } from '@react-pdf/renderer';
-import { calcTopSheetTotals } from './supabaseEstimates';
+import { calcTopSheetTotals, sumItemAmounts } from './supabaseEstimates';
 import { ITEM_TYPE } from './utils/constants';
 
 // ============================================================
@@ -619,11 +619,7 @@ const buildSheetRowsPDF = (items, header, isTopSheet, totals, sheetTotal, showTo
       rows.push({ kind: 'net', amount: totals.net });
     }
   } else if (showTotalRow) {
-    const resolvedTotal = sheetTotal != null
-      ? sheetTotal
-      : items.reduce(
-          (sum, i) => sum + (i.item_type === ITEM_TYPE.ITEM ? (Number(i.amount) || 0) : 0), 0
-        );
+    const resolvedTotal = sheetTotal != null ? sheetTotal : sumItemAmounts(items);
     rows.push({ kind: 'sheet-total', amount: resolvedTotal });
   }
 

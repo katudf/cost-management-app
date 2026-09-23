@@ -22,6 +22,7 @@ import React, { useRef, useCallback, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, Trash2, Copy, ChevronUp, ChevronDown, Link2, Link2Off, FolderPlus, MessageSquarePlus } from 'lucide-react';
 import { ITEM_TYPE } from '../utils/constants';
+import { sumItemAmounts } from '../supabaseEstimates';
 import {
   pt, PAPER_WIDTH, PAPER_HEIGHT, ROWS_PER_PAGE, COLORS, page, table, fmt,
 } from './paperStyles';
@@ -158,11 +159,7 @@ export const buildSheetRows = (items, header, isTopSheet, totals, sheetTotal, sh
   } else if (showTotalRow) {
     // 計算エンジン（Phase 5）がリンク解決済みのシート合計を渡す場合はそれを優先。
     // 渡されない場合（呼び出し元未対応・ページ数計算のみ等）は ITEM 金額を単純合算。
-    const resolvedTotal = sheetTotal != null
-      ? sheetTotal
-      : items.reduce(
-          (sum, i) => sum + (i.item_type === ITEM_TYPE.ITEM ? (Number(i.amount) || 0) : 0), 0
-        );
+    const resolvedTotal = sheetTotal != null ? sheetTotal : sumItemAmounts(items);
     rows.push({ kind: 'sheet-total', amount: resolvedTotal });
   }
 

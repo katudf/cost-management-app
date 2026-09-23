@@ -1,6 +1,32 @@
 import { describe, it, expect } from 'vitest';
-import { calcTotals, calcTopSheetTotals } from './supabaseEstimates';
+import { calcTotals, calcTopSheetTotals, sumItemAmounts } from './supabaseEstimates';
 import { ITEM_TYPE } from './utils/constants';
+
+describe('sumItemAmounts', () => {
+  // EstimatePDF/SheetPaperのシート合計フォールバックとcalcTotalsのitemTotal算出で、
+  // ITEM行のamountだけを合計するreduceが3箇所にべた書きされていたための一本化（§9.20）。
+  it('ITEM行のamountのみを合計する', () => {
+    const items = [
+      { item_type: ITEM_TYPE.ITEM, amount: 1000 },
+      { item_type: ITEM_TYPE.ITEM, amount: 2000 },
+      { item_type: ITEM_TYPE.CATEGORY, amount: 999999 },
+      { item_type: ITEM_TYPE.COMMENT, amount: 999999 },
+    ];
+    expect(sumItemAmounts(items)).toBe(3000);
+  });
+
+  it('amountが未設定/文字列の行は0として扱う', () => {
+    const items = [
+      { item_type: ITEM_TYPE.ITEM, amount: null },
+      { item_type: ITEM_TYPE.ITEM, amount: '500' },
+    ];
+    expect(sumItemAmounts(items)).toBe(500);
+  });
+
+  it('空配列の場合は0を返す', () => {
+    expect(sumItemAmounts([])).toBe(0);
+  });
+});
 
 describe('calcTotals', () => {
   it('ITEM行のamountのみを合計し、税・NETを算出する', () => {

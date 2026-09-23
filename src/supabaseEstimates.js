@@ -514,9 +514,14 @@ export const fetchWorkers = async () => {
 // ============================================================
 // 金額計算ユーティリティ
 // ============================================================
+// EstimatePDF/SheetPaperのシート合計フォールバック（sheetTotal未指定時）と
+// calcTotalsのitemTotal算出で、items配列からITEM行のamountだけを合計する
+// 同一のreduceがそれぞれべた書きされていたため一本化する（§9.20）。
+export const sumItemAmounts = (items) =>
+  items.reduce((sum, i) => sum + (i.item_type === ITEM_TYPE.ITEM ? (Number(i.amount) || 0) : 0), 0);
+
 export const calcTotals = (items, taxRate = 0.1, netCalcSettings = {}) => {
-  const itemRows = items.filter(i => i.item_type === ITEM_TYPE.ITEM);
-  const itemTotal = itemRows.reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
+  const itemTotal = sumItemAmounts(items);
 
   // NET金額（純工事費）の計算設定
   const { type = 'perc', perc = 95, manualAmount } = netCalcSettings;

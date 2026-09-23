@@ -2669,6 +2669,43 @@ undo登録のロジック自体は変更していない。
 
 ---
 
+### 9.20 ✅ シート合計フォールバック（ITEM行amount合算）の重複解消
+
+`src/EstimatePDF.jsx`と`src/estimate-editor/SheetPaper.jsx`の両方で、
+`sheetTotal`が呼び出し元から渡されない場合（未対応の呼び出し元・ページ数計算のみ等）の
+フォールバックとして、以下のreduceが完全に同一のロジックとしてべた書きされていた。
+
+**重複の内容:**
+1. `items.reduce((sum, i) => sum + (i.item_type === ITEM_TYPE.ITEM ? (Number(i.amount) || 0) : 0), 0)`
+   というITEM行のamountだけを合計する式が、`EstimatePDF.jsx`（DetailPage相当の
+   行構築処理）と`SheetPaper.jsx`（`buildSheetRows`）の両方に、`sheetTotal != null`
+   の三項分岐の中でバイト単位で同一のまま存在していた
+2. さらに調べると、`src/supabaseEstimates.js`の`calcTotals`（§9.18で追加）も
+   `items.filter(...).reduce(...)`という別形状ながら同じ「ITEM行のamountを合計する」
+   計算をすでに内包しており、実質3箇所で同じ集計ロジックが独立に書かれていた
+
+`SheetPaper.jsx`のファイル冒頭コメントが自認する通り、この2ファイルは
+アルゴリズムが同一であることを前提に並行実装されているため、
+今回のような重複が今後も再発しやすい構造だった。
+
+**対応:** `src/supabaseEstimates.js`に新規のモジュールレベル純関数
+`sumItemAmounts(items)`をexportし、`calcTotals`をこれに委譲する形に変更。
+`EstimatePDF.jsx`は既存の`calcTopSheetTotals`のimportに`sumItemAmounts`を
+追加し、`SheetPaper.jsx`は新規に`sumItemAmounts`のimportを追加した上で、
+両ファイルの`resolvedTotal`算出を
+`sheetTotal != null ? sheetTotal : sumItemAmounts(items)`の1行に簡略化した。
+
+**ゲート結果:**
+- `src/supabaseEstimates.test.js`に`describe('sumItemAmounts', ...)`を新設し3件追加
+  （ITEM行以外を除外した合計、amountがnull/文字列の行を0扱いにする挙動、空配列で0）
+- `npm test -- --run` → **172 passed / 9 files**（回帰なし、新規3件を含む）
+- `npm run build` → 成功（1969 modules transformed, 11.39s）
+- 旧重複パターン`item_type === ITEM_TYPE.ITEM ? (Number(i.amount)`の残存参照:
+  `src/supabaseEstimates.js`内の`sumItemAmounts`定義1箇所のみを確認
+  （`EstimatePDF.jsx`/`SheetPaper.jsx`の重複2箇所はいずれも解消）
+
+---
+
 ## 10. ⭐ 全フェーズ完了後に必ずやること
 
 > ユーザー指示（原文）:
