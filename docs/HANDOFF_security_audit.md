@@ -2625,6 +2625,50 @@ CLAUDE.mdのファイル構成表には`types/index.ts # 共通型定義（TypeS
 
 ---
 
+### 9.19 ✅ 配置表コピー/カットのコピー元データ構築ロジック重複解消
+
+`src/hooks/useAssignmentState.js`の`handleActionCopy`と`handleActionCut`で、
+以下の処理が完全に同一のロジックとして2箇所にべた書きされていた。
+
+**重複の内容:**
+1. `editCell.dragDates`（無ければ`[editCell.dateStr]`）と`editCell.workerIds`
+   （無ければ`[editCell.workerId]`）から`targetDates`/`targetWorkerIds`を決定
+2. `targetWorkerIds`×`targetDates`の全組み合わせについて`assignmentLookup`から
+   既存配置を取得し、先頭日付を基準にした`dayOffset`（`Math.round`による日数差）と
+   出現順の`workerOffset`を付与して`copiedData`配列を構築するネストした
+   `forEach`ループ
+
+`handleActionCopy`はここで構築した`copiedData`をそのままクリップボードに
+格納するだけだが、`handleActionCut`は同じループの中で元の配置レコードも
+`toDelete`として収集し、Supabase削除とundo登録を追加で行う。
+`handleActionPaste`側は`dayOffset`/`workerOffset`を含む同一のデータ形状に
+依存しており、3つのハンドラが暗黙の共通コントラクトで結合していた。
+このフックには既存テストが一切無く、ロジックが分岐なく静かに書き換えられれば
+コピー/カット/貼り付けの座標がずれるサイレント障害としてユーザーに
+直撃するため、対応対象として選定した。
+
+**対応:** 既存のassignment関連utilモジュール（`assignmentChartExport.js`）は
+無関係な集計用ロジックのため転用せず、`useAssignmentState.js`自身に
+新規のモジュールレベル純関数`buildCopiedAssignments(targetWorkerIds, targetDates, assignmentLookup)`
+をimport直後・フック定義の直前に追加し、`copiedData`と元レコード一覧
+`sourceRecords`を返すよう一本化した。
+`handleActionCopy`/`handleActionCut`はそれぞれ`targetDates`/`targetWorkerIds`を
+算出した後、この関数を1回呼ぶだけに簡略化。`handleActionCut`は
+`sourceRecords`を`toDelete`としてそのまま従来通り使用し、Supabase削除・
+undo登録のロジック自体は変更していない。
+
+**ゲート結果:**
+- 新規テスト`src/hooks/useAssignmentState.test.js`を作成し5件追加
+  （単一worker/日付、複数日付のdayOffset計算、複数workerのworkerOffset計算、
+  存在しないセルの0件処理、同一セル内の複数配置の全件収集）
+- `npm test -- --run` → **169 passed / 9 files**（回帰なし、新規5件を含む）
+- `npm run build` → 成功（1969 modules transformed, 12.63s）
+- `handleActionCopy`/`handleActionCut`内の`dayOffset`計算残存参照: 0件を確認
+  （`buildCopiedAssignments`内の1箇所のみに統一。`handleActionPaste`側の
+  `item.dayOffset`参照2件は消費側であり変更対象外）
+
+---
+
 ## 10. ⭐ 全フェーズ完了後に必ずやること
 
 > ユーザー指示（原文）:

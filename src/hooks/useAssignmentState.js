@@ -5,6 +5,36 @@ import { DEFAULT_COLORS, PROJECT_STATUS, WORKER_TYPE } from '../utils/constants'
 import { fetchCompanyHolidays, deleteCompanyHoliday, upsertCompanyHoliday } from './useCompanyHolidays';
 import { isActualHoliday, HOLIDAY_DESCRIPTION } from '../utils/holidayUtils';
 
+// targetWorkerIds × targetDates の範囲でassignmentLookupから既存配置を集め、
+// dayOffset/workerOffsetを付与したコピー用データと、元の配置レコード一覧を返す純関数。
+// handleActionCopy/handleActionCutの双方が同じ構築ロジックに依存する（§9.19）。
+export function buildCopiedAssignments(targetWorkerIds, targetDates, assignmentLookup) {
+    const baseDate = new Date(targetDates[0]);
+    const copiedData = [];
+    const sourceRecords = [];
+
+    targetWorkerIds.forEach((workerId, workerOffset) => {
+        targetDates.forEach(dateStr => {
+            const existing = assignmentLookup[`${workerId}_${dateStr}`] || [];
+            const currentDate = new Date(dateStr);
+            const dayOffset = Math.round((currentDate - baseDate) / (1000 * 60 * 60 * 24));
+
+            existing.forEach(a => {
+                copiedData.push({
+                    dayOffset,
+                    workerOffset,
+                    projectId: a.projectId,
+                    title: a.title,
+                    assignment_order: a.assignment_order
+                });
+                sourceRecords.push(a);
+            });
+        });
+    });
+
+    return { copiedData, sourceRecords };
+}
+
 export function useAssignmentState({
     projects,
     workers,
@@ -568,26 +598,7 @@ export function useAssignmentState({
         if (!editCell) return;
         const targetDates = editCell.dragDates || [editCell.dateStr];
         const targetWorkerIds = editCell.workerIds && editCell.workerIds.length > 0 ? editCell.workerIds : [editCell.workerId];
-        const baseDate = new Date(targetDates[0]);
-        const copiedData = [];
-
-        targetWorkerIds.forEach((workerId, workerOffset) => {
-            targetDates.forEach(dateStr => {
-                const existing = assignmentLookup[`${workerId}_${dateStr}`] || [];
-                const currentDate = new Date(dateStr);
-                const dayOffset = Math.round((currentDate - baseDate) / (1000 * 60 * 60 * 24));
-
-                existing.forEach(a => {
-                    copiedData.push({
-                        dayOffset,
-                        workerOffset,
-                        projectId: a.projectId,
-                        title: a.title,
-                        assignment_order: a.assignment_order
-                    });
-                });
-            });
-        });
+        const { copiedData } = buildCopiedAssignments(targetWorkerIds, targetDates, assignmentLookup);
 
         if (copiedData.length > 0) {
             setClipboard({ type: 'copy', data: copiedData });
@@ -599,28 +610,7 @@ export function useAssignmentState({
         if (!editCell) return;
         const targetDates = editCell.dragDates || [editCell.dateStr];
         const targetWorkerIds = editCell.workerIds && editCell.workerIds.length > 0 ? editCell.workerIds : [editCell.workerId];
-        const baseDate = new Date(targetDates[0]);
-        const copiedData = [];
-        const toDelete = [];
-
-        targetWorkerIds.forEach((workerId, workerOffset) => {
-            targetDates.forEach(dateStr => {
-                const existing = assignmentLookup[`${workerId}_${dateStr}`] || [];
-                const currentDate = new Date(dateStr);
-                const dayOffset = Math.round((currentDate - baseDate) / (1000 * 60 * 60 * 24));
-
-                existing.forEach(a => {
-                    copiedData.push({
-                        dayOffset,
-                        workerOffset,
-                        projectId: a.projectId,
-                        title: a.title,
-                        assignment_order: a.assignment_order
-                    });
-                    toDelete.push(a);
-                });
-            });
-        });
+        const { copiedData, sourceRecords: toDelete } = buildCopiedAssignments(targetWorkerIds, targetDates, assignmentLookup);
 
         if (copiedData.length > 0) {
             setClipboard({ type: 'cut', data: copiedData });
