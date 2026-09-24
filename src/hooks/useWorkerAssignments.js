@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../components/Toast';
 import { fetchWithCache } from '../utils/offlineCache';
@@ -6,8 +6,18 @@ import { fetchCompanyHolidaysResult } from './useCompanyHolidays';
 import { toDateStr, addDays, getMonday, buildDateColumns, buildWeekGroups } from '../utils/dateUtils';
 import { DEFAULT_COLORS } from '../utils/constants';
 
-// 作業員向け配置表（閲覧専用）の表示期間: 今週月曜から4週間
+// 作業員向け配置表（閲覧専用）の表示期間: 表示開始週の月曜から4週間（初期表示は今週）
 const TOTAL_DAYS = 28;
+
+// オフラインキャッシュは初期表示（今週〜）の期間だけに使う。
+// 任意期間ごとにキーを分けると localStorage に際限なく溜まるため、
+// 他の期間はキャッシュを介さず直接取得する（オフライン時は取得失敗トースト）。
+const fetchMaybeCached = async (useCache, key, fetcher) => {
+    if (useCache) return fetchWithCache(key, fetcher);
+    const { data, error } = await fetcher();
+    if (error) throw error;
+    return { data, fromCache: false };
+};
 
 /**
  * 作業員アプリ用の閲覧専用配置表データフック。
@@ -22,22 +32,28 @@ export function useWorkerAssignments({ workers, projects, loggedInWorker }) {
     const [holidays, setHolidays] = useState([]);
 
     const todayStr = useMemo(() => toDateStr(new Date()), []);
-    const startDate = useMemo(() => getMonday(new Date()), []);
+    const defaultStartStr = useMemo(() => toDateStr(getMonday(new Date())), []);
+    const [startDate, setStartDate] = useState(() => getMonday(new Date()));
     const startStr = toDateStr(startDate);
     const endStr = toDateStr(addDays(startDate, TOTAL_DAYS - 1));
+    const isDefaultPeriod = startStr === defaultStartStr;
+
+    const movePeriod = useCallback((weeks) => setStartDate(prev => addDays(prev, weeks * 7)), []);
+    const goToToday = useCallback(() => setStartDate(getMonday(new Date())), []);
 
     useEffect(() => {
         let cancelled = false;
         const fetchAll = async () => {
             setIsLoading(true);
             try {
+                // 日報実績は本日までしか存在しない（期間全体が未来なら空になる）
                 const actualEnd = todayStr < endStr ? todayStr : endStr;
                 const [{ data: aData }, { data: hData }, { data: trData }] = await Promise.all([
-                    fetchWithCache('worker-chart-assignments', () =>
+                    fetchMaybeCached(isDefaultPeriod, 'worker-chart-assignments', () =>
                         supabase.from('Assignments').select('*').gte('date', startStr).lte('date', endStr)
                     ),
                     fetchWithCache('worker-chart-holidays', fetchCompanyHolidaysResult),
-                    fetchWithCache('worker-chart-actuals', () =>
+                    fetchMaybeCached(isDefaultPeriod, 'worker-chart-actuals', () =>
                         supabase.from('TaskRecords').select('id, project_id, worker_name, date').gte('date', startStr).lte('date', actualEnd)
                     ),
                 ]);
@@ -54,7 +70,7 @@ export function useWorkerAssignments({ workers, projects, loggedInWorker }) {
         };
         fetchAll();
         return () => { cancelled = true; };
-    }, [startStr, endStr, todayStr, showToast]);
+    }, [startStr, endStr, todayStr, isDefaultPeriod, showToast]);
 
     const dateColumns = useMemo(() => buildDateColumns(startDate, TOTAL_DAYS), [startDate]);
     const weekGroups = useMemo(() => buildWeekGroups(dateColumns), [dateColumns]);
@@ -120,6 +136,8 @@ export function useWorkerAssignments({ workers, projects, loggedInWorker }) {
         todayStr,
         startStr,
         endStr,
+        movePeriod,
+        goToToday,
         dateColumns,
         weekGroups,
         holidayMap,

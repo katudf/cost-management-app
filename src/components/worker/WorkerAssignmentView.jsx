@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Loader2, X } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Loader2, X } from 'lucide-react';
 import { SCHEDULE_TYPES } from '../../utils/constants';
 import { useWorkerAssignments } from '../../hooks/useWorkerAssignments';
 import { isNonWorkingDay, getHolidayStyle } from '../../utils/holidayUtils';
@@ -34,6 +34,8 @@ const WorkerAssignmentView = ({ workers, projects, loggedInWorker, onClose }) =>
     const {
         isLoading,
         todayStr,
+        movePeriod,
+        goToToday,
         dateColumns,
         weekGroups,
         holidayMap,
@@ -47,13 +49,11 @@ const WorkerAssignmentView = ({ workers, projects, loggedInWorker, onClose }) =>
     const [detail, setDetail] = useState(null);
     const scrollRef = useRef(null);
 
-    // 初期表示時に本日の列へ横スクロール（前日を1列分残す）
+    // 読込完了時、本日を含む期間なら本日の列へ横スクロール（前日を1列分残す）、それ以外は先頭へ
     useEffect(() => {
         if (isLoading || !scrollRef.current) return;
         const todayIdx = dateColumns.findIndex(c => c.dateStr === todayStr);
-        if (todayIdx > 0) {
-            scrollRef.current.scrollLeft = Math.max(0, (todayIdx - 1) * CELL_WIDTH);
-        }
+        scrollRef.current.scrollLeft = todayIdx > 0 ? (todayIdx - 1) * CELL_WIDTH : 0;
     }, [isLoading, dateColumns, todayStr]);
 
     // 会社行事（会議・社員旅行）は休日扱いにしない（管理者版と同じ判定）
@@ -116,6 +116,30 @@ const WorkerAssignmentView = ({ workers, projects, loggedInWorker, onClose }) =>
                             {dateColumns[0].month}/{dateColumns[0].day} 〜 {dateColumns[dateColumns.length - 1].month}/{dateColumns[dateColumns.length - 1].day}（閲覧のみ）
                         </span>
                     )}
+                </div>
+                <div className="ml-auto flex items-center gap-1">
+                    <button
+                        onClick={() => movePeriod(-1)}
+                        aria-label="前の週へ"
+                        title="前の週へ"
+                        className="p-1.5 rounded-lg bg-blue-700 hover:bg-blue-800 transition"
+                    >
+                        <ChevronLeft size={18} />
+                    </button>
+                    <button
+                        onClick={goToToday}
+                        className="px-2.5 py-1.5 rounded-lg bg-blue-700 hover:bg-blue-800 text-xs font-bold transition"
+                    >
+                        今日
+                    </button>
+                    <button
+                        onClick={() => movePeriod(1)}
+                        aria-label="次の週へ"
+                        title="次の週へ"
+                        className="p-1.5 rounded-lg bg-blue-700 hover:bg-blue-800 transition"
+                    >
+                        <ChevronRight size={18} />
+                    </button>
                 </div>
             </header>
 
