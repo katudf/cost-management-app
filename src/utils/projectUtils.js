@@ -126,3 +126,14 @@ export const calculateProjectsSummary = (projects, hourlyWage) => {
         };
     });
 };
+
+/**
+ * predictedProfitLoss（予測損益）の表示用フォーマット。
+ * 符号付きの¥表示文字列を返す（例: "+¥12,345" / "-¥6,789"）。
+ * @param {number} value
+ * @returns {string}
+ */
+export const formatProfitLoss = (value) => {
+    const v = Number(value) || 0;
+    return `${v >= 0 ? '+' : '-'}¥${Math.abs(Math.round(v)).toLocaleString()}`;
+};

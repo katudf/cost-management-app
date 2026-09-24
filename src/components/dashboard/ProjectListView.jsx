@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { ArrowUp, ArrowDown, ArrowUpDown, User, FolderGit2 } from 'lucide-react';
 import { PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR } from '../../utils/constants';
+import { formatProfitLoss } from '../../utils/projectUtils';
 
 const SORT_NONE = null;
 
@@ -11,11 +12,6 @@ const COLUMNS = [
     { key: 'overallProgress', label: '進捗', sortable: true, align: 'right' },
     { key: 'predictedProfitLoss', label: '予測損益', sortable: true, align: 'right' },
 ];
-
-const formatProfitLoss = (value) => {
-    const v = Number(value) || 0;
-    return `${v >= 0 ? '+' : '-'}¥${Math.abs(Math.round(v)).toLocaleString()}`;
-};
 
 /**
  * ホーム画面：リスト（詳細）表示

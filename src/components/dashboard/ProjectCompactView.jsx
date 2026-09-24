@@ -1,11 +1,7 @@
 import React, { useMemo } from 'react';
 import { FolderGit2 } from 'lucide-react';
 import { PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR } from '../../utils/constants';
-
-const formatProfitLoss = (value) => {
-    const v = Number(value) || 0;
-    return `${v >= 0 ? '+' : '-'}¥${Math.abs(Math.round(v)).toLocaleString()}`;
-};
+import { formatProfitLoss } from '../../utils/projectUtils';
 
 /**
  * ホーム画面：コンパクト（タイル）表示

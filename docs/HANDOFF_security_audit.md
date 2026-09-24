@@ -2706,6 +2706,44 @@ undo登録のロジック自体は変更していない。
 
 ---
 
+### 9.21 ✅ `formatProfitLoss`（予測損益の表示フォーマット）の重複解消
+
+`src/components/dashboard/ProjectCompactView.jsx`と`src/components/dashboard/ProjectListView.jsx`の
+両方で、`predictedProfitLoss`を`"+¥12,345"`/`"-¥6,789"`形式の文字列に変換する
+`formatProfitLoss`関数がバイト単位で同一のまま、それぞれのファイル内にべた書きされていた。
+
+**重複の内容:**
+1. `const formatProfitLoss = (value) => { const v = Number(value) || 0; return \`${v >= 0 ? '+' : '-'}¥${Math.abs(Math.round(v)).toLocaleString()}\`; };`
+   という同一の関数定義が`ProjectCompactView.jsx`と`ProjectListView.jsx`の両方に
+   独立して存在していた
+
+**除外を確認した箇所（挙動が異なるため統合対象外）:**
+- `src/AdminApp.jsx`（約696行目）: 負値でも符号を付けず、赤文字色のみで表現
+- `src/components/tabs/AssignmentChartTab.jsx`（約505行目）: 符号プレフィックスなし。
+  `text-green-400`/`text-red-400`の文字色のみで正負を表現
+- `src/components/tabs/DashboardTab.jsx`（約109行目）: 符号プレフィックスなしに加え、
+  `progress > 0`のガード条件と「損失予知」/「利益見込」の別ラベルdivを併設
+- `src/WorkerApp.jsx`: 別の表示規約（作業員向けの簡略表示）のため対象外
+
+これらはいずれも「符号あり¥表示」という`formatProfitLoss`のロジックとは
+出力仕様そのものが異なり、統合すると表示上の挙動変更になるため、
+今回のスコープからは明確に除外した。
+
+**対応:** `src/utils/projectUtils.js`に新規のexport純関数`formatProfitLoss(value)`を追加し、
+`ProjectCompactView.jsx`・`ProjectListView.jsx`はそれぞれのローカル定義を削除して
+`../../utils/projectUtils`からimportする形に変更。
+
+**ゲート結果:**
+- 新規`src/utils/projectUtils.test.js`を新設し`describe('formatProfitLoss', ...)`に5件追加
+  （正の値の`+`表示、負の値の`-`表示、0の扱い、小数の四捨五入、非数値/nullを0とする挙動）
+- `npm test -- --run` → **177 passed / 10 files**（回帰なし、新規5件・新規1ファイルを含む）
+- `npm run build` → 成功（1969 modules transformed, 11.13s）
+- 旧重複パターン`const formatProfitLoss = `の残存参照:
+  `src/utils/projectUtils.js`内のexport定義1箇所のみを確認
+  （`ProjectCompactView.jsx`/`ProjectListView.jsx`の重複2箇所はいずれも解消）
+
+---
+
 ## 10. ⭐ 全フェーズ完了後に必ずやること
 
 > ユーザー指示（原文）:
