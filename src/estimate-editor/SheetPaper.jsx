@@ -26,6 +26,7 @@ import { sumItemAmounts } from '../supabaseEstimates';
 import {
   pt, PAPER_WIDTH, PAPER_HEIGHT, ROWS_PER_PAGE, COLORS, page, table, fmt,
 } from './paperStyles';
+import { buildSheetRowsShared } from './sheetRowLayout';
 
 // 空行センチネル（design.md §4: 空行は保持し、category_symbol で識別する）
 const BLANK_SENTINEL = '__blank__';
@@ -98,73 +99,8 @@ const parseNumberInput = (raw) => {
 // フッター行が必ず最終ページ末尾に収まるようにする。
 // 返り値は行記述子 {kind, item?, itemNo?, catTotal?, label?, amount?} の配列で、
 // 長さは必ず ROWS_PER_PAGE の倍数になる。
-export const buildSheetRows = (items, header, isTopSheet, totals, sheetTotal, showTotalRow = true) => {
-  const netRowCount = isTopSheet && header.show_net ? 1 : 0;
-  // トップシート: 税抜合計＋NET / サブシート: 合計1行（他シートから参照されていなければ非表示）
-  const footerRows = isTopSheet ? 1 + netRowCount : (showTotalRow ? 1 : 0);
-
-  const totalDataRows = items.length;
-  const remainder = totalDataRows % ROWS_PER_PAGE;
-  let paddingCount;
-  if (totalDataRows === 0) {
-    paddingCount = ROWS_PER_PAGE - footerRows;
-  } else {
-    const lastPageDataRows = remainder === 0 ? ROWS_PER_PAGE : remainder;
-    const availableForDummy = ROWS_PER_PAGE - lastPageDataRows - footerRows;
-    paddingCount = availableForDummy >= 0
-      ? availableForDummy
-      // 最終ページにフッターが収まらない場合はページを繰り越す
-      : (remainder === 0 ? 0 : ROWS_PER_PAGE - remainder) + (ROWS_PER_PAGE - footerRows);
-  }
-
-  // 工種見出しごとの小計（見出し行の金額セルに表示）
-  const catSubtotalMap = new Map();
-  let currentCat = null;
-  items.forEach(item => {
-    if (item.item_type === ITEM_TYPE.CATEGORY) {
-      currentCat = item;
-      catSubtotalMap.set(item, 0);
-    } else if (item.item_type === ITEM_TYPE.ITEM && currentCat) {
-      catSubtotalMap.set(currentCat, catSubtotalMap.get(currentCat) + (Number(item.amount) || 0));
-    }
-  });
-
-  const rows = [];
-  let itemNo = 0;
-  items.forEach(item => {
-    if (item.item_type === ITEM_TYPE.CATEGORY) {
-      rows.push({ kind: 'category', item, catTotal: catSubtotalMap.get(item) || 0 });
-    } else if (item.item_type === ITEM_TYPE.COMMENT) {
-      rows.push({ kind: 'comment', item });
-    } else if (item.item_type === ITEM_TYPE.SUBTOTAL) {
-      rows.push({ kind: 'subtotal', item });
-    } else if (isBlankRow(item)) {
-      // 空行はNo.を振らず空欄のまま印字する（編集時はセル入力できる）
-      rows.push({ kind: 'item', item, itemNo: null });
-    } else {
-      itemNo += 1;
-      rows.push({ kind: 'item', item, itemNo });
-    }
-  });
-
-  for (let i = 0; i < Math.max(0, paddingCount); i++) {
-    rows.push({ kind: 'dummy' });
-  }
-
-  if (isTopSheet) {
-    rows.push({ kind: 'total-ex-tax', amount: totals.subtotal });
-    if (header.show_net) {
-      rows.push({ kind: 'net', amount: totals.net });
-    }
-  } else if (showTotalRow) {
-    // 計算エンジン（Phase 5）がリンク解決済みのシート合計を渡す場合はそれを優先。
-    // 渡されない場合（呼び出し元未対応・ページ数計算のみ等）は ITEM 金額を単純合算。
-    const resolvedTotal = sheetTotal != null ? sheetTotal : sumItemAmounts(items);
-    rows.push({ kind: 'sheet-total', amount: resolvedTotal });
-  }
-
-  return rows;
-};
+export const buildSheetRows = (items, header, isTopSheet, totals, sheetTotal, showTotalRow = true) =>
+  buildSheetRowsShared(items, header, isTopSheet, totals, sheetTotal, showTotalRow, isBlankRow, ROWS_PER_PAGE);
 
 // シートが占めるページ数（EstimateEditor が通しページ番号を計算するのに使う）
 export const calcSheetPageCount = (items, header, isTopSheet, totals, sheetTotal, showTotalRow = true) =>

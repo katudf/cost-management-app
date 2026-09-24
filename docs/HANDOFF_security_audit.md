@@ -2887,6 +2887,74 @@ undo登録のロジック自体は変更していない。
 
 ---
 
+### 9.25 ✅ 明細シートの行レイアウト計算（ダミー行埋め・工種小計・行種別分類）の一本化
+
+`src/estimate-editor/SheetPaper.jsx`の`buildSheetRows`と`src/EstimatePDF.jsx`の
+`buildSheetRowsPDF`に、1シート分の`items`を「データ行＋ダミー行＋フッター行」の
+行記述子配列へ変換する同一アルゴリズム（ダミー行埋め計算・工種見出しの小計集計・
+行種別分類・トップシート/サブシートのフッター行分岐）がほぼそのまま重複していた。
+両者は`ROWS_PER_PAGE`の値も別々に定義しており（`SheetPaper.jsx`は`paperStyles.js`
+から輸入済みだったが、`EstimatePDF.jsx`は`PDF_ROWS_PER_PAGE = 19`を独自に再定義）、
+片方だけ変更されて食い違う回帰リスクがあった。
+
+調査の結果、空行（No.を振らない）判定のみ両者で挙動が異なることを確認した
+（詳細は下記の除外事項）。
+
+**重複の内容:**
+1. ダミー行埋め計算: `items.length`を`rowsPerPage`で割った余りとフッター行数から、
+   最終ページの空き行数（またはフッターが収まらない場合の次ページ丸ごと繰り越し）
+   を算出する分岐ロジック
+2. 工種見出しごとの小計集計: `ITEM_TYPE.CATEGORY`行ごとに、直後の`ITEM_TYPE.ITEM`行の
+   `amount`を`ITEM_TYPE.SUBTOTAL`行まで加算していくマップ構築処理
+3. 行種別分類: `category`/`comment`/`subtotal`/`item`（空行は`itemNo: null`、
+   通常行は連番）への分類ループ
+4. フッター行分岐: トップシートは「税抜合計＋NET行(show_net時)」、サブシートは
+   `showTotalRow`が真なら「合計」1行（`sheetTotal`優先、nullなら`sumItemAmounts`
+   にフォールバック）
+
+**除外を確認した箇所（挙動が異なるため統合対象外）:**
+- **空行判定（`isBlankRow`）**: `SheetPaper.jsx`はセンチネル必須
+  （`category_symbol === '__blank__'`かつ`quantity`/`unit_price`が`null`/`undefined`
+  のみ）で判定するのに対し、`EstimatePDF.jsx`はセンチネル不要・空文字（`''`）も
+  空行として扱う、より緩い判定だった。両者の挙動を実際に統一すると、PDF出力側で
+  行番号の振られ方が変わってしまう（`SheetPaper.jsx`側では空扱いされない入力が
+  PDF側では空扱いされ得る）ため、挙動の統合は行わず、判定関数を`isBlankRowFn`
+  パラメータとして呼び出し側から注入する形にした
+- **`src/estimate-editor/estimateCalc.js`の`isBlankRow`**: 同じ`BLANK_SENTINEL`
+  センチネルを使う3つ目の空行判定だが、目的が異なる（シート合計・カテゴリ小計等の
+  「計算」対象からの除外用であり、行レイアウト・ページ分割用ではない）。判定条件も
+  微妙に異なり（センチネル必須は`SheetPaper.jsx`と同じだが、`quantity`/`unit_price`は
+  空文字も許容する点は`EstimatePDF.jsx`寄り、という3者目の組み合わせ）、計算エンジン
+  内に閉じた独立ロジックのため統合対象から除外した
+
+**対応:** `src/estimate-editor/sheetRowLayout.js`を新設し、`buildSheetRowsShared(items,
+header, isTopSheet, totals, sheetTotal, showTotalRow, isBlankRowFn, rowsPerPage)`に
+共通アルゴリズムを一本化した。空行判定と`rowsPerPage`は呼び出し側が注入する。
+- `SheetPaper.jsx`: 既存のセンチネル判定`isBlankRow`と`paperStyles.js`の
+  `ROWS_PER_PAGE`を渡す薄いラッパーに変更
+- `EstimatePDF.jsx`: 緩い判定を`isBlankRowPDF`として維持しつつ渡す薄いラッパーに
+  変更。ファイル独自の`PDF_ROWS_PER_PAGE`定数は削除し、`paperStyles.js`の
+  `ROWS_PER_PAGE`に統一（ページ区切り計算・`sheetStartPages`算出の3箇所すべてを
+  置き換え）。この変更に伴い、置き換え後に使われなくなった`ITEM_TYPE`・
+  `sumItemAmounts`のimportも削除した
+
+**ゲート結果:**
+- 新規`src/estimate-editor/sheetRowLayout.test.js`を新設し12件追加
+  （items空時のダミー埋め・トップシート2行のみの1件、`ROWS_PER_PAGE`ちょうど
+  倍数でダミー0の1件、余りがある場合のダミー埋めの1件、フッターが最終ページに
+  収まらない場合の繰り越しの1件、`sheetTotal`優先とnull時の`sumItemAmounts`
+  フォールバックの1件、`showTotalRow=false`でのサブシート合計行抑止の1件、
+  複数工種の小計集計の1件、category/comment/item分類の1件、空行での
+  itemNo=null・後続番号の詰まりの1件、sentinel判定でセンチネル無しなら空扱い
+  しない確認の1件、loose判定で空文字なら空扱いになる確認の1件、同一入力での
+  sentinel/loose判定の分岐確認の1件）
+- `npm test -- --run` → **230 passed / 14 files**（回帰なし、新規12件・新規1ファイルを含む）
+- `npm run build` → 成功（1972 modules transformed, 11.41s）
+- `EstimatePDF.jsx`に`ITEM_TYPE`・`sumItemAmounts`・`PDF_ROWS_PER_PAGE`の
+  べた書き定義・参照が残っていないことをgrepで確認済み（該当なし）
+
+---
+
 ## 10. ⭐ 全フェーズ完了後に必ずやること
 
 > ユーザー指示（原文）:

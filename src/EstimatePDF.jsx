@@ -5,9 +5,9 @@ import React from 'react';
 import {
   Document, Page, Text, View, StyleSheet, Font, pdf, Image
 } from '@react-pdf/renderer';
-import { calcTopSheetTotals, sumItemAmounts } from './supabaseEstimates';
-import { ITEM_TYPE } from './utils/constants';
-import { fmt, fmtDate, calcFontSize } from './estimate-editor/paperStyles';
+import { calcTopSheetTotals } from './supabaseEstimates';
+import { fmt, fmtDate, calcFontSize, ROWS_PER_PAGE } from './estimate-editor/paperStyles';
+import { buildSheetRowsShared } from './estimate-editor/sheetRowLayout';
 
 // ============================================================
 // フォント登録
@@ -537,76 +537,14 @@ const CoverPage = ({ estimate, settings, totals }) => {
 //   - トップシート: 税抜合計＋NET行(show_net時)。
 //     消費税・税込合計は鑑(CoverPage)側にのみ表示する。
 //   - サブシート : 「合　計」1行のみ（リンク解決済みのシート合計 sheetTotal）。
-const PDF_ROWS_PER_PAGE = 19;
+// 空行（No.を振らない）判定は SheetPaper.jsx と異なりセンチネル不要・空文字も空扱いにする。
+const isBlankRowPDF = (item) =>
+  !item.name && !item.spec &&
+  (item.quantity == null || item.quantity === '') &&
+  (item.unit_price == null || item.unit_price === '');
 
-const buildSheetRowsPDF = (items, header, isTopSheet, totals, sheetTotal, showTotalRow = true) => {
-  const netRowCount = isTopSheet && header.show_net ? 1 : 0;
-  const footerRows = isTopSheet ? 1 + netRowCount : (showTotalRow ? 1 : 0);
-
-  const totalDataRows = items.length;
-  const remainder = totalDataRows % PDF_ROWS_PER_PAGE;
-  let paddingCount;
-  if (totalDataRows === 0) {
-    paddingCount = PDF_ROWS_PER_PAGE - footerRows;
-  } else {
-    const lastPageDataRows = remainder === 0 ? PDF_ROWS_PER_PAGE : remainder;
-    const availableForDummy = PDF_ROWS_PER_PAGE - lastPageDataRows - footerRows;
-    paddingCount = availableForDummy >= 0
-      ? availableForDummy
-      : (remainder === 0 ? 0 : PDF_ROWS_PER_PAGE - remainder) + (PDF_ROWS_PER_PAGE - footerRows);
-  }
-
-  // 工種見出しごとの小計（見出し行の金額セルに表示）
-  const catSubtotalMap = new Map();
-  let currentCat = null;
-  items.forEach(item => {
-    if (item.item_type === ITEM_TYPE.CATEGORY) {
-      currentCat = item;
-      catSubtotalMap.set(item, 0);
-    } else if (item.item_type === ITEM_TYPE.ITEM && currentCat) {
-      catSubtotalMap.set(currentCat, catSubtotalMap.get(currentCat) + (Number(item.amount) || 0));
-    }
-  });
-
-  const rows = [];
-  let itemNo = 0;
-  items.forEach(item => {
-    if (item.item_type === ITEM_TYPE.CATEGORY) {
-      rows.push({ kind: 'category', item, catTotal: catSubtotalMap.get(item) || 0 });
-    } else if (item.item_type === ITEM_TYPE.COMMENT) {
-      rows.push({ kind: 'comment', item });
-    } else if (item.item_type === ITEM_TYPE.SUBTOTAL) {
-      rows.push({ kind: 'subtotal', item });
-    } else {
-      // 空行（No.を振らない）判定は itemNo を進めるかどうかだけの差
-      const blank = !item.name && !item.spec &&
-        (item.quantity == null || item.quantity === '') &&
-        (item.unit_price == null || item.unit_price === '');
-      if (blank) {
-        rows.push({ kind: 'item', item, itemNo: null });
-      } else {
-        itemNo += 1;
-        rows.push({ kind: 'item', item, itemNo });
-      }
-    }
-  });
-
-  for (let i = 0; i < Math.max(0, paddingCount); i++) {
-    rows.push({ kind: 'dummy' });
-  }
-
-  if (isTopSheet) {
-    rows.push({ kind: 'total-ex-tax', amount: totals.subtotal });
-    if (header.show_net) {
-      rows.push({ kind: 'net', amount: totals.net });
-    }
-  } else if (showTotalRow) {
-    const resolvedTotal = sheetTotal != null ? sheetTotal : sumItemAmounts(items);
-    rows.push({ kind: 'sheet-total', amount: resolvedTotal });
-  }
-
-  return rows;
-};
+const buildSheetRowsPDF = (items, header, isTopSheet, totals, sheetTotal, showTotalRow = true) =>
+  buildSheetRowsShared(items, header, isTopSheet, totals, sheetTotal, showTotalRow, isBlankRowPDF, ROWS_PER_PAGE);
 
 // ============================================================
 // 明細行1件の描画（行記述子 → @react-pdf View）
@@ -764,8 +702,8 @@ const DetailPage = ({ sheet, items, isTopSheet, totals, sheetTotal, showTotalRow
 
       {/* 明細行（19行ごとに強制改ページ） */}
       {rows.map((row, idx) => {
-        const shouldBreak = idx > 0 && idx % PDF_ROWS_PER_PAGE === 0;
-        const isLastRowOfPage = (idx + 1) % PDF_ROWS_PER_PAGE === 0;
+        const shouldBreak = idx > 0 && idx % ROWS_PER_PAGE === 0;
+        const isLastRowOfPage = (idx + 1) % ROWS_PER_PAGE === 0;
         const pageBottomBorderStyle = isLastRowOfPage ? { borderBottom: '1pt solid #1a1a1a' } : {};
         return renderPdfRow(row, idx, pageBottomBorderStyle, shouldBreak);
       })}
@@ -820,7 +758,7 @@ const EstimateDocument = ({ estimate, settings }) => {
     const rows = buildSheetRowsPDF(
       sheet.items || [], header, idx === 0, totals, sheet.sheetTotal, shouldShowTotalRow(sheet, idx)
     );
-    running += rows.length / PDF_ROWS_PER_PAGE;
+    running += rows.length / ROWS_PER_PAGE;
     return start;
   });
 
