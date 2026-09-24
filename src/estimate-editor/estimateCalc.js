@@ -406,3 +406,31 @@ export const injectCategorySubtotals = (items, extraFields = () => ({})) => {
 
   return withSubtotals;
 };
+
+// PDFプレビュー用データ構築・保存用ペイロード構築の双方が必要とする、1シート分の
+// 明細整形パイプライン（design.md）。以下3手順は完全に同一の実装が2箇所に存在していたため
+// ここへ集約する：
+//   ① SUBTOTAL行を除去（再注入前提のため保持不要）
+//   ② _tempId を除去し、COMMENT行を DB制約上の表現（item_type:'item' +
+//      category_symbol:'__comment__'）へエンコード
+//   ③ show_subtotals が真なら injectCategorySubtotals でカテゴリ小計行を注入
+// extraFields は各行に追加するフィールド（保存時の sheet_id 等）を返す関数。
+// subtotalExtraFields は注入する SUBTOTAL 行に追加するフィールドを返す関数
+// （injectCategorySubtotals の第2引数へそのまま渡す）。
+export const encodeSheetItemsForOutput = (sheetItems, { showSubtotals, extraFields = () => ({}), subtotalExtraFields } = {}) => {
+  const encoded = sheetItems
+    .filter(i => i.item_type !== ITEM_TYPE.SUBTOTAL)
+    .map(({ _tempId, ...item }) => {
+      const isComment = item.item_type === ITEM_TYPE.COMMENT;
+      return {
+        ...item,
+        ...extraFields(item),
+        item_type:       isComment ? ITEM_TYPE.ITEM : item.item_type,
+        category_symbol: isComment ? '__comment__' : item.category_symbol,
+      };
+    });
+
+  if (!showSubtotals) return encoded;
+
+  return injectCategorySubtotals(encoded, subtotalExtraFields);
+};

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { injectCategorySubtotals, computeAutoAmount } from './estimateCalc';
+import { injectCategorySubtotals, computeAutoAmount, encodeSheetItemsForOutput } from './estimateCalc';
 import { ITEM_TYPE } from '../utils/constants';
 
 // EstimateEditor.jsx のプレビュー構築（sort_order 付与）と保存ペイロード構築
@@ -107,5 +107,89 @@ describe('computeAutoAmount', () => {
         const result = computeAutoAmount({ quantity: 2, unit_price: 100, name: '材料A' });
         expect(result.name).toBe('材料A');
         expect(result.amount).toBe(200);
+    });
+});
+
+// EstimateEditor.jsx の PDFプレビュー構築（buildSheetItems）と保存ペイロード構築
+// （handleSave）に、SUBTOTAL除去→_tempId除去→COMMENTエンコード→小計行注入という
+// 全く同一のパイプラインがべた書きされていた。ここに一本化する。
+describe('encodeSheetItemsForOutput', () => {
+    const comment = (extra = {}) => ({ item_type: ITEM_TYPE.COMMENT, _tempId: 'temp-1', name: '備考', ...extra });
+    const subtotalRow = () => ({ item_type: ITEM_TYPE.SUBTOTAL, name: '合　計', amount: 999 });
+
+    it('SUBTOTAL行を除去する', () => {
+        const items = [category('c1', '土工'), item(1000), subtotalRow()];
+        const result = encodeSheetItemsForOutput(items, { showSubtotals: false });
+        expect(result.map(r => r.item_type)).toEqual([ITEM_TYPE.CATEGORY, ITEM_TYPE.ITEM]);
+    });
+
+    it('_tempId を除去する', () => {
+        const items = [{ ...item(1000), _tempId: 'temp-xyz' }];
+        const result = encodeSheetItemsForOutput(items, { showSubtotals: false });
+        expect(result[0]._tempId).toBeUndefined();
+        expect(result[0].amount).toBe(1000);
+    });
+
+    it('COMMENT行を item_type: ITEM + category_symbol: __comment__ にエンコードする', () => {
+        const items = [comment()];
+        const result = encodeSheetItemsForOutput(items, { showSubtotals: false });
+        expect(result[0].item_type).toBe(ITEM_TYPE.ITEM);
+        expect(result[0].category_symbol).toBe('__comment__');
+        expect(result[0].name).toBe('備考');
+    });
+
+    it('COMMENT以外の item_type / category_symbol は変更しない', () => {
+        const items = [{ ...item(1000), category_symbol: 'c1' }];
+        const result = encodeSheetItemsForOutput(items, { showSubtotals: false });
+        expect(result[0].item_type).toBe(ITEM_TYPE.ITEM);
+        expect(result[0].category_symbol).toBe('c1');
+    });
+
+    it('extraFields で各行に任意フィールドを付与できる（保存用途の sheet_id 等）', () => {
+        const items = [item(1000), item(2000)];
+        const result = encodeSheetItemsForOutput(items, {
+            showSubtotals: false,
+            extraFields: () => ({ sheet_id: 'sheet-A' }),
+        });
+        expect(result.every(r => r.sheet_id === 'sheet-A')).toBe(true);
+    });
+
+    it('showSubtotals が false なら小計行を注入しない', () => {
+        const items = [category('c1', '土工'), item(1000)];
+        const result = encodeSheetItemsForOutput(items, { showSubtotals: false });
+        expect(result.map(r => r.item_type)).toEqual([ITEM_TYPE.CATEGORY, ITEM_TYPE.ITEM]);
+    });
+
+    it('showSubtotals が true なら injectCategorySubtotals で小計行を注入する', () => {
+        const items = [category('c1', '土工'), item(1000), item(2000)];
+        const result = encodeSheetItemsForOutput(items, { showSubtotals: true });
+        const subtotal = result[result.length - 1];
+        expect(subtotal.item_type).toBe(ITEM_TYPE.SUBTOTAL);
+        expect(subtotal.amount).toBe(3000);
+    });
+
+    it('subtotalExtraFields で注入される小計行に任意フィールドを付与できる（プレビュー用途の sort_order 等）', () => {
+        const items = [category('c1', '土工'), item(1000)];
+        const result = encodeSheetItemsForOutput(items, {
+            showSubtotals: true,
+            subtotalExtraFields: (sortOrder) => ({ sort_order: sortOrder }),
+        });
+        const subtotal = result[result.length - 1];
+        expect(subtotal.sort_order).toBe(2);
+    });
+
+    it('既存のSUBTOTAL行を除去した上で、showSubtotalsに応じて新しい小計行を再注入する', () => {
+        const items = [category('c1', '土工'), item(1000), subtotalRow(), category('c2', '型枠工'), item(500)];
+        const result = encodeSheetItemsForOutput(items, { showSubtotals: true });
+        expect(result.map(r => r.item_type)).toEqual([
+            ITEM_TYPE.CATEGORY,
+            ITEM_TYPE.ITEM,
+            ITEM_TYPE.SUBTOTAL,
+            ITEM_TYPE.CATEGORY,
+            ITEM_TYPE.ITEM,
+            ITEM_TYPE.SUBTOTAL,
+        ]);
+        expect(result[2].amount).toBe(1000);
+        expect(result[5].amount).toBe(500);
     });
 });
