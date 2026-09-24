@@ -2831,6 +2831,62 @@ undo登録のロジック自体は変更していない。
 
 ---
 
+### 9.24 ✅ 仕入帳CSVインポートの純関数群（列マッピング・CSVパース・日付/数値正規化）の一本化
+
+`src/components/tabs/PurchaseLedgerTab.jsx`のコンポーネント定義より前に、CSVインポート
+処理で使う4つの純関数（Reactの状態を持たない）がべた書きされており、いずれもテストが
+存在しなかった。特に`parseCsv`はRFC4180準拠のクォート処理（カンマ・改行・`""`エスケープ）
+を含む状態機械で分岐が密集しており、`normalizeCsvDate`もExcelシリアル値・複数の区切り文字
+（`/`・`-`・`.`・`年月日`）を扱う分岐が多く、テストなしでは変更時の回帰に気づきにくい状態
+だった。
+
+コメントに「`scripts/upload_purchase_ledger.js`と同じ突き合わせ方針」との記述があったため
+重複の可能性を調査したが、実際に読み比べた結果、統合対象ではないと判断した（詳細は下記）。
+
+**対象にした理由（純粋関数・未テスト・分岐密度が高い）:**
+1. `buildCsvColMap`: ヘッダー文字列からPurchaseRecordsカラムへの対応表を作る、
+   9項目分の`findIndex`呼び出しの集合
+2. `parseCsv`: ダブルクォート内のカンマ・改行・`""`エスケープを状態機械で処理する
+   簡易CSVパーサ
+3. `normalizeCsvDate`: Excelシリアル値・`YYYY/MM/DD`等の複数区切り文字・`年月日`表記を
+   ISO(`YYYY-MM-DD`)へ正規化する処理
+4. `parseNumericCell`: カンマ・円記号・空白を許容して数値へ変換する処理
+
+**除外を確認した箇所（挙動が異なるため統合対象外）:**
+- `scripts/upload_purchase_ledger.js`: コメントでは「同じ突き合わせ方針」とされているが、
+  実装を読み比べると一致しない。例えば`unit`列の判定は`headers.findIndex(h => h.includes('単位'))`
+  のみで`単価`との除外がなく、`date`列も`月/日`のみで`日付`へのフォールバックがない
+  （`buildCsvColMap`はどちらも持つ）。また、この関数はxlsxライブラリで読み込んだ
+  Excelセル値（数値・文字列）を処理対象としており、`parseCsv`が扱うRFC4180の
+  クォート付きCSV生テキストは扱わない。加えてこのスクリプトはVercel/Viteでバンドル
+  される`src/`アプリとは独立したNode CLIスクリプト（`xlsx`・サービスロールでの
+  Supabase呼び出しを直接使う保守用スクリプト）であり、実行コンテキストも異なる。
+  「意図は似ているが挙動もI/Oも異なる」ため統合対象から除外し、`unit`/`date`の
+  マッチング挙動を意図せず変更してしまうリスクを避けた
+
+**対応:** `src/utils/purchaseLedgerCsv.js`を新設し、`buildCsvColMap`/`parseCsv`/
+`normalizeCsvDate`/`parseNumericCell`の4関数を名前付きexportとして一本化。
+`PurchaseLedgerTab.jsx`側は該当箇所をこのモジュールからのimportに置き換えた
+（呼び出し側のシグネチャ・呼び出し箇所は変更なし）。
+
+**ゲート結果:**
+- 新規`src/utils/purchaseLedgerCsv.test.js`を新設し24件追加
+  （`buildCsvColMap`: 標準ヘッダー解決・`日付`フォールバック・`仕入先`/`品名`
+  フォールバック・`単位`と`単価`の誤認防止・未検出時の`-1`の6件、
+  `parseCsv`: 単純CSV・末尾改行なし・クォート内カンマ・クォート内改行・
+  `""`エスケープ・CRLF・BOM除去の7件、
+  `normalizeCsvDate`: null/undefined/空文字・Excelシリアル値・`YYYY/MM/DD`・
+  `YYYY-MM-DD`・`年月日`表記・不正文字列の6件、
+  `parseNumericCell`: null/undefined/空文字・カンマ区切り・円記号と空白・
+  数値そのまま・変換不能文字列の5件）
+- `npm test -- --run` → **218 passed / 13 files**（回帰なし、新規24件・新規1ファイルを含む）
+- `npm run build` → 成功（1971 modules transformed, 10.77s）
+- `PurchaseLedgerTab.jsx`内に`buildCsvColMap`/`parseCsv`/`normalizeCsvDate`/
+  `parseNumericCell`のべた書き定義が残っていないことをgrepで確認済み
+  （importと呼び出し箇所のみが残存）
+
+---
+
 ## 10. ⭐ 全フェーズ完了後に必ずやること
 
 > ユーザー指示（原文）:
