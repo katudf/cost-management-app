@@ -9,7 +9,7 @@ import { useAuth } from './hooks/useAuth';
 import LoginScreen from './components/auth/LoginScreen';
 import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
 import HomeLanding from './components/HomeLanding';
-import logoUrl from './img/logo.png';
+import logoUrl from './img/kimura-logo.svg';
 import { Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, GripVertical, LogOut, Bell, Database } from 'lucide-react';
 import { buildWeekDays, buildWeekPrefix, fetchWeeklyReportData } from './hooks/useWeeklyReportData';
 import { DEFAULT_MASTER_DATA, PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR, ITEM_TYPE, DASHBOARD_VIEW_MODE, DASHBOARD_VIEW_MODE_LIST, ESTIMATE_STATUS } from './utils/constants';
@@ -424,7 +424,7 @@ const App = () => {
                                     title="トップページへ戻る"
                                     className="flex items-center gap-2 hover:opacity-80 transition"
                                 >
-                                    <img src={logoUrl} alt="" className="w-8 h-8 object-contain" />
+                                    <img src={logoUrl} alt="" className="w-32 h-32 object-contain" />
                                     CostNavi
                                 </button>
                             </h1>
