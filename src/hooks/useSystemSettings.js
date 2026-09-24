@@ -46,7 +46,7 @@ export async function fetchSystemSettings(columns = '*') {
  * system_settings（id=1）を更新する素の関数。updated_at は自動で付与する。
  * @param {object} patch 更新したいカラムだけを渡す
  */
-async function updateSystemSettings(patch) {
+export async function updateSystemSettings(patch) {
     const { error } = await supabase
         .from('system_settings')
         .update({ ...patch, updated_at: new Date().toISOString() })
