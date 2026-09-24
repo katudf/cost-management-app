@@ -11,6 +11,7 @@ import {
 import { useToast } from '../../components/Toast';
 import ConfirmModal from '../ConfirmModal';
 import { searchPaintProductsByName, fetchPaintProductsByIds } from '../../features/paint/supabasePaint';
+import { computeAmountFallback } from '../../utils/purchaseLedgerUtils';
 
 // 登録用CSVフォーマットの列（順序どおりにテンプレートへ出力する）
 const CSV_COLUMNS = ['年/月/日', '工事名', '購入先', '名称', '備考', '数量', '単位', '単価', '金額'];
@@ -249,18 +250,7 @@ const PurchaseLedgerTab = () => {
     }, [data, linkedPaintMap]);
 
     // amount の実効値（表示と同じく 数量 × 単価 のフォールバック込み）
-    const effectiveAmount = (row) => {
-        let v = row?.amount;
-        if (v === null || v === undefined || v === '') {
-            const q = Number(row?.quantity);
-            const p = Number(row?.unit_price);
-            if (!isNaN(q) && !isNaN(p) && row?.quantity !== null && row?.unit_price !== null) {
-                v = q * p;
-            }
-        }
-        const n = Number(v);
-        return Number.isFinite(n) ? n : null;
-    };
+    const effectiveAmount = (row) => computeAmountFallback(row);
 
     // 項目フィルターの選択肢（テキスト系カラムの重複を除いた実データ値）
     const filterOptions = useMemo(() => {
@@ -405,11 +395,7 @@ const PurchaseLedgerTab = () => {
             let v = row?.[key];
             // 金額は quantity * unit_price のフォールバックを表示と揃える
             if (key === 'amount' && (v === null || v === undefined || v === '')) {
-                const q = Number(row?.quantity);
-                const p = Number(row?.unit_price);
-                if (!isNaN(q) && !isNaN(p) && row?.quantity !== null && row?.unit_price !== null) {
-                    v = q * p;
-                }
+                v = computeAmountFallback(row);
             }
             return v;
         };
@@ -452,6 +438,8 @@ const PurchaseLedgerTab = () => {
     };
 
     const formatCell = (key, value, row) => {
+        // 数量・単価が両方入力済みなら、保存済みamountより優先してq*pを表示する
+        // （effectiveAmount/getComparableはamount優先のため、意図的に挙動を変えていない＝統合対象外）
         if (key === 'amount') {
             const q = Number(row?.quantity);
             const p = Number(row?.unit_price);

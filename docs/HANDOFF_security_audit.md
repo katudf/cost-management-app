@@ -2785,6 +2785,52 @@ undo登録のロジック自体は変更していない。
 
 ---
 
+### 9.23 ✅ 仕入帳の金額フォールバック計算（数量×単価補完）の重複解消
+
+`src/components/tabs/PurchaseLedgerTab.jsx`には、「`amount`（金額）が未入力のとき
+`quantity × unit_price`（数量×単価）で補完して表示する」という同一ロジックが、
+`effectiveAmount`と`getComparable`の2箇所にべた書きされていた。
+調査の過程で`formatCell`と`handleEditChange`にも似た計算が見つかったが、
+挙動が異なるため統合対象から除外した（詳細は下記）。
+
+**重複の内容:**
+1. `effectiveAmount`: 一覧表示用に、`amount`が未入力なら`quantity × unit_price`で
+   補完して金額を算出する処理
+2. `getComparable`: ソート用の比較値算出で、同じ「`amount`未入力時は数量×単価で補完」
+   というフォールバックロジックが同一の条件分岐で存在していた
+
+**除外を確認した箇所（挙動が異なるため統合対象外）:**
+- `formatCell`: `quantity`と`unit_price`が両方入力されていれば**常に**`q × p`を
+  先に優先して計算し、既に保存済みの`amount`があってもそれを上書きする。
+  `effectiveAmount`/`getComparable`とは優先順位が正反対（両者は保存済み`amount`を
+  最優先し、空のときのみ`q × p`にフォールバックする）ため、統合すると表示金額が
+  変わってしまう。よって対象外とした
+- `handleEditChange`: 編集中の入力欄に数量・単価を入力した際に金額欄をリアルタイムで
+  自動入力するための処理であり、読み取り専用の表示値算出とは目的が異なる。
+  ガード条件も`q !== 0 && u !== 0`（0を「未入力」として扱う）であり、
+  `computeAmountFallback`の空文字判定とは意味が異なるため対象外とした
+
+**対応:** `src/utils/purchaseLedgerUtils.js`を新設し、`computeAmountFallback(row)`に
+ロジックを一本化。`amount`が`null`/`undefined`/空文字のときのみ`quantity × unit_price`に
+フォールバックし、数量・単価のいずれかが空文字（未入力）の場合はフォールバックせず
+`null`を返す（`Number('')`が`0`になり誤って金額0円と表示される不具合を防止）。
+`effectiveAmount`と`getComparable`をこの関数に委譲するよう変更した。
+
+**ゲート結果:**
+- 新規`src/utils/purchaseLedgerUtils.test.js`を新設し8件追加
+  （amount数値・文字列数値の優先の2件、null/undefined/空文字での補完発火の1件、
+  数量/単価の空文字によるフォールバック抑止の2件、数量・単価がnull/undefinedの
+  場合の抑止1件、数値変換不能な数量・単価の抑止1件、`amount`が非数値文字列の場合の
+  抑止1件）
+- `npm test -- --run` → **194 passed / 12 files**（回帰なし、新規8件・新規1ファイルを含む）
+- `npm run build` → 成功（1970 modules transformed, 10.91s）
+- `PurchaseLedgerTab.jsx`内の旧重複ロジック（`effectiveAmount`/`getComparable`内の
+  べた書き条件分岐）は`computeAmountFallback`呼び出しに置き換え済みで残存なし。
+  `formatCell`・`handleEditChange`の2箇所は挙動が異なるため意図的に未変更のまま残存
+  （上記「除外を確認した箇所」参照）
+
+---
+
 ## 10. ⭐ 全フェーズ完了後に必ずやること
 
 > ユーザー指示（原文）:
