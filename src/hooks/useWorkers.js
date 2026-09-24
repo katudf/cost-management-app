@@ -12,7 +12,7 @@ export function useWorkers({ workers, setWorkers, showToast }) {
 
     const addWorker = () => {
         setEditingWorker({
-            name: '', kana: '', birthDate: '', hireDate: '', address: '', contactInfo: '', cpdsNumber: '', worker_type: WORKER_TYPE.WORKER
+            name: '', kana: '', birthDate: '', hireDate: '', address: '', contactInfo: '', cpdsNumber: '', worker_type: WORKER_TYPE.WORKER, show_in_assignment: true
         });
         setIsWorkerModalOpen(true);
     };
@@ -134,6 +134,18 @@ export function useWorkers({ workers, setWorkers, showToast }) {
         }
     };
 
+    // 配置表への表示・非表示を切り替える（楽観的更新、失敗時は元に戻す）
+    const toggleWorkerAssignmentVisibility = async (workerId, show) => {
+        setWorkers(prev => prev.map(w => w.id === workerId ? { ...w, show_in_assignment: show } : w));
+
+        const { error } = await supabase.from('Workers').update({ show_in_assignment: show }).eq('id', workerId);
+        if (error) {
+            console.error(error);
+            setWorkers(prev => prev.map(w => w.id === workerId ? { ...w, show_in_assignment: !show } : w));
+            showToast('配置表の表示設定の保存に失敗しました。', 'error');
+        }
+    };
+
     return {
         isWorkerModalOpen,
         setIsWorkerModalOpen,
@@ -147,6 +159,7 @@ export function useWorkers({ workers, setWorkers, showToast }) {
         openEditWorkerModal,
         saveWorker,
         removeWorker,
-        handleWorkerReorder
+        handleWorkerReorder,
+        toggleWorkerAssignmentVisibility
     };
 }

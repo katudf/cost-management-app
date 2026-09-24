@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { toDateStr, addDays, getMonday, buildDateColumns, buildWeekGroups } from '../utils/dateUtils';
-import { DEFAULT_COLORS, PROJECT_STATUS, WORKER_TYPE } from '../utils/constants';
+import { DEFAULT_COLORS, PROJECT_STATUS } from '../utils/constants';
 import { fetchCompanyHolidays, deleteCompanyHoliday, upsertCompanyHoliday } from './useCompanyHolidays';
 import { isActualHoliday, HOLIDAY_DESCRIPTION } from '../utils/holidayUtils';
 
@@ -88,9 +88,9 @@ export function useAssignmentState({
 
     const isLoading = staticLoading || periodLoading;
 
-    // 退社済み・事務属性の作業員を除外
+    // 退社済み・配置表非表示の作業員を除外
     const activeWorkers = useMemo(() => {
-        return (workers || []).filter(w => !w.resignation_date && w.worker_type !== WORKER_TYPE.OFFICE);
+        return (workers || []).filter(w => !w.resignation_date && w.show_in_assignment !== false);
     }, [workers]);
 
     // 顧客情報のMap

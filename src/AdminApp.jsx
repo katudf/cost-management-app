@@ -793,6 +793,7 @@ const App = () => {
                             handleWorkerReorder={workerOps.handleWorkerReorder}
                             openEditWorkerModal={workerOps.openEditWorkerModal}
                             removeWorker={workerOps.removeWorker}
+                            toggleWorkerAssignmentVisibility={workerOps.toggleWorkerAssignmentVisibility}
                             showToast={showToast}
                         />
                     )}

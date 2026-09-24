@@ -12,6 +12,7 @@ const WorkersTab = ({
     handleWorkerReorder,
     openEditWorkerModal,
     removeWorker,
+    toggleWorkerAssignmentVisibility,
     showToast,
 }) => {
     const [selectedWorkerForDetails, setSelectedWorkerForDetails] = useState(null);
@@ -140,9 +141,26 @@ const WorkersTab = ({
                                         <span className="text-xs text-slate-500">{worker.contactInfo || '連絡先未設定'}</span>
                                     </div>
                                 </div>
-                                <div className="flex items-center text-slate-400 opacity-60 mr-2 mt-2 sm:mt-0 group-hover:opacity-100 group-hover:text-blue-500 transition">
+                                <div className="flex items-center gap-3 mt-2 sm:mt-0">
+                                <label
+                                    className="flex items-center gap-1.5 cursor-pointer select-none bg-white px-2 py-1 rounded border border-slate-200 hover:border-blue-300"
+                                    title="チェックを外すと配置表・工程表閲覧に表示されません"
+                                    onClick={(e) => e.stopPropagation()}
+                                    draggable={true}
+                                    onDragStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                                >
+                                    <input
+                                        type="checkbox"
+                                        checked={worker.show_in_assignment !== false}
+                                        onChange={(e) => toggleWorkerAssignmentVisibility(worker.id, e.target.checked)}
+                                        className="w-4 h-4 rounded accent-blue-600"
+                                    />
+                                    <span className="text-xs font-bold text-slate-600">配置表に表示</span>
+                                </label>
+                                <div className="flex items-center text-slate-400 opacity-60 mr-2 group-hover:opacity-100 group-hover:text-blue-500 transition">
                                     <span className="text-xs font-bold mr-1 hidden sm:inline">詳細</span>
                                     <ChevronRight size={18} />
+                                </div>
                                 </div>
                             </div>
                             );
@@ -152,7 +170,8 @@ const WorkersTab = ({
                         )}
                     </div>
                     <p className="text-xs text-slate-500 mt-4 leading-relaxed">
-                        ※ここでの表示順（上から順）が、作業員アプリ（スマホ側）のログイン画面や実績入力時のリストの順番になります。
+                        ※ここでの表示順（上から順）が、作業員アプリ（スマホ側）のログイン画面や実績入力時のリストの順番になります。<br />
+                        ※「配置表に表示」のチェックを外した従業員は、配置表および工程表閲覧に表示されません（従業員の属性に関係なく、このチェックで判定します）。
                     </p>
                 </div>
 

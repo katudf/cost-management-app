@@ -1619,6 +1619,7 @@ export type Database = {
           name: string | null
           order: number | null
           resignation_date: string | null
+          show_in_assignment: boolean
           stamp_url: string | null
           worker_type: string
         }
@@ -1636,6 +1637,7 @@ export type Database = {
           name?: string | null
           order?: number | null
           resignation_date?: string | null
+          show_in_assignment?: boolean
           stamp_url?: string | null
           worker_type?: string
         }
@@ -1653,6 +1655,7 @@ export type Database = {
           name?: string | null
           order?: number | null
           resignation_date?: string | null
+          show_in_assignment?: boolean
           stamp_url?: string | null
           worker_type?: string
         }
@@ -1678,6 +1681,7 @@ export type Database = {
           id: number | null
           name: string | null
           resignation_date: string | null
+          show_in_assignment: boolean | null
           worker_type: string | null
         }
         Insert: {
@@ -1685,6 +1689,7 @@ export type Database = {
           id?: number | null
           name?: string | null
           resignation_date?: string | null
+          show_in_assignment?: boolean | null
           worker_type?: string | null
         }
         Update: {
@@ -1692,6 +1697,7 @@ export type Database = {
           id?: number | null
           name?: string | null
           resignation_date?: string | null
+          show_in_assignment?: boolean | null
           worker_type?: string | null
         }
         Relationships: []
