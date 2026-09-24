@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="380" height="340" viewBox="0 0 380 340" role="img" aria-labelledby="t d">
+  <title id="t">Yugen Kaisha Kimura Toso Kogyo primary lockup</title>
+  <desc id="d">Vertical lockup: symbol mark above, KIMURA wordmark, TOSO KOGYO subline and Japanese company name below.</desc>
+  <g fill="#175A3E" transform="translate(90,30)">
+    <path d="M100 4 A26 26 0 1 0 100 56 A26 26 0 1 0 100 4 Z"/>
+    <path fill-rule="evenodd" d="M10 70 L190 70 A90 90 0 0 1 10 70 Z M27.75 86 L172.25 86 A74 74 0 0 1 27.75 86 Z"/>
+
+    <path d="M92 70 L108 70 L108 158 L92 158 Z"/>
+
+    <path d="M105.657 91.657 L94.343 80.343 L48.343 126.343 L59.657 137.657 Z"/>
+    <path d="M94.343 91.657 L105.657 80.343 L151.657 126.343 L140.343 137.657 Z"/>
+  </g>
+  <!-- <line x1="140" y1="224" x2="240" y2="224" stroke="#C9C7BE" stroke-width="1"/> -->
+  <text x="193" y="225" text-anchor="middle" font-family="Noto Sans JP, Hiragino Kaku Gothic ProN, Yu Gothic, sans-serif" font-size="30" font-weight="500" letter-spacing="6" fill="#1C1C1A">KIMURA</text>
+  <text x="192" y="245" text-anchor="middle" font-family="Noto Sans JP, Hiragino Kaku Gothic ProN, Yu Gothic, sans-serif" font-size="21" letter-spacing="4" fill="#1C1C1A">TOSO KOGYO</text>
+  <!-- <text x="193" y="312" text-anchor="middle" font-family="Noto Sans JP, Hiragino Kaku Gothic ProN, Yu Gothic, sans-serif" font-size="14" letter-spacing="5" fill="#1C1C1A">木村塗装工業</text> -->
+</svg>

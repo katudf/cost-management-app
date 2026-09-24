@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { HardHat, Calendar, Clipboard, FileText, Users, Database, Settings, LogOut } from 'lucide-react';
 import { useCompanyInfo } from '../hooks/useSystemSettings';
 import WeatherPanel from './WeatherPanel';
-import logoUrl from '../img/logo.png';
+import logoUrl from '../img/kimura-logo.svg';
 
 // トップページのタイル定義。key は AdminApp の activeTab と対応する。
 const TILES = [
@@ -47,7 +47,7 @@ const HomeLanding = ({ onNavigate, staffName, onSignOut, systemName = 'CostNavi'
             <div className="max-w-5xl mx-auto">
                 <header className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-10">
                     <div className="flex items-center gap-4">
-                        <img src={logoUrl} alt="" className="w-14 h-14 md:w-16 md:h-16 object-contain shrink-0" />
+                        <img src={logoUrl} alt="" className="w-[224px] h-[224px] md:w-64 md:h-64 object-contain shrink-0" />
                         <div>
                             <p className="text-lg md:text-xl font-bold text-slate-800 leading-tight">{companyName || ' '}</p>
                             <p className="text-xl md:text-2xl font-bold text-emerald-700 tracking-wide leading-tight">{systemName}</p>
