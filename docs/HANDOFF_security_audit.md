@@ -1276,7 +1276,7 @@ const { data: settingsData } = await fetchWithCache('hourly_wage',
 | 場所 | 扱い |
 |---|---|
 | `src/supabaseEstimates.js:439, 566` | CLAUDE.md が認める正規の経路（UIではない）。**違反ではない** |
-| `src/features/lineworks/lineworksNotify.js:34, 46` | UI ではなく features 層の専用モジュール。手順1のスコープ外。**フェーズ3で `useSystemSettings` に寄せるか判断する**（TODO） |
+| `src/features/lineworks/lineworksNotify.js` | UI ではなく features 層の専用モジュール。手順1のスコープ外だったが、監査完了後の追補で `fetchSystemSettings` / `updateSystemSettings` を経由するよう集約済み（2026-09-24）。 |
 
 #### ✅ 手順2の完了記録（2026-09-15）
 
@@ -3029,6 +3029,28 @@ importに置き換え、`isWeekend`を再計算していた4箇所（`ScheduleVi
 - `dow === 0 || dow === 6`パターンでgrepし、`src/utils/dateUtils.ts`内の
   正規実装1件のみが残存していることを確認済み（4箇所の重複計算が全て
   `col.isWeekend`参照に置き換わったことの裏付け）
+
+---
+
+### 9.28 ✅ LINE WORKS通知設定の `system_settings` アクセス集約（監査完了後の追補）
+
+§8.1手順1ではUIコンポーネントからの直接アクセスだけを対象としていたため、
+`src/features/lineworks/lineworksNotify.js`のLINE WORKS通知有効/無効設定は
+features層の専用モジュールとして対象外にしていた。これにより、同ファイルだけが
+`system_settings`を直接読み書きする状態で残っていた。
+
+**対応:** `src/hooks/useSystemSettings.js`の素の更新関数
+`updateSystemSettings(patch)`を名前付きexportにし、`lineworksNotify.js`の
+`fetchLineWorksEnabled` / `saveLineWorksEnabled`をそれぞれ
+`fetchSystemSettings('lineworks_enabled')` /
+`updateSystemSettings({ lineworks_enabled: enabled })`へ委譲した。
+固定行`id=1`への更新と`updated_at`の付与は集約関数側に維持されるため、画面上の挙動は変わらない。
+
+**ゲート結果:**
+- `rg -F "from('system_settings')" src`で残る実アクセスは
+  `useSystemSettings.js`（正規の集約入口）と`supabaseEstimates.js`（React外の正規経路）のみ
+- `npm test` → **252 passed / 16 files**
+- `npm run build` → 成功（既存のチャンクサイズ警告のみ）
 
 ---
 
