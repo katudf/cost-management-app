@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { Plus, Trash2, GripVertical, MessageSquare, Copy, FileDown, Maximize2, Minimize2 } from 'lucide-react';
 import { ITEM_TYPE } from '../../utils/constants';
 import { formatCurrency } from '../../supabaseEstimates';
+import { formatNumberInput, parseNumberInput } from '../../estimate-editor/numberInputFormat';
 
 const UNIT_SUGGESTIONS = ['m²', 'm', 'm³', '本', '式', 'ヶ所', '個', 't', '枚', '組'];
 
@@ -10,29 +11,6 @@ const ITEM_COL_KEYS = ['name', 'spec', 'quantity', 'unit', 'unit_price', 'note']
 
 const isNavigable = (type) =>
   type === ITEM_TYPE.ITEM || type === ITEM_TYPE.CATEGORY || type === ITEM_TYPE.COMMENT;
-
-// 数値入力欄をカンマ区切り表示にするためのフォーマット/パース
-// 負数は "▲" 表記にする（例: -1234 → ▲1,234）
-const formatNumberInput = (value) => {
-  if (value === null || value === undefined || value === '') return '';
-  const num = Number(value);
-  if (isNaN(num)) return '';
-  const formatted = Math.abs(num).toLocaleString('ja-JP', { maximumFractionDigits: 10 });
-  return num < 0 ? `▲${formatted}` : formatted;
-};
-
-// 全角数字・カンマを除去して数値文字列に戻す（末尾の小数点は入力途中として許容）
-// 先頭の "▲" または "-"/"－" のみを負符号として扱う（それ以外の位置の同記号はカンマ除去のみ行い保持する）
-const parseNumberInput = (raw) => {
-  const leadingSignMatch = raw.match(/^\s*([▲－-])/);
-  const isNegative = !!leadingSignMatch;
-  const rest = isNegative ? raw.slice(leadingSignMatch[0].length) : raw;
-  const halfWidth = rest.replace(/[０-９．]/g, (c) =>
-    c === '．' ? '.' : String.fromCharCode(c.charCodeAt(0) - 0xfee0)
-  );
-  const digits = halfWidth.replace(/,/g, '');
-  return isNegative && digits !== '' ? `-${digits}` : digits;
-};
 
 // カンマ区切りの数値入力欄。フォーカス中は入力途中の生値をそのまま表示し、
 // フォーカスが外れた時点でカンマ/▲付きの表示形式に整形する（末尾の小数点が

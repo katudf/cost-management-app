@@ -2955,6 +2955,39 @@ header, isTopSheet, totals, sheetTotal, showTotalRow, isBlankRowFn, rowsPerPage)
 
 ---
 
+### 9.26 ✅ 日時フォーマット・数値入力欄フォーマット/パースの一本化
+
+`formatDateTime`が`src/estimate-editor/SettingsPanel.jsx`と
+`src/components/estimate/EstimateSidebar.jsx`に同一実装で重複していた。また
+`formatNumberInput`/`parseNumberInput`が`src/components/estimate/EstimateItemTable.jsx`
+（`isNaN`使用）と`src/estimate-editor/SheetPaper.jsx`（`Number.isNaN`使用、かつ
+`formatQuantityInput`を追加で独自定義）に、挙動としては同一のロジックで重複していた。
+
+**重複の内容:**
+1. `formatDateTime`: ISO文字列を`YYYY/MM/DD HH:mm`形式に変換する処理
+2. `formatNumberInput`: 数値をカンマ区切り文字列に変換し、負数は`▲`表記にする処理
+3. `parseNumberInput`: カンマ区切り・全角数字・先頭の`▲`/全角/半角マイナスを含む
+   入力文字列を、パース可能な数値文字列に戻す処理
+4. `formatQuantityInput`（`SheetPaper.jsx`のみ）: 数量欄用に小数点以下1桁固定で
+   表示する処理
+
+**対応:** `src/estimate-editor/dateTimeFormat.js`に`formatDateTime`を、
+`src/estimate-editor/numberInputFormat.js`に`formatNumberInput`/
+`formatQuantityInput`/`parseNumberInput`を一本化した。4箇所の呼び出し元
+（`SettingsPanel.jsx`、`EstimateSidebar.jsx`、`EstimateItemTable.jsx`、
+`SheetPaper.jsx`）の局所定義を削除し、共通モジュールからのimportに置き換えた。
+
+**ゲート結果:**
+- 新規`src/estimate-editor/dateTimeFormat.test.js`（4件）・
+  `src/estimate-editor/numberInputFormat.test.js`（12件）を新設
+- `npm test -- --run` → **246 passed / 16 files**（回帰なし、新規16件・新規2ファイルを含む）
+- `npm run build` → 成功（1974 modules transformed, 11.96s）
+- 4つの呼び出し元ファイルに`const formatDateTime`・`const formatNumberInput`・
+  `const parseNumberInput`・`const formatQuantityInput`のべた書き定義が残っていない
+  ことをgrepで確認済み（共通モジュール内の`export const`定義4件のみ検出）
+
+---
+
 ## 10. ⭐ 全フェーズ完了後に必ずやること
 
 > ユーザー指示（原文）:

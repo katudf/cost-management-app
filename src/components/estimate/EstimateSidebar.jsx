@@ -5,15 +5,7 @@ import { formatCurrency } from '../../supabaseEstimates';
 import EstimateApprovalModal from './EstimateApprovalModal';
 import EstimateLostReasonModal from './EstimateLostReasonModal';
 import EstimateSubmitModal from './EstimateSubmitModal';
-
-// "2026-07-08T01:23:45.000Z" -> "2026/07/08 10:23"
-const formatDateTime = (val) => {
-  if (!val) return '';
-  const d = new Date(val);
-  if (Number.isNaN(d.getTime())) return '';
-  const pad = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-};
+import { formatDateTime } from '../../estimate-editor/dateTimeFormat';
 
 const STATUS_BADGES = [
   {
