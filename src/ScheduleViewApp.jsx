@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Calendar, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
-import { toDateStr, addDays, getDayOfWeek, getMonday } from './utils/dateUtils';
+import { toDateStr, addDays, getMonday, buildDateColumns, buildWeekGroups } from './utils/dateUtils';
 import { DEFAULT_COLORS, SCHEDULE_TYPES } from './utils/constants';
 import { useAuth } from './hooks/useAuth';
 import { useScheduleViewData } from './hooks/useScheduleViewData';
@@ -17,33 +17,8 @@ const ScheduleViewApp = () => {
 
     const { workers, assignments, barProjects, isLoading } = useScheduleViewData(startDate, totalDays);
 
-    const dateColumns = useMemo(() => {
-        const cols = [];
-        for (let i = 0; i < totalDays; i++) {
-            const d = addDays(startDate, i);
-            cols.push({
-                date: d,
-                dateStr: toDateStr(d),
-                day: d.getDate(),
-                month: d.getMonth() + 1,
-                dow: d.getDay(),
-                dowLabel: getDayOfWeek(d)
-            });
-        }
-        return cols;
-    }, [startDate]);
-
-    const weekGroups = useMemo(() => {
-        const groups = [];
-        for (let i = 0; i < totalDays; i += 7) {
-            const weekStart = dateColumns[i];
-            groups.push({
-                label: `${weekStart.month}/${weekStart.day}`,
-                days: dateColumns.slice(i, i + 7)
-            });
-        }
-        return groups;
-    }, [dateColumns]);
+    const dateColumns = useMemo(() => buildDateColumns(startDate, totalDays), [startDate, totalDays]);
+    const weekGroups = useMemo(() => buildWeekGroups(dateColumns), [dateColumns]);
 
     // ルックアップ
     const assignmentLookup = useMemo(() => {
@@ -213,7 +188,7 @@ const ScheduleViewApp = () => {
                                 {dateColumns.map((col, i) => {
                                     const lookupKey = `${worker.id}_${col.dateStr}`;
                                     const cellAssigns = assignmentLookup[lookupKey] || [];
-                                    const isWeekend = col.dow === 0 || col.dow === 6;
+                                    const { isWeekend } = col;
                                     const today = isToday(col.dateStr);
 
                                     return (

@@ -42,7 +42,7 @@ const WorkerRow = ({
                 const cellAssignments = assignmentLookup[lookupKey] || [];
                 const isPastDate = col.dateStr <= todayStr;
                 const actualProjectIds = isPastDate ? (taskRecordLookup[lookupKey] || []) : [];
-                const isWeekend = col.dow === 0 || col.dow === 6;
+                const { isWeekend } = col;
                 const isToday = col.dateStr === todayStr;
                 const isEditing = rowEditCell && (
                     rowEditCell.dragDates

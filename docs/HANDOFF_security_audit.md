@@ -2988,6 +2988,49 @@ header, isTopSheet, totals, sheetTotal, showTotalRow, isBlankRowFn, rowsPerPage)
 
 ---
 
+### 9.27 ✅ 配置表カレンダー列生成（dateColumns/weekGroups）・isWeekend判定の一本化
+
+`dateColumns`（日付列の配列生成）と`weekGroups`（7日単位のグルーピング）を
+構築するロジックが、`src/hooks/useAssignmentState.js`・
+`src/hooks/useWorkerAssignments.js`・`src/ScheduleViewApp.jsx`の3箇所に
+ほぼ同一のロジックで重複していた。また、これに付随する`isWeekend`判定
+（`dow === 0 || dow === 6`）の1行ロジックが、`ScheduleViewApp.jsx`・
+`src/components/worker/WorkerAssignmentView.jsx`・
+`src/components/assignment/WorkerRow.jsx`・
+`src/components/tabs/AssignmentChartTab.jsx`の4箇所で個別に再計算されていた。
+
+**重複の内容:**
+1. `dateColumns`: 開始日から指定日数分、`day`/`month`/`dow`/`dowLabel`/
+   `weekIdx`等を持つ日付列オブジェクトの配列を生成する処理
+2. `weekGroups`: `dateColumns`を7日単位のグループに分割し、各グループの
+   先頭日から`M/D`形式のラベルを付与する処理
+3. `isWeekend`: `dow`（曜日番号）が0（日）または6（土）かどうかを判定する
+   1行ロジックが、`dateColumns`の各要素から個別に再計算されていた4箇所
+
+**除外を確認した箇所:**
+- `src/components/tabs/InputTab.jsx:342`の`d.isWeekend`は、`col.dow`から
+  導出される値ではなく別のデータ形状に基づくものであることを確認し、
+  本重複パターンの対象外として除外した
+
+**対応:** `src/utils/dateUtils.ts`に`buildDateColumns`・`buildWeekGroups`を
+一本化し、`DateColumn`の各要素に`isWeekend`を事前計算済みフィールドとして
+持たせた。`useAssignmentState.js`・`useWorkerAssignments.js`・
+`ScheduleViewApp.jsx`の3箇所のローカル実装を削除して共通モジュールからの
+importに置き換え、`isWeekend`を再計算していた4箇所（`ScheduleViewApp.jsx`・
+`WorkerAssignmentView.jsx`・`WorkerRow.jsx`・`AssignmentChartTab.jsx`）は
+いずれも`col.isWeekend`を分割代入で参照する形に統一した。
+
+**ゲート結果:**
+- 新規`buildDateColumns`/`buildWeekGroups`のテストケースを
+  `src/utils/dateUtils.test.ts`に追加（各3件、計6件）
+- `npm test -- --run` → **252 passed / 16 files**（回帰なし、新規6件を含む）
+- `npm run build` → 成功（11.62s、既存の警告[チャンクサイズ]以外の新規警告なし）
+- `dow === 0 || dow === 6`パターンでgrepし、`src/utils/dateUtils.ts`内の
+  正規実装1件のみが残存していることを確認済み（4箇所の重複計算が全て
+  `col.isWeekend`参照に置き換わったことの裏付け）
+
+---
+
 ## 10. ⭐ 全フェーズ完了後に必ずやること
 
 > ユーザー指示（原文）:

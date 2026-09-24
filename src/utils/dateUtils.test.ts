@@ -6,6 +6,8 @@ import {
   addDays,
   getDayOfWeek,
   getMonday,
+  buildDateColumns,
+  buildWeekGroups,
 } from './dateUtils';
 
 describe('dateUtils', () => {
@@ -103,6 +105,68 @@ describe('dateUtils', () => {
       // 2026-05-24（日曜日）の週の月曜日は 2026-05-18
       const monday = getMonday(new Date('2026-05-24'));
       expect(toDateStr(monday)).toBe('2026-05-18');
+    });
+  });
+
+  describe('buildDateColumns', () => {
+    it('startDateからtotalDays分の連続した日付列を生成すること', () => {
+      // 2026-05-25（月）から7日分
+      const cols = buildDateColumns(new Date('2026-05-25'), 7);
+      expect(cols).toHaveLength(7);
+      expect(cols[0].dateStr).toBe('2026-05-25');
+      expect(cols[6].dateStr).toBe('2026-05-31');
+    });
+
+    it('各列にday/month/dow/dowLabel/isWeekend/weekIdxを正しく設定すること', () => {
+      // 2026-05-25（月）〜05-31（日）
+      const cols = buildDateColumns(new Date('2026-05-25'), 7);
+      const [mon, , , , , sat, sun] = cols;
+
+      expect(mon.day).toBe(25);
+      expect(mon.month).toBe(5);
+      expect(mon.dow).toBe(1);
+      expect(mon.dowLabel).toBe('月');
+      expect(mon.isWeekend).toBe(false);
+      expect(mon.weekIdx).toBe(0);
+
+      expect(sat.dow).toBe(6);
+      expect(sat.isWeekend).toBe(true);
+
+      expect(sun.dow).toBe(0);
+      expect(sun.isWeekend).toBe(true);
+    });
+
+    it('7日を超えるとweekIdxが増えること', () => {
+      // 2026-05-25（月）から14日分 → 2週目は weekIdx=1
+      const cols = buildDateColumns(new Date('2026-05-25'), 14);
+      expect(cols[6].weekIdx).toBe(0);
+      expect(cols[7].weekIdx).toBe(1);
+      expect(cols[13].weekIdx).toBe(1);
+    });
+  });
+
+  describe('buildWeekGroups', () => {
+    it('dateColumnsを7日単位のグループに分割すること', () => {
+      const cols = buildDateColumns(new Date('2026-05-25'), 14);
+      const groups = buildWeekGroups(cols);
+      expect(groups).toHaveLength(2);
+      expect(groups[0].days).toHaveLength(7);
+      expect(groups[1].days).toHaveLength(7);
+    });
+
+    it('各グループのlabelが先頭日のM/Dであること', () => {
+      const cols = buildDateColumns(new Date('2026-05-25'), 14);
+      const groups = buildWeekGroups(cols);
+      expect(groups[0].label).toBe('5/25');
+      expect(groups[1].label).toBe('6/1');
+    });
+
+    it('7日未満の余りがある場合は最後のグループが短くなること', () => {
+      const cols = buildDateColumns(new Date('2026-05-25'), 10);
+      const groups = buildWeekGroups(cols);
+      expect(groups).toHaveLength(2);
+      expect(groups[0].days).toHaveLength(7);
+      expect(groups[1].days).toHaveLength(3);
     });
   });
 });

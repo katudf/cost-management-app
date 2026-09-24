@@ -346,7 +346,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                             </td>
                             {dateColumns.map((col, i) => {
                                 const holidayObj = holidayMap[col.dateStr];
-                                const isWeekend = col.dow === 0 || col.dow === 6;
+                                const { isWeekend } = col;
 
                                 const holidayStyle = getHolidayStyle(holidayObj);
 

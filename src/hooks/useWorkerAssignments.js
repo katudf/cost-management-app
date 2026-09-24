@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useToast } from '../components/Toast';
 import { fetchWithCache } from '../utils/offlineCache';
 import { fetchCompanyHolidaysResult } from './useCompanyHolidays';
-import { toDateStr, addDays, getDayOfWeek, getMonday } from '../utils/dateUtils';
+import { toDateStr, addDays, getMonday, buildDateColumns, buildWeekGroups } from '../utils/dateUtils';
 import { DEFAULT_COLORS } from '../utils/constants';
 
 // 作業員向け配置表（閲覧専用）の表示期間: 今週月曜から4週間
@@ -56,28 +56,8 @@ export function useWorkerAssignments({ workers, projects, loggedInWorker }) {
         return () => { cancelled = true; };
     }, [startStr, endStr, todayStr, showToast]);
 
-    const dateColumns = useMemo(() => {
-        return Array.from({ length: TOTAL_DAYS }, (_, i) => {
-            const date = addDays(startDate, i);
-            return {
-                date,
-                dateStr: toDateStr(date),
-                day: date.getDate(),
-                month: date.getMonth() + 1,
-                dow: date.getDay(),
-                dowLabel: getDayOfWeek(date),
-            };
-        });
-    }, [startDate]);
-
-    const weekGroups = useMemo(() => {
-        const groups = [];
-        for (let i = 0; i < dateColumns.length; i += 7) {
-            const days = dateColumns.slice(i, i + 7);
-            groups.push({ label: `${days[0].month}/${days[0].day}`, days });
-        }
-        return groups;
-    }, [dateColumns]);
+    const dateColumns = useMemo(() => buildDateColumns(startDate, TOTAL_DAYS), [startDate]);
+    const weekGroups = useMemo(() => buildWeekGroups(dateColumns), [dateColumns]);
 
     const holidayMap = useMemo(() => {
         const map = {};

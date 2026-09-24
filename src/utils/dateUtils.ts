@@ -63,3 +63,49 @@ export const getMonday = (d: Date | string | number): Date => {
     date.setDate(date.getDate() + diff);
     return date;
 };
+
+export interface DateColumn {
+    date: Date;
+    dateStr: string;
+    day: number;
+    month: number;
+    dow: number;
+    dowLabel: string;
+    isWeekend: boolean;
+    weekIdx: number;
+}
+
+export interface WeekGroup {
+    label: string;
+    days: DateColumn[];
+}
+
+// 配置表・工程表共通の日付列生成（startDate から totalDays 分の連続した日付配列）
+export const buildDateColumns = (startDate: Date | string | number, totalDays: number): DateColumn[] => {
+    const cols: DateColumn[] = [];
+    for (let i = 0; i < totalDays; i++) {
+        const d = addDays(startDate, i);
+        const dow = d.getDay();
+        cols.push({
+            date: d,
+            dateStr: toDateStr(d),
+            day: d.getDate(),
+            month: d.getMonth() + 1,
+            dow,
+            dowLabel: getDayOfWeek(d),
+            isWeekend: dow === 0 || dow === 6,
+            weekIdx: Math.floor(i / 7)
+        });
+    }
+    return cols;
+};
+
+// dateColumns を7日単位の週グループに分割（各グループの label は先頭日の M/D）
+export const buildWeekGroups = (dateColumns: DateColumn[]): WeekGroup[] => {
+    const groups: WeekGroup[] = [];
+    for (let i = 0; i < dateColumns.length; i += 7) {
+        const days = dateColumns.slice(i, i + 7);
+        groups.push({ label: `${days[0].month}/${days[0].day}`, days });
+    }
+    return groups;
+};

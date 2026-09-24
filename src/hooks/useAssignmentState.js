@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import { toDateStr, addDays, getDayOfWeek, getMonday } from '../utils/dateUtils';
+import { toDateStr, addDays, getMonday, buildDateColumns, buildWeekGroups } from '../utils/dateUtils';
 import { DEFAULT_COLORS, PROJECT_STATUS, WORKER_TYPE } from '../utils/constants';
 import { fetchCompanyHolidays, deleteCompanyHoliday, upsertCompanyHoliday } from './useCompanyHolidays';
 import { isActualHoliday, HOLIDAY_DESCRIPTION } from '../utils/holidayUtils';
@@ -155,35 +155,10 @@ export function useAssignmentState({
     }, [isHoliday]);
 
     // 日付配列
-    const dateColumns = useMemo(() => {
-        const cols = [];
-        for (let i = 0; i < totalDays; i++) {
-            const d = addDays(startDate, i);
-            cols.push({
-                date: d,
-                dateStr: toDateStr(d),
-                day: d.getDate(),
-                month: d.getMonth() + 1,
-                dow: d.getDay(),
-                dowLabel: getDayOfWeek(d),
-                weekIdx: Math.floor(i / 7)
-            });
-        }
-        return cols;
-    }, [startDate]);
+    const dateColumns = useMemo(() => buildDateColumns(startDate, totalDays), [startDate, totalDays]);
 
     // 週グループ
-    const weekGroups = useMemo(() => {
-        const groups = [];
-        for (let i = 0; i < totalDays; i += 7) {
-            const weekStart = dateColumns[i];
-            groups.push({
-                label: `${weekStart.month}/${weekStart.day}`,
-                days: dateColumns.slice(i, i + 7)
-            });
-        }
-        return groups;
-    }, [dateColumns]);
+    const weekGroups = useMemo(() => buildWeekGroups(dateColumns), [dateColumns]);
 
     // ===== データ取得 =====
     // 期間に依存しないマスタ系データ（案件バー・会社休日・休工期間）

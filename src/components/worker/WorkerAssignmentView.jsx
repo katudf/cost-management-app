@@ -229,7 +229,7 @@ const WorkerAssignmentView = ({ workers, projects, loggedInWorker, onClose }) =>
                                         {dateColumns.map((col) => {
                                             const items = buildCellItems(worker.id, col);
                                             const isToday = col.dateStr === todayStr;
-                                            const isWeekend = col.dow === 0 || col.dow === 6;
+                                            const { isWeekend } = col;
                                             const holiday = isHolidayColumn(col);
                                             let cellBg;
                                             if (isToday) cellBg = '#FEFCE8';
