@@ -1,5 +1,6 @@
 import * as xlsx from 'xlsx-js-style';
 import { calculateNinku, formatTimeDisplay } from './workTimeUtils';
+import { getReportDayOffLabel } from './reportDayOffUtils';
 import layoutData from '../layout_react.json';
 import * as fflate from 'fflate';
 
@@ -412,7 +413,7 @@ const truncateSiteName = (name, maxLength = 10) => {
 /**
  * 就労日報の単一ワークシートを生成する内部ヘルパー
  */
-const createWorkerReportSheet = (workerName, days, recordsData, projects, subcontractorsData, overtimeApprovals = [], workAllowanceApprovals = []) => {
+const createWorkerReportSheet = (workerName, days, recordsData, projects, subcontractorsData, overtimeApprovals = [], workAllowanceApprovals = [], leaveAssignments = [], companyHolidays = []) => {
     const { rows: ROWS, cells: templateCells, mergedCells, colWidths, rowHeights } = layoutData;
     const COLS_COUNT = 17; // A〜Q
 
@@ -533,7 +534,18 @@ const createWorkerReportSheet = (workerName, days, recordsData, projects, subcon
         days.forEach((d, i) => {
             const group = dateProjectMap[d][g];
             const mc = dayMainCols[i] - 1;
-            if (!group) return;
+            if (!group) {
+                // 作業実績のない日は現場①に区分（有給 / 休日 など）を表示する
+                if (g === 0) {
+                    const label = getReportDayOffLabel(d, {
+                        hasRecords: dateProjectMap[d].length > 0,
+                        leaveAssignments,
+                        companyHolidays,
+                    });
+                    if (label) grid[baseRow][mc] = label;
+                }
+                return;
+            }
 
             grid[baseRow][mc] = truncateSiteName(group.siteName);
 
@@ -707,8 +719,8 @@ export const generateMultipleWorkersReportExcel = (workersDataList, weekPrefix) 
     let globalPs = null;
 
     workersDataList.forEach(data => {
-        const { workerName, days, recordsData, projects, subcontractorsData, overtimeApprovals, workAllowanceApprovals } = data;
-        const { ws, ps } = createWorkerReportSheet(workerName, days, recordsData, projects, subcontractorsData, overtimeApprovals, workAllowanceApprovals);
+        const { workerName, days, recordsData, projects, subcontractorsData, overtimeApprovals, workAllowanceApprovals, leaveAssignments, companyHolidays } = data;
+        const { ws, ps } = createWorkerReportSheet(workerName, days, recordsData, projects, subcontractorsData, overtimeApprovals, workAllowanceApprovals, leaveAssignments, companyHolidays);
         // シート名は作業員名にする（Excelのシート名制限31字に収まるようにスライス）
         const sheetName = workerName.slice(0, 31);
         xlsx.utils.book_append_sheet(wb, ws, sheetName);

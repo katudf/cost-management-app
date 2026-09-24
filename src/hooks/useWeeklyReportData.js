@@ -2,6 +2,7 @@ import { supabase } from '../lib/supabase';
 import { toDateStr, addDays, getMonday } from '../utils/dateUtils';
 import { fetchApprovalsForReport } from '../lib/overtimeApprovals';
 import { fetchWorkAllowanceApprovalsForReport } from '../lib/workAllowanceApprovals';
+import { fetchCompanyHolidays } from './useCompanyHolidays';
 
 /**
  * 週報（日報の週次出力）のデータ収集を一箇所に集約するモジュール。
@@ -99,6 +100,26 @@ export const fetchWorkerReportData = async ({
         workAllowanceApprovals = await fetchWorkAllowanceApprovalsForReport(workerName, days[0], days[6]);
     } catch (e) { console.error('Failed to fetch work allowance approvals:', e); }
 
+    // 配置表の現場なし割当（有給 / 休み 等）。実績のない日に区分を表示するために使う
+    let leaveAssignments = [];
+    if (resolvedForemanId !== undefined && resolvedForemanId !== null) {
+        const { data: asgData, error: asgError } = await supabase
+            .from('Assignments')
+            .select('workerId, date, projectId, title')
+            .eq('workerId', resolvedForemanId)
+            .is('projectId', null)
+            .gte('date', days[0])
+            .lte('date', days[6]);
+        if (asgError) console.error('Failed to fetch leave assignments:', asgError);
+        else leaveAssignments = asgData || [];
+    }
+
+    // 会社カレンダーの休日（実績のない日に「休日」を表示するために使う）
+    let companyHolidays = [];
+    try {
+        companyHolidays = await fetchCompanyHolidays({ from: days[0], to: days[6] });
+    } catch (e) { console.error('Failed to fetch company holidays:', e); }
+
     return {
         workerName,
         days,
@@ -107,6 +128,8 @@ export const fetchWorkerReportData = async ({
         subcontractorsData,
         overtimeApprovals,
         workAllowanceApprovals,
+        leaveAssignments,
+        companyHolidays,
     };
 };
 

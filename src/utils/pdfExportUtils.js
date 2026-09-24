@@ -1,4 +1,5 @@
 import { calculateNinku, formatTimeDisplay } from './workTimeUtils';
+import { getReportDayOffLabel } from './reportDayOffUtils';
 
 /**
  * 共通のCSSスタイル定義
@@ -210,7 +211,7 @@ const COMMON_CSS_STYLE = `
 /**
  * 日報用HTMLパーツ（単一作業員用）を生成するヘルパー
  */
-const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, subcontractorsData, companyHolidays, overtimeApprovals = [], workAllowanceApprovals = []) => {
+const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, subcontractorsData, companyHolidays, overtimeApprovals = [], workAllowanceApprovals = [], leaveAssignments = []) => {
     const dayNames = ["(月)", "(火)", "(水)", "(木)", "(金)", "(土)", "(日)"];
 
     // 日付ごと・現場ごとのグループ化
@@ -243,6 +244,16 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
             }
         });
         dateProjectMap[d] = Object.values(projGroups);
+    });
+
+    // 作業実績のない日の区分（有給 / 休日 など）。作業がある日は null
+    const dayOffLabels = {};
+    days.forEach(d => {
+        dayOffLabels[d] = getReportDayOffLabel(d, {
+            hasRecords: (dateProjectMap[d] || []).length > 0,
+            leaveAssignments,
+            companyHolidays,
+        });
     });
 
     // 日付ヘッダー
@@ -289,6 +300,10 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
                     contentStyle = 'font-size: 9.5px; line-height: 1.1;';
                 }
                 contentRow += `<td class="data-cell content-data" colspan="2" style="${contentStyle}">${uniqueItems.map(i => esc(i)).join('<br/>')}</td>`;
+            } else if (g === 0 && dayOffLabels[d]) {
+                nameRow += `<td class="data-cell site-name${sizeClass}" colspan="2">${esc(dayOffLabels[d])}</td>`;
+                timeRow += `<td class="data-cell time-data${sizeClass}" colspan="2">&nbsp;</td>`;
+                contentRow += `<td class="data-cell content-data" colspan="2">&nbsp;</td>`;
             } else {
                 nameRow += `<td class="data-cell site-name${sizeClass}" colspan="2">&nbsp;</td>`;
                 timeRow += `<td class="data-cell time-data${sizeClass}" colspan="2">: 　〜　:</td>`;
@@ -331,7 +346,7 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
     // ======== 作業手当（1行：時間(H) / 承認サイン を横並び）========
     // 時間外時間の合計に加え、手当対象作業（work_allowance）の「作業名 実働h」を併記する
     let otRow = `<td class="group-cell">作業手当</td>`;
-    otRow += `<td class="item-cell item-label-name" style="writing-mode: horizontal-tb; text-align: center; vertical-align: middle; font-size: 12px; line-height: 1.1;">時<br/>感<br/>(H)</td>`;
+    otRow += `<td class="item-cell item-label-name" style="writing-mode: horizontal-tb; text-align: center; vertical-align: middle; font-size: 12px; line-height: 1.1;">時<br/>間<br/>(H)</td>`;
     otRow += `<td class="item-cell item-label-qty sub-item vertical-label">承認サイン</td>`;
     days.forEach(d => {
         const dayRecords = (recordsData || []).filter(r => r.date === d);
@@ -488,8 +503,8 @@ const openPrintWindow = (html, autoPrint = true) => {
  * 就労日報のPDF出力（ブラウザ印刷ダイアログ経由）
  * 手書き日報フォームに準拠したレイアウト
  */
-export const generateWorkerReportPDF = (workerName, weekPrefix, days, recordsData, projects, subcontractorsData, companyHolidays = []) => {
-    const part = createWorkerReportHTMLPart(workerName, days, recordsData, projects, subcontractorsData, companyHolidays);
+export const generateWorkerReportPDF = (workerName, weekPrefix, days, recordsData, projects, subcontractorsData, companyHolidays = [], leaveAssignments = []) => {
+    const part = createWorkerReportHTMLPart(workerName, days, recordsData, projects, subcontractorsData, companyHolidays, [], [], leaveAssignments);
 
     const html = `<!DOCTYPE html>
 <html lang="ja">
@@ -518,8 +533,10 @@ export const generateMultipleWorkersReportPDF = (workersDataList, weekPrefix, co
     if (!workersDataList || workersDataList.length === 0) return;
 
     const parts = workersDataList.map((data, idx) => {
-        const { workerName, days, recordsData, projects, subcontractorsData, overtimeApprovals, workAllowanceApprovals } = data;
-        const part = createWorkerReportHTMLPart(workerName, days, recordsData, projects, subcontractorsData, companyHolidays, overtimeApprovals, workAllowanceApprovals);
+        const { workerName, days, recordsData, projects, subcontractorsData, overtimeApprovals, workAllowanceApprovals, leaveAssignments } = data;
+        // 作業員ごとに取得した休日（週の範囲）を優先し、無ければ共通の引数を使う
+        const holidays = data.companyHolidays || companyHolidays;
+        const part = createWorkerReportHTMLPart(workerName, days, recordsData, projects, subcontractorsData, holidays, overtimeApprovals, workAllowanceApprovals, leaveAssignments);
         const isLast = idx === workersDataList.length - 1;
         const breakDiv = isLast ? '' : '<div class="page-break"></div>';
         return part + breakDiv;
