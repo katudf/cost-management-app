@@ -7,6 +7,7 @@ import {
 } from '@react-pdf/renderer';
 import { calcTopSheetTotals, sumItemAmounts } from './supabaseEstimates';
 import { ITEM_TYPE } from './utils/constants';
+import { fmt, fmtDate, calcFontSize } from './estimate-editor/paperStyles';
 
 // ============================================================
 // フォント登録
@@ -362,31 +363,12 @@ const S = StyleSheet.create({
 // ============================================================
 // ユーティリティ
 // ============================================================
-const fmt = (val) => {
-  if (val === null || val === undefined || val === '') return '';
-  return Number(val).toLocaleString('ja-JP');
-};
+// fmt/fmtDate/calcFontSize は estimate-editor/paperStyles.js に一本化済み（§9.22）
 
 // 数量は常に小数点以下1桁で表示（例: 5 → "5.0"）
 const fmtQty = (val) => {
   if (val === null || val === undefined || val === '') return '';
   return Number(val).toLocaleString('ja-JP', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-};
-
-const fmtDate = (dateStr) => {
-  if (!dateStr) return '';
-  const d = new Date(dateStr);
-  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
-};
-
-// テキスト長に応じたフォントサイズ自動縮小
-const calcFontSize = (text, baseSize, maxChars) => {
-  if (!text) return baseSize;
-  const len = text.length;
-  if (len <= maxChars) return baseSize;
-  // 文字数が超過した分だけ縮小（下限は baseSize の 50%）
-  const ratio = maxChars / len;
-  return Math.max(baseSize * 0.5, baseSize * ratio);
 };
 
 // ============================================================

@@ -2744,6 +2744,47 @@ undo登録のロジック自体は変更していない。
 
 ---
 
+### 9.22 ✅ `fmt`/`fmtDate`/`calcFontSize`（PDF表示ユーティリティ）の重複解消
+
+`src/EstimatePDF.jsx`には、`src/estimate-editor/paperStyles.js`が既にexportしている
+`fmt`（金額のカンマ区切り表示）・`fmtDate`（日付の和暦風表示）・`calcFontSize`
+（テキスト長に応じたフォントサイズ自動縮小）と全く同一の関数定義が、
+それぞれべた書きのローカル`const`として独立に存在していた。
+`paperStyles.js`側はすでに`CoverPaper.jsx`/`SheetPaper.jsx`から利用されている
+正規のexport元であり、`EstimatePDF.jsx`だけが移行し損ねていた。
+
+**重複の内容:**
+1. `fmt`: `Number(val).toLocaleString('ja-JP')`によるカンマ区切り表示処理が
+   `EstimatePDF.jsx`と`paperStyles.js`の両方にバイト単位で同一のまま存在していた
+2. `fmtDate`: `` `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日` `` による
+   日付フォーマット処理が同様に両方に存在していた
+3. `calcFontSize`: 文字数が`maxChars`を超えた分だけ`baseSize`の50%を下限として
+   縮小するロジックが同様に両方に存在していた
+
+**除外を確認した箇所（挙動が異なるため統合対象外）:**
+- `src/WorkerCertificationsPDF.jsx`（約111行目）の`fmtDate`: `"2026/09/24"`形式の
+  スラッシュ区切り表示であり、`paperStyles.js`の和暦風`"2026年9月24日"`形式とは
+  出力仕様が異なるため、統合対象から明確に除外した
+- `fmtQty`（数量の小数点以下1桁表示）は`paperStyles.js`側に同名の関数が存在せず、
+  重複ではないため`EstimatePDF.jsx`にローカルのまま維持した
+
+**対応:** `EstimatePDF.jsx`のローカル`fmt`/`fmtDate`/`calcFontSize`定義を削除し、
+`./estimate-editor/paperStyles`からimportする形に変更（`fmtQty`はローカルのまま維持）。
+
+**ゲート結果:**
+- 新規`src/estimate-editor/paperStyles.test.js`を新設し9件追加
+  （`fmt`: 3桁区切り・null/undefined/空文字・0の扱いの3件、
+  `fmtDate`: 和暦風フォーマット・falsy値の2件、
+  `calcFontSize`: 閾値以下でbaseSize維持・空文字/nullでbaseSize維持・
+  比率縮小・50%下限クランプの4件）
+- `npm test -- --run` → **186 passed / 11 files**（回帰なし、新規9件・新規1ファイルを含む）
+- `npm run build` → 成功（1969 modules transformed, 11.71s）
+- 旧重複パターン`const fmt = |const fmtDate = |const calcFontSize = `の残存参照:
+  `src/WorkerCertificationsPDF.jsx`内の`fmtDate`（除外済み・挙動が異なるため対象外）
+  1箇所のみを確認（`EstimatePDF.jsx`の重複3箇所はいずれも解消）
+
+---
+
 ## 10. ⭐ 全フェーズ完了後に必ずやること
 
 > ユーザー指示（原文）:
