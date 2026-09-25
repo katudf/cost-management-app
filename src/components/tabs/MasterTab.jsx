@@ -6,6 +6,7 @@ import { useToast } from '../Toast';
 import DashboardTab from './DashboardTab';
 import InputTab from './InputTab';
 import ConfirmModal from '../ConfirmModal';
+import CustomerCombobox from '../../estimate-editor/CustomerCombobox';
 
 const MasterTab = ({
     activeProject,
@@ -18,6 +19,7 @@ const MasterTab = ({
     handleProjectDateChange,
     workers,
     customers = [],
+    onCreateCustomer,
     updateMasterItemLocal,
     saveMasterItemDB,
     reorderMasterItems,
@@ -193,16 +195,32 @@ const MasterTab = ({
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                                 <div>
                                     <label className="text-xs font-bold text-blue-600 block mb-2 uppercase">顧客名</label>
-                                    <select
-                                        value={activeProject.customerId || ''}
-                                        onChange={(e) => handleProjectDateChange(activeProject.id, 'customerId', e.target.value ? Number(e.target.value) : null)}
-                                        className="w-full bg-white p-3 rounded-lg border-2 border-blue-200 font-bold text-lg outline-none focus:border-blue-500"
-                                    >
-                                        <option value="">(未設定）</option>
-                                        {customers.map(c => (
-                                            <option key={c.id} value={c.id}>{c.name}</option>
-                                        ))}
-                                    </select>
+                                    <div className="flex items-center gap-2">
+                                        <div className="flex-1 min-w-0">
+                                            <CustomerCombobox
+                                                customers={customers}
+                                                value={activeProject.customerId ?? ''}
+                                                onChange={(v) => handleProjectDateChange(activeProject.id, 'customerId', v ? Number(v) : null)}
+                                                onCreateCustomer={async (name) => {
+                                                    const created = await onCreateCustomer?.(name);
+                                                    if (created) handleProjectDateChange(activeProject.id, 'customerId', created.id);
+                                                    return created;
+                                                }}
+                                                buttonClassName="p-3 rounded-lg border-2 border-blue-200 font-bold text-lg outline-none focus:border-blue-500"
+                                            />
+                                        </div>
+                                        {activeProject.customerId && (
+                                            <button
+                                                type="button"
+                                                onClick={() => handleProjectDateChange(activeProject.id, 'customerId', null)}
+                                                aria-label="顧客の選択を解除"
+                                                title="顧客の選択を解除"
+                                                className="p-2 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition shrink-0"
+                                            >
+                                                <X size={18} />
+                                            </button>
+                                        )}
+                                    </div>
                                 </div>
                                 <div className="flex items-end pb-3">
                                     <label className="flex items-center gap-2 cursor-pointer group">

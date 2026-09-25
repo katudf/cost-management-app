@@ -32,7 +32,7 @@ import DatabaseTab from './components/tabs/DatabaseTab';
 import AssignmentChartTab from './components/tabs/AssignmentChartTab';
 import EstimateList from './EstimateList';
 import EstimateEditor from './estimate-editor/EstimateEditor';
-import { fetchEstimates } from './supabaseEstimates';
+import { fetchEstimates, createCustomer } from './supabaseEstimates';
 
 const App = () => {
     const { showToast } = useToast();
@@ -247,6 +247,21 @@ const App = () => {
     const projectOps = useProjects({ projects, setProjects, activeProjectId, setActiveProjectId, showToast, workers, setActiveTab });
     const dashboardStats = useDashboardStats({ projects, activeProject: projectOps.activeProject, hourlyWage });
 
+    // 工事基本設定の顧客コンボからの新規顧客登録（登録後の選択は呼び出し側で行う）
+    const handleCreateCustomer = useCallback(async (name) => {
+        const trimmed = (name || '').trim();
+        if (!trimmed) return null;
+        try {
+            const created = await createCustomer(trimmed);
+            setCustomers(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name, 'ja')));
+            showToast('新規顧客を登録しました', 'success');
+            return created;
+        } catch (e) {
+            showToast('顧客の登録に失敗しました: ' + e.message, 'error');
+            return null;
+        }
+    }, [setCustomers, showToast]);
+
     const groupedProjects = useMemo(() => {
         const groups = { [PROJECT_STATUS.ESTIMATE]: [], [PROJECT_STATUS.SCHEDULED]: [], [PROJECT_STATUS.IN_PROGRESS]: [], [PROJECT_STATUS.COMPLETED]: [] };
         (dashboardStats.displayProjects || []).forEach(p => {
@@ -414,7 +429,7 @@ const App = () => {
 
     return (
         <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-900">
-            <div className={`${activeTab === 'assignment' || activeTab === 'dashboard' || isEstimateEditorOpen ? 'max-w-none px-4 xl:px-8' : 'max-w-6xl'} mx-auto`}>
+            <div className={`${activeTab === 'assignment' || activeTab === 'dashboard' || activeTab === 'estimate' ? 'max-w-none px-4 xl:px-8' : 'max-w-6xl'} mx-auto`}>
                 <header className="mb-6">
                     <div className="flex flex-col gap-4">
                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -750,6 +765,7 @@ const App = () => {
                             handleProjectDateChange={projectOps.handleProjectDateChange}
                             workers={workers}
                             customers={customers}
+                            onCreateCustomer={handleCreateCustomer}
                             updateMasterItemLocal={projectOps.updateMasterItemLocal}
                             saveMasterItemDB={projectOps.saveMasterItemDB}
                             reorderMasterItems={projectOps.reorderMasterItems}

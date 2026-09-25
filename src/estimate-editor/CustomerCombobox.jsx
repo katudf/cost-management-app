@@ -4,7 +4,10 @@
 import React, { useState, useRef, useEffect, useMemo, useId } from 'react';
 import { ChevronDown, Search, Plus, X, Check } from 'lucide-react';
 
-const CustomerCombobox = ({ customers, value, onChange, onCreateCustomer, disabled }) => {
+// buttonClassName: トリガーボタンの見た目を呼び出し側の入力欄に合わせる場合に指定（省略時は見積エディタ用）
+const DEFAULT_BUTTON_CLS = 'border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400';
+
+const CustomerCombobox = ({ customers, value, onChange, onCreateCustomer, disabled, buttonClassName = DEFAULT_BUTTON_CLS }) => {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
@@ -105,7 +108,7 @@ const CustomerCombobox = ({ customers, value, onChange, onCreateCustomer, disabl
         disabled={disabled}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="w-full flex items-center justify-between border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white disabled:bg-slate-50 disabled:text-slate-400 text-left"
+        className={`w-full flex items-center justify-between ${buttonClassName} bg-white disabled:bg-slate-50 disabled:text-slate-400 text-left`}
       >
         <span className={selected ? 'text-slate-800 truncate' : 'text-slate-400 truncate'}>
           {selected ? selected.name : '-- 選択してください --'}
