@@ -7,7 +7,7 @@ import logoUrl from '../img/kimura-logo.svg';
 // トップページのタイル定義。key は AdminApp の activeTab と対応する。
 const TILES = [
     { key: 'dashboard', label: '現場管理', Icon: HardHat },
-    { key: 'assignment', label: '工程表', Icon: Calendar },
+    { key: 'assignment', label: '配置表', Icon: Calendar },
     { key: 'estimate', label: '見積', Icon: Clipboard },
     { key: 'daily_report', label: '日報管理', Icon: FileText },
     { key: 'workers', label: '従業員管理', Icon: Users },

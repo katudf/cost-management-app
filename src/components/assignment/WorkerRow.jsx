@@ -2,6 +2,9 @@ import React from 'react';
 import { SCHEDULE_TYPES } from '../../utils/constants';
 import { isNonWorkingDay } from '../../utils/holidayUtils';
 
+// 現場名の背景色の不透明度（60%）
+const withBgAlpha = (color) => `color-mix(in srgb, ${color} 60%, transparent)`;
+
 const shortenName = (name) => {
     if (!name) return '';
     return name.length > 6 ? name.substring(0, 6) : name;
@@ -123,8 +126,8 @@ const WorkerRow = ({
                                         className={`text-[9px] leading-[11px] font-bold rounded px-0.5 py-0.5 text-black text-left ${item.isActual ? 'shadow-sm border border-black/20' : ''}`}
                                         style={{
                                             background: item.isActual
-                                                ? `repeating-linear-gradient(-45deg, rgba(255,255,255,0.2), rgba(255,255,255,0.2) 3px, transparent 3px, transparent 6px), ${item.bgColor}`
-                                                : item.bgColor,
+                                                ? `repeating-linear-gradient(-45deg, rgba(255,255,255,0.2), rgba(255,255,255,0.2) 3px, transparent 3px, transparent 6px), ${withBgAlpha(item.bgColor)}`
+                                                : withBgAlpha(item.bgColor),
                                             color: 'black',
                                             display: '-webkit-box',
                                             WebkitLineClamp: 2,
@@ -146,8 +149,8 @@ const WorkerRow = ({
                                         className={`text-[9px] font-bold rounded px-0.5 py-0.5 text-black truncate ${item.isActual ? 'shadow-sm border border-black/20' : ''}`}
                                         style={{
                                             background: item.isActual
-                                                ? `repeating-linear-gradient(-45deg, rgba(255,255,255,0.2), rgba(255,255,255,0.2) 3px, transparent 3px, transparent 6px), ${item.bgColor}`
-                                                : item.bgColor,
+                                                ? `repeating-linear-gradient(-45deg, rgba(255,255,255,0.2), rgba(255,255,255,0.2) 3px, transparent 3px, transparent 6px), ${withBgAlpha(item.bgColor)}`
+                                                : withBgAlpha(item.bgColor),
                                             color: 'black'
                                         }}
                                         title={item.fullName + (item.isActual ? '（実績・編集不可）' : '')}
