@@ -1,7 +1,7 @@
-import React, { useMemo, useCallback } from 'react';
+import React, { useMemo, useCallback, useState } from 'react';
 import { Calendar, ChevronLeft, ChevronRight, Download, Undo2 } from 'lucide-react';
 import { exportAssignmentChartToExcel } from '../../utils/assignmentChartExport';
-import { addDays } from '../../utils/dateUtils';
+import { addDays, toDateStr, buildDateColumns } from '../../utils/dateUtils';
 import { useToast } from '../../components/Toast';
 import { useAssignmentState } from '../../hooks/useAssignmentState';
 import { useDailyWeatherCodes } from '../../hooks/useWeather';
@@ -11,10 +11,14 @@ import EditHolidayPopup from '../assignment/EditHolidayPopup';
 import AssignmentPopup from '../assignment/AssignmentPopup';
 import ProjectBarRow from '../assignment/ProjectBarRow';
 import WorkerRow from '../assignment/WorkerRow';
+import ExportPeriodDialog from '../assignment/ExportPeriodDialog';
 import { isNonWorkingDay, getHolidayStyle } from '../../utils/holidayUtils';
 
 // メモ化した行コンポーネントに「変化なし」を安定した参照で伝えるための定数
 const EMPTY_ARRAY = [];
+// Excel出力で指定できる最大日数
+const MAX_EXPORT_DAYS = 366;
+const DAY_MS = 1000 * 60 * 60 * 24;
 
 const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTab, setActiveProjectId, setProjects, customers }) => {
     const { showToast } = useToast();
@@ -71,6 +75,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         movePeriod,
         goToToday,
         getBarSpan,
+        fetchAssignmentLookupForRange,
         popupRef,
         tableContainerRef,
         undo,
@@ -108,6 +113,51 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
     }, [setActiveProjectId, setActiveTab]);
 
     const periodLabel = `${startDate.getFullYear()}/${startDate.getMonth() + 1}/${startDate.getDate()} 〜 ${addDays(startDate, totalDays - 1).getMonth() + 1}/${addDays(startDate, totalDays - 1).getDate()}`;
+
+    const [showExportDialog, setShowExportDialog] = useState(false);
+    const [isExporting, setIsExporting] = useState(false);
+
+    // 期間指定ダイアログの既定値（現在の表示範囲）
+    const defaultExportStart = toDateStr(startDate);
+    const defaultExportEnd = toDateStr(addDays(startDate, totalDays - 1));
+
+    const handleExport = useCallback(async (startStr, endStr) => {
+        const s = new Date(startStr + 'T00:00:00');
+        const e = new Date(endStr + 'T00:00:00');
+        if (isNaN(s) || isNaN(e) || s > e) {
+            showToast('期間の指定が正しくありません', 'error');
+            return;
+        }
+        const days = Math.round((e - s) / DAY_MS) + 1;
+        if (days > MAX_EXPORT_DAYS) {
+            showToast(`出力できる期間は最大${MAX_EXPORT_DAYS}日です`, 'error');
+            return;
+        }
+
+        setIsExporting(true);
+        try {
+            const lookup = await fetchAssignmentLookupForRange(startStr, endStr);
+            const cols = buildDateColumns(s, days);
+            // 指定期間を基準にした案件バー範囲
+            const spanFn = (project) => {
+                if (!project.startDate || !project.endDate) return null;
+                const pStart = new Date(project.startDate + 'T00:00:00');
+                const pEnd = new Date(project.endDate + 'T00:00:00');
+                if (pEnd < s || pStart > e) return null;
+                const startIdx = Math.max(0, Math.round((pStart - s) / DAY_MS));
+                const endIdx = Math.min(days - 1, Math.round((pEnd - s) / DAY_MS));
+                return { startIdx, endIdx, span: endIdx - startIdx + 1 };
+            };
+            const label = `${s.getFullYear()}/${s.getMonth() + 1}/${s.getDate()} 〜 ${e.getFullYear()}/${e.getMonth() + 1}/${e.getDate()}`;
+            exportAssignmentChartToExcel(activeWorkers, cols, lookup, projectMap, barProjects, label, spanFn);
+            setShowExportDialog(false);
+        } catch (err) {
+            console.error('配置表のExcel出力に失敗しました:', err);
+            showToast('Excel出力に失敗しました', 'error');
+        } finally {
+            setIsExporting(false);
+        }
+    }, [fetchAssignmentLookupForRange, activeWorkers, projectMap, barProjects, showToast]);
 
     // 列方向（縦）選択・ドラッグ中の作業員集合（O(1)判定用）
     const editCellWorkerIdSet = useMemo(
@@ -157,9 +207,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                         <Undo2 size={18} />
                     </button>
                     <button
-                        onClick={() => exportAssignmentChartToExcel(
-                            workers, dateColumns, assignmentLookup, projectMap, barProjects, periodLabel, getBarSpan
-                        )}
+                        onClick={() => setShowExportDialog(true)}
                         className="px-3 py-1.5 text-xs font-bold bg-blue-50 text-blue-700 rounded-md hover:bg-blue-100 transition flex items-center gap-1"
                     >
                         <Download size={14} /> Excel出力
@@ -514,6 +562,16 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                 editColorPopup={editColorPopup}
                 onClose={() => setEditColorPopup(null)}
                 onSelectColor={updateProjectColor}
+            />
+
+            {/* Excel出力の期間指定ダイアログ */}
+            <ExportPeriodDialog
+                isOpen={showExportDialog}
+                defaultStart={defaultExportStart}
+                defaultEnd={defaultExportEnd}
+                onClose={() => setShowExportDialog(false)}
+                onExport={handleExport}
+                isExporting={isExporting}
             />
         </div>
     );

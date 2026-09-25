@@ -5,6 +5,20 @@ import { DEFAULT_COLORS, PROJECT_STATUS } from '../utils/constants';
 import { fetchCompanyHolidays, deleteCompanyHoliday, upsertCompanyHoliday } from './useCompanyHolidays';
 import { isActualHoliday, HOLIDAY_DESCRIPTION } from '../utils/holidayUtils';
 
+// 配置レコード配列から workerId_date → 配置配列（assignment_order順）のルックアップを作る純関数。
+export function buildAssignmentLookup(assignments) {
+    const lookup = {};
+    assignments.forEach(a => {
+        const key = `${a.workerId}_${a.date}`;
+        if (!lookup[key]) lookup[key] = [];
+        lookup[key].push(a);
+    });
+    Object.keys(lookup).forEach(key => {
+        lookup[key].sort((a, b) => (a.assignment_order || 0) - (b.assignment_order || 0));
+    });
+    return lookup;
+}
+
 // targetWorkerIds × targetDates の範囲でassignmentLookupから既存配置を集め、
 // dayOffset/workerOffsetを付与したコピー用データと、元の配置レコード一覧を返す純関数。
 // handleActionCopy/handleActionCutの双方が同じ構築ロジックに依存する（§9.19）。
@@ -457,18 +471,18 @@ export function useAssignmentState({
             }));
     }, [projects, projectMap]);
 
-    const assignmentLookup = useMemo(() => {
-        const lookup = {};
-        assignments.forEach(a => {
-            const key = `${a.workerId}_${a.date}`;
-            if (!lookup[key]) lookup[key] = [];
-            lookup[key].push(a);
-        });
-        Object.keys(lookup).forEach(key => {
-            lookup[key].sort((a, b) => (a.assignment_order || 0) - (b.assignment_order || 0));
-        });
-        return lookup;
-    }, [assignments]);
+    const assignmentLookup = useMemo(() => buildAssignmentLookup(assignments), [assignments]);
+
+    // 任意期間の配置ルックアップを取得（Excel出力用。表示中のstateは変更しない）
+    const fetchAssignmentLookupForRange = useCallback(async (startStr, endStr) => {
+        const { data, error } = await supabase
+            .from('Assignments')
+            .select('*')
+            .gte('date', startStr)
+            .lte('date', endStr);
+        if (error) throw error;
+        return buildAssignmentLookup(data || []);
+    }, []);
 
     // 日報実績ルックアップ（worker.id + date → 現場IDの配列）
     const taskRecordLookup = useMemo(() => {
@@ -1249,6 +1263,7 @@ export function useAssignmentState({
         movePeriod,
         goToToday,
         getBarSpan,
+        fetchAssignmentLookupForRange,
         popupRef,
         tableContainerRef,
         undo,

@@ -61,6 +61,7 @@ const WorkerRow = ({
                         return {
                             key: `actual-${pid}`,
                             displayName: shortenName(pInfo?.name || '不明'),
+                            longName: pInfo?.name || '不明',
                             bgColor: pInfo?.color || '#94A3B8',
                             fullName: pInfo?.name || '不明',
                             isActual: true
@@ -72,6 +73,7 @@ const WorkerRow = ({
                         return {
                             key: ai,
                             displayName: a.title || shortenName(pInfo?.name || ''),
+                            longName: a.title || pInfo?.name || '',
                             bgColor: schedType?.color || pInfo?.color || '#94A3B8',
                             fullName: pInfo?.name || a.title || '',
                             isActual: false
@@ -112,7 +114,31 @@ const WorkerRow = ({
                             }
                         }}
                     >
-                        {displayItems.length > 0 ? (
+                        {displayItems.length === 1 ? (
+                            // 1日1件のときは工事名が分かりやすいよう最大2行で表示
+                            <div className="p-0.5" style={{ overflow: 'hidden' }}>
+                                {displayItems.map((item) => (
+                                    <div
+                                        key={item.key}
+                                        className={`text-[9px] leading-[11px] font-bold rounded px-0.5 py-0.5 text-black text-left ${item.isActual ? 'shadow-sm border border-black/20' : ''}`}
+                                        style={{
+                                            background: item.isActual
+                                                ? `repeating-linear-gradient(-45deg, rgba(255,255,255,0.2), rgba(255,255,255,0.2) 3px, transparent 3px, transparent 6px), ${item.bgColor}`
+                                                : item.bgColor,
+                                            color: 'black',
+                                            display: '-webkit-box',
+                                            WebkitLineClamp: 2,
+                                            WebkitBoxOrient: 'vertical',
+                                            overflow: 'hidden',
+                                            wordBreak: 'break-all'
+                                        }}
+                                        title={item.fullName + (item.isActual ? '（実績・編集不可）' : '')}
+                                    >
+                                        {item.longName}
+                                    </div>
+                                ))}
+                            </div>
+                        ) : displayItems.length > 0 ? (
                             <div className="flex flex-col gap-0.5 p-0.5" style={{ overflow: 'hidden' }}>
                                 {displayItems.map((item) => (
                                     <div
