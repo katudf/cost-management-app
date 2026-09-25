@@ -412,7 +412,8 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
 
       // 「受注」への遷移時はProjectsテーブルへ連携する（handleSave経由の保存を通らない
       // ステータスバッジ操作のため、ここでも同じ連携処理を行う必要がある）
-      if (patch.status === ESTIMATE_STATUS.ORDERED && originalStatus !== ESTIMATE_STATUS.ORDERED) {
+      if (patch.status === ESTIMATE_STATUS.ORDERED &&
+          (originalStatus !== ESTIMATE_STATUS.ORDERED || !header.project_id)) {
         try {
           const linkedProjectId = await syncEstimateToProject({
             projectId: header.project_id || null,
@@ -1115,17 +1116,21 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
         })));
       }
 
-      // 「受注」時の自動連動（Projectsテーブルへのコピー）
-      if (header.status === ESTIMATE_STATUS.ORDERED && originalStatus !== ESTIMATE_STATUS.ORDERED) {
+      // 「受注」時の自動連動（Projectsテーブルへのコピー）。
+      // 受注への遷移時に加え、受注済みなのに工事案件が未連携の見積（連携前の旧データ、
+      // 工事削除で連携が外れたもの、ゴミ箱から復元したもの等）も保存時に連携する。
+      if (header.status === ESTIMATE_STATUS.ORDERED &&
+          (originalStatus !== ESTIMATE_STATUS.ORDERED || !safeProjectId)) {
         try {
           const linkedProjectId = await syncEstimateToProject({
-            projectId: header.project_id || null,
+            projectId: safeProjectId,
             title: header.title,
             customerId: header.customer_id,
           });
-          if (linkedProjectId !== header.project_id) {
+          if (linkedProjectId !== safeProjectId) {
             await updateEstimate(savedId, { project_id: linkedProjectId });
             setHeader(prev => ({ ...prev, project_id: linkedProjectId }));
+            showToast('受注案件を現場管理に登録しました', 'success');
           }
           await copyEstimateItemsToProjectTasks(linkedProjectId, items);
         } catch (syncErr) {
