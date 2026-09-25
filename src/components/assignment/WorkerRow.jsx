@@ -1,5 +1,6 @@
 import React from 'react';
 import { SCHEDULE_TYPES } from '../../utils/constants';
+import { isNonWorkingDay } from '../../utils/holidayUtils';
 
 const shortenName = (name) => {
     if (!name) return '';
@@ -16,6 +17,7 @@ const WorkerRow = ({
     worker,
     widx,
     dateColumns,
+    holidayMap,
     assignmentLookup,
     taskRecordLookup,
     projectMap,
@@ -29,7 +31,7 @@ const WorkerRow = ({
     onDropProject   // (workerId, dateStr, projectId) => void
 }) => {
     return (
-        <tr className={`${widx % 2 === 0 ? 'bg-white' : 'bg-slate-50'} hover:bg-blue-50 transition-colors`}>
+        <tr className={`${widx % 2 === 0 ? 'bg-white' : 'bg-slate-50'} assignment-row-hover`}>
             <td className="sticky left-0 z-10 text-xs font-bold p-2 border border-slate-200 truncate"
                 style={{ backgroundColor: widx % 2 === 0 ? 'white' : '#F8FAFC' }}
                 title={worker.name}
@@ -42,7 +44,7 @@ const WorkerRow = ({
                 const cellAssignments = assignmentLookup[lookupKey] || [];
                 const isPastDate = col.dateStr <= todayStr;
                 const actualProjectIds = isPastDate ? (taskRecordLookup[lookupKey] || []) : [];
-                const { isWeekend } = col;
+                const isHolidayOrWeekend = isNonWorkingDay(col.dow, holidayMap[col.dateStr]);
                 const isToday = col.dateStr === todayStr;
                 const isEditing = rowEditCell && (
                     rowEditCell.dragDates
@@ -83,10 +85,10 @@ const WorkerRow = ({
                             ? 'border-blue-500 border-2 bg-blue-100'
                             : isEditing
                                 ? 'border-blue-500 border-2 bg-blue-50'
-                                : 'border-slate-200 hover:border-blue-300 hover:bg-blue-50/30'
+                                : 'border-slate-200 hover:border-blue-300'
                             }`}
                         style={{
-                            backgroundColor: isDragSelected ? '#DBEAFE' : isEditing ? '#EFF6FF' : isWeekend ? '#F9FAFB' : isToday ? '#FEFCE8' : undefined,
+                            backgroundColor: isDragSelected ? '#DBEAFE' : isEditing ? '#EFF6FF' : isHolidayOrWeekend ? '#FEE2E24D' : isToday ? '#FEFCE8' : undefined,
                             overflow: 'hidden', maxWidth: 0, width: '48px'
                         }}
                         onMouseDown={(e) => onCellMouseDown(e, worker.id, col.dateStr)}

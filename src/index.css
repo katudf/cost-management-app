@@ -1,3 +1,12 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/*
+ * 配置表の行ハイライト。
+ * セルごとにインラインで背景色（休日色・バー色・固定列の白など）が指定されているため、
+ * 行の背景色では透けない。inset の box-shadow で全セルの背景の上に色を重ねる。
+ */
+.assignment-row-hover:hover > td {
+    box-shadow: inset 0 0 0 9999px rgba(59, 130, 246, 0.18);
+}

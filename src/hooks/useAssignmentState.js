@@ -578,6 +578,8 @@ export function useAssignmentState({
         if (copiedData.length > 0) {
             setClipboard({ type: 'copy', data: copiedData });
             showToast(`選択範囲（${copiedData.length}件）をコピーしました`, 'success');
+            setEditCell(null);
+            setDragCells([]);
         }
     }, [editCell, assignmentLookup, showToast]);
 
@@ -589,6 +591,8 @@ export function useAssignmentState({
 
         if (copiedData.length > 0) {
             setClipboard({ type: 'cut', data: copiedData });
+            setEditCell(null);
+            setDragCells([]);
 
             const idsToDelete = toDelete.map(a => a.id);
             const deletedRecords = toDelete.map(a => ({ ...a }));
@@ -603,8 +607,6 @@ export function useAssignmentState({
             } catch (err) {
                 console.error('カットエラー', err);
             }
-            setEditCell(null);
-            setDragCells([]);
         }
     }, [editCell, assignmentLookup, showToast, pushUndo, restoreAssignments]);
 

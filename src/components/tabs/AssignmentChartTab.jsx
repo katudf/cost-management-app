@@ -346,15 +346,13 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                             </td>
                             {dateColumns.map((col, i) => {
                                 const holidayObj = holidayMap[col.dateStr];
-                                const { isWeekend } = col;
-
                                 const holidayStyle = getHolidayStyle(holidayObj);
 
                                 let bgColor = 'transparent';
                                 if (holidayStyle) {
                                     bgColor = holidayStyle.bgColor;
-                                } else if (isWeekend) {
-                                    bgColor = '#F1F5F9';
+                                } else if (isNonWorkingDay(col.dow, holidayObj)) {
+                                    bgColor = '#FEE2E24D';
                                 }
 
                                 const displayText = holidayStyle?.shortLabel ?? '';
@@ -406,6 +404,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                     worker={worker}
                                     widx={widx}
                                     dateColumns={dateColumns}
+                                    holidayMap={holidayMap}
                                     assignmentLookup={assignmentLookup}
                                     taskRecordLookup={taskRecordLookup}
                                     projectMap={projectMap}
