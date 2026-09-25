@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 
 const AuthContext = createContext(null);
@@ -8,12 +8,20 @@ export const AuthProvider = ({ children }) => {
     const [currentStaff, setCurrentStaff] = useState(null);
     const [isStaffLoading, setIsStaffLoading] = useState(false);
     const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
+    // 担当者情報を取得済み（または取得中）のユーザーID。
+    // トークン自動更新（TOKEN_REFRESHED）やタブ復帰時の SIGNED_IN でも onAuthStateChange が発火するが、
+    // そのたびに再取得して isLoading を立てると各画面がローディング表示に切り替わり、
+    // 入力中のフォームがアンマウントされて内容が消えてしまう。ユーザーが変わったときだけ取得する。
+    const staffUserIdRef = useRef(null);
 
     const fetchCurrentStaff = useCallback(async (authUserId) => {
         if (!authUserId) {
+            staffUserIdRef.current = null;
             setCurrentStaff(null);
             return;
         }
+        if (staffUserIdRef.current === authUserId) return;
+        staffUserIdRef.current = authUserId;
         setIsStaffLoading(true);
         try {
             const { data, error } = await supabase
@@ -25,6 +33,7 @@ export const AuthProvider = ({ children }) => {
             setCurrentStaff(data || null);
         } catch (error) {
             console.error('担当者情報の取得に失敗しました:', error);
+            staffUserIdRef.current = null;
             setCurrentStaff(null);
         } finally {
             setIsStaffLoading(false);
@@ -60,11 +69,7 @@ export const AuthProvider = ({ children }) => {
                 setIsPasswordRecovery(true);
             }
             setSession(newSession);
-            if (newSession?.user?.id) {
-                fetchCurrentStaff(newSession.user.id);
-            } else {
-                setCurrentStaff(null);
-            }
+            fetchCurrentStaff(newSession?.user?.id);
         });
 
         return () => {
