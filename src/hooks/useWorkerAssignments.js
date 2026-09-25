@@ -122,7 +122,7 @@ export function useWorkerAssignments({ workers, projects, loggedInWorker }) {
         return lookup;
     }, [taskRecords, workers]);
 
-    // ログイン中の作業員を最上部に固定（workers はWorkerApp側で退職者・事務職除外済み）
+    // ログイン中の作業員を最上部に固定（workers はWorkerApp側で退職者・配置表非表示を除外済み）
     const displayWorkers = useMemo(() => {
         const list = workers || [];
         if (!loggedInWorker) return list;

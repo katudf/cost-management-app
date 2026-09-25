@@ -26,7 +26,7 @@ import { supabase } from '../lib/supabase';
 /** 作業員名簿。workerロールはWorkers基表を直接読めない（機微カラム遮蔽）ため安全カラムのみのビューを使う。 */
 export const fetchWorkersDirectoryResult = () =>
     supabase.from('workers_directory')
-        .select('id, name, resignation_date, worker_type')
+        .select('id, name, resignation_date, worker_type, show_in_assignment')
         .order('display_order', { ascending: true, nullsFirst: false });
 
 /** 全工事案件。 */

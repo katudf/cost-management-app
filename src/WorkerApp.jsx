@@ -45,6 +45,8 @@ const WorkerApp = () => {
     const { confirm, prompt } = useConfirm();
     const { isAuthenticated, isLoading: isAuthLoading, isPasswordRecovery, signOut } = useAuth();
     const [workers, setWorkers] = useState([]);
+    // 配置表（閲覧専用）用: 管理画面の配置表と同じく「配置表に表示」チェックで判定する（属性は問わない）
+    const [assignmentWorkers, setAssignmentWorkers] = useState([]);
     const [loggedInWorker, setLoggedInWorker] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
 
@@ -98,6 +100,7 @@ const WorkerApp = () => {
 
                 const { data: wData } = await fetchWithCache('workers', fetchWorkersDirectoryResult);
                 if (wData) setWorkers(wData.filter(w => w.name && w.name.trim() !== '' && !w.resignation_date && w.worker_type !== WORKER_TYPE.OFFICE));
+                if (wData) setAssignmentWorkers(wData.filter(w => w.name && w.name.trim() !== '' && !w.resignation_date && w.show_in_assignment !== false));
 
                 // 管理画面の「日報編集」リンクから ?workerId=<id> 付きで開かれた場合はその作業員で自動ログイン
                 const workerIdParam = new URLSearchParams(window.location.search).get('workerId');
@@ -1744,7 +1747,7 @@ const WorkerApp = () => {
             {/* 配置表（全画面・閲覧専用） */}
             {showAssignmentChart && (
                 <WorkerAssignmentView
-                    workers={workers}
+                    workers={assignmentWorkers}
                     projects={projects}
                     loggedInWorker={loggedInWorker}
                     onClose={() => setShowAssignmentChart(false)}
