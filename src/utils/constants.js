@@ -143,6 +143,7 @@ export const DEFAULT_COLORS = [
 export const SCHEDULE_TYPES = [
     { title: '有給', color: '#F59E0B', icon: '🏖️' },
     { title: '休み', color: '#6B7280', icon: '💤' },
+    { title: '振休', color: '#6366F1', icon: '🔄' },
     { title: '健診', color: '#10B981', icon: '🏥' },
     { title: '会社', color: '#8B5CF6', icon: '🏢' },
     { title: '講習会', color: '#EC4899', icon: '📚' },
