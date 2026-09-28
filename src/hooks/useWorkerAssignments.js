@@ -85,7 +85,7 @@ export function useWorkerAssignments({ workers, projects, loggedInWorker }) {
         const map = {};
         (projects || []).forEach((p, idx) => {
             map[p.id] = {
-                name: p.name || '無題',
+                name: p.short_name?.trim() || p.name || '無題',
                 color: p.bar_color || DEFAULT_COLORS[idx % DEFAULT_COLORS.length],
             };
         });

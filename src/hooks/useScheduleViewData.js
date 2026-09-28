@@ -34,7 +34,7 @@ export function useScheduleViewData(startDate, totalDays = 14, shareKey = null) 
             } else {
                 const [aRes, pRes, wRes, holidayRows] = await Promise.all([
                     supabase.from('Assignments').select('*').gte('date', startStr).lte('date', endStr),
-                    supabase.from('Projects').select('id, name, startDate, endDate, bar_color, status, display_order')
+                    supabase.from('Projects').select('id, name, short_name, startDate, endDate, bar_color, status, display_order')
                         .not('startDate', 'is', null).not('endDate', 'is', null)
                         .order('display_order', { ascending: true, nullsFirst: false })
                         .order('created_at', { ascending: true }),

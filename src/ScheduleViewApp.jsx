@@ -54,7 +54,8 @@ const ScheduleViewApp = () => {
         const map = {};
         barProjects.forEach((p, idx) => {
             map[p.id] = {
-                name: p.name || '無題',
+                // 作業員行には工事短縮名を優先表示（未入力時は工事名）
+                name: p.short_name?.trim() || p.name || '無題',
                 color: p.color || DEFAULT_COLORS[idx % DEFAULT_COLORS.length]
             };
         });

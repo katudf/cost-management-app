@@ -165,6 +165,15 @@ const MasterTab = ({
                                 onBlur={(e) => handleSiteNameBlur(activeProject.id, e.target.value)}
                                 className="w-full bg-white p-3 rounded-lg border-2 border-blue-200 font-bold text-xl outline-none focus:border-blue-500 mb-4"
                             />
+                            <label className="text-xs font-bold text-blue-600 block mb-2 uppercase">工事短縮名</label>
+                            <input
+                                type="text"
+                                value={activeProject.short_name || ''}
+                                onChange={(e) => updateLayer(p => ({ short_name: e.target.value }))}
+                                onBlur={(e) => handleProjectDateChange(activeProject.id, 'short_name', e.target.value.trim() || null)}
+                                placeholder="配置表の作業員行に表示（未入力時は管理現場名）"
+                                className="w-full bg-white p-2 rounded-lg border-2 border-blue-200 font-bold outline-none focus:border-blue-500 mb-4"
+                            />
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                                 <div>
                                     <label className="text-xs font-bold text-blue-600 block mb-2 uppercase">現場ステータス</label>

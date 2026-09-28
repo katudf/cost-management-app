@@ -452,8 +452,9 @@ export function useAssignmentState({
         barProjects.forEach(bp => { barColorById[bp.id] = bp.color; });
         const map = {};
         projects.forEach((p, idx) => {
+            // 作業員行には工事短縮名を優先表示（未入力時は管理現場名）
             map[p.id] = {
-                name: p.siteName || '無題',
+                name: p.short_name?.trim() || p.siteName || '無題',
                 color: barColorById[p.id] || DEFAULT_COLORS[idx % DEFAULT_COLORS.length]
             };
         });
