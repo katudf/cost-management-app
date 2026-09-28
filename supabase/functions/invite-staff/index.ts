@@ -99,12 +99,12 @@ serve(async (req) => {
       throw new Error("招待ユーザーの作成に失敗しました。")
     }
 
-    const { error: updateError } = await adminClient
-      .from('office_staff')
-      .update({ auth_user_id: newAuthUserId })
-      .eq('id', staffRow.id)
+    const { error: linkError } = await adminClient.rpc('link_office_staff_auth_user', {
+      p_staff_id: staffRow.id,
+      p_auth_user_id: newAuthUserId,
+    })
 
-    if (updateError) throw updateError
+    if (linkError) throw linkError
 
     return new Response(
       JSON.stringify({ success: true }),
