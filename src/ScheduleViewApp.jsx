@@ -4,6 +4,7 @@ import { toDateStr, addDays, getMonday, buildDateColumns, buildWeekGroups } from
 import { DEFAULT_COLORS, SCHEDULE_TYPES, PROJECT_STATUS } from './utils/constants';
 import { useAuth } from './hooks/useAuth';
 import { useScheduleViewData } from './hooks/useScheduleViewData';
+import { isNonWorkingDay } from './utils/holidayUtils';
 import LoginScreen from './components/auth/LoginScreen';
 import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
 
@@ -25,9 +26,17 @@ const ScheduleViewApp = () => {
     const [startDate, setStartDate] = useState(() => getMonday(new Date()));
     const totalDays = 14;
 
-    const { workers, assignments, barProjects, isLoading, error } = useScheduleViewData(startDate, totalDays, shareKey);
+    const { workers, assignments, barProjects, holidays, isLoading, error } = useScheduleViewData(startDate, totalDays, shareKey);
 
-    const dateColumns = useMemo(() => buildDateColumns(startDate, totalDays), [startDate, totalDays]);
+    // isOff: 日曜または登録休日（メイン配置表と同じ判定）
+    const dateColumns = useMemo(() => {
+        const holidayMap = {};
+        holidays.forEach(h => { holidayMap[h.date] = h; });
+        return buildDateColumns(startDate, totalDays).map(col => ({
+            ...col,
+            isOff: isNonWorkingDay(col.dow, holidayMap[col.dateStr]),
+        }));
+    }, [startDate, totalDays, holidays]);
     const weekGroups = useMemo(() => buildWeekGroups(dateColumns), [dateColumns]);
 
     // ルックアップ
@@ -69,8 +78,8 @@ const ScheduleViewApp = () => {
             .filter(Boolean);
     }, [barProjects, startDate, totalDays]);
 
-    const getDayBg = (dow) => {
-        if (dow === 0) return { bg: '#FEE2E2', color: '#DC2626' };
+    const getDayBg = ({ dow, isOff }) => {
+        if (isOff) return { bg: '#FEE2E2', color: '#DC2626' };
         if (dow === 6) return { bg: '#DBEAFE', color: '#2563EB' };
         return { bg: undefined, color: '#334155' };
     };
@@ -201,7 +210,7 @@ const ScheduleViewApp = () => {
                         </tr>
                         <tr>
                             {dateColumns.map((col, i) => {
-                                const style = getDayBg(col.dow);
+                                const style = getDayBg(col);
                                 const today = isToday(col.dateStr);
                                 return (
                                     <th
@@ -230,7 +239,7 @@ const ScheduleViewApp = () => {
                                 </td>
                             </tr>
                         ) : visibleBars.map(p => {
-                            const labelIdx = dateColumns.findIndex((c, i) => i >= p.startIdx && i <= p.endIdx && !c.isWeekend);
+                            const labelIdx = dateColumns.findIndex((c, i) => i >= p.startIdx && i <= p.endIdx && !c.isOff);
                             const labelAt = labelIdx === -1 ? p.startIdx : labelIdx;
                             return (
                                 <tr key={p.id} className="bg-white">
@@ -245,8 +254,8 @@ const ScheduleViewApp = () => {
                                         const inBar = i >= p.startIdx && i <= p.endIdx;
                                         const today = isToday(col.dateStr);
                                         const bg = inBar
-                                            ? (col.isWeekend ? '#FEE2E24D' : p.color + 'CC')
-                                            : today ? '#EFF6FF' : col.isWeekend ? '#F9FAFB' : undefined;
+                                            ? (col.isOff ? '#FEE2E24D' : p.color + 'CC')
+                                            : col.isOff ? '#FEE2E24D' : today ? '#EFF6FF' : undefined;
                                         return (
                                             <td
                                                 key={i}
@@ -284,7 +293,6 @@ const ScheduleViewApp = () => {
                                 {dateColumns.map((col, i) => {
                                     const lookupKey = `${worker.id}_${col.dateStr}`;
                                     const cellAssigns = assignmentLookup[lookupKey] || [];
-                                    const { isWeekend } = col;
                                     const today = isToday(col.dateStr);
 
                                     return (
@@ -292,7 +300,7 @@ const ScheduleViewApp = () => {
                                             key={i}
                                             className={`border border-slate-200 p-0 text-center align-middle ${today ? 'ring-1 ring-blue-400 ring-inset' : ''}`}
                                             style={{
-                                                backgroundColor: today ? '#EFF6FF' : isWeekend ? '#F9FAFB' : undefined,
+                                                backgroundColor: col.isOff ? '#FEE2E24D' : today ? '#EFF6FF' : undefined,
                                                 overflow: 'hidden', maxWidth: 0, width: '44px'
                                             }}
                                         >

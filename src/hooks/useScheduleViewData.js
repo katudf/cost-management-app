@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { toDateStr, addDays } from '../utils/dateUtils';
 import { DEFAULT_COLORS } from '../utils/constants';
 import { fetchPublicSchedule } from '../features/scheduleShare/scheduleShareApi';
+import { fetchCompanyHolidays } from './useCompanyHolidays';
 
 /**
  * 配置予定表の閲覧データ。
@@ -15,6 +16,7 @@ export function useScheduleViewData(startDate, totalDays = 14, shareKey = null) 
     const [workers, setWorkers] = useState([]);
     const [assignments, setAssignments] = useState([]);
     const [barProjects, setBarProjects] = useState([]);
+    const [holidays, setHolidays] = useState([]);
 
     const refetch = useCallback(async () => {
         setIsLoading(true);
@@ -22,14 +24,15 @@ export function useScheduleViewData(startDate, totalDays = 14, shareKey = null) 
             const startStr = toDateStr(startDate);
             const endStr = toDateStr(addDays(startDate, totalDays - 1));
 
-            let aData, pData, wData;
+            let aData, pData, wData, hData;
             if (shareKey) {
                 const data = await fetchPublicSchedule(shareKey, startStr, endStr);
                 aData = data?.assignments || [];
                 pData = data?.projects || [];
                 wData = data?.workers || [];
+                hData = data?.holidays || [];
             } else {
-                const [aRes, pRes, wRes] = await Promise.all([
+                const [aRes, pRes, wRes, holidayRows] = await Promise.all([
                     supabase.from('Assignments').select('*').gte('date', startStr).lte('date', endStr),
                     supabase.from('Projects').select('id, name, startDate, endDate, bar_color, status, display_order')
                         .not('startDate', 'is', null).not('endDate', 'is', null)
@@ -37,14 +40,17 @@ export function useScheduleViewData(startDate, totalDays = 14, shareKey = null) 
                         .order('created_at', { ascending: true }),
                     // viewer/workerロールはWorkers基表を直接読めない（機微カラム遮蔽）ため安全カラムのみのビューを使う
                     supabase.from('workers_directory').select('id, name, display_order, show_in_assignment, resignation_date')
-                        .order('display_order', { ascending: true, nullsFirst: false })
+                        .order('display_order', { ascending: true, nullsFirst: false }),
+                    fetchCompanyHolidays({ from: startStr, to: endStr })
                 ]);
                 aData = aRes.data || [];
                 pData = pRes.data || [];
                 wData = wRes.data || [];
+                hData = holidayRows;
             }
 
             setAssignments(aData);
+            setHolidays(hData);
             setBarProjects(pData.map((p, idx) => ({
                 ...p,
                 color: p.bar_color || DEFAULT_COLORS[idx % DEFAULT_COLORS.length]
@@ -61,5 +67,5 @@ export function useScheduleViewData(startDate, totalDays = 14, shareKey = null) 
 
     useEffect(() => { refetch(); }, [refetch]);
 
-    return { workers, assignments, barProjects, isLoading, error, refetch };
+    return { workers, assignments, barProjects, holidays, isLoading, error, refetch };
 }
