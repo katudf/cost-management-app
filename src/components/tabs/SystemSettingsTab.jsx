@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Save, CheckCircle2, Award, Activity, UserCheck, Building2, MessageSquare } from 'lucide-react';
+import { Settings, Save, CheckCircle2, Award, Activity, UserCheck, Building2, MessageSquare, Share2 } from 'lucide-react';
 import { useSystemSettings } from '../../hooks/useSystemSettings';
 import { useToast } from '../../components/Toast';
 import { getDailyApiUsage } from '../../utils/aiOptimizeUtils';
@@ -9,6 +9,7 @@ import StaffSettings from './StaffSettings';
 import CertificationManager from './settings/CertificationManager';
 import CompanyInfoSettings from './settings/CompanyInfoSettings';
 import LineWorksSettings from './settings/LineWorksSettings';
+import ScheduleShareSettings from './settings/ScheduleShareSettings';
 
 const SystemSettingsTab = ({ 
     hourlyWage, 
@@ -29,7 +30,7 @@ const SystemSettingsTab = ({
     } = useSystemSettings({ hourlyWage, onHourlyWageSaved: setHourlyWage });
     const [showSuccess, setShowSuccess] = useState(false);
     const [apiUsage, setApiUsage] = useState(null);
-    const [activeSubTab, setActiveSubTab] = useState('general'); // 'general', 'calendar', 'certs', 'customers', 'company', 'lineworks'
+    const [activeSubTab, setActiveSubTab] = useState('general'); // 'general', 'calendar', 'certs', 'customers', 'company', 'lineworks', 'scheduleShare'
 
     useEffect(() => {
         setApiUsage(getDailyApiUsage());
@@ -94,6 +95,12 @@ const SystemSettingsTab = ({
                     className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${activeSubTab === 'lineworks' ? 'bg-blue-600 text-white shadow-md shadow-blue-200' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}
                 >
                     <MessageSquare size={18} /> LINE WORKS
+                </button>
+                <button
+                    onClick={() => setActiveSubTab('scheduleShare')}
+                    className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${activeSubTab === 'scheduleShare' ? 'bg-blue-600 text-white shadow-md shadow-blue-200' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}
+                >
+                    <Share2 size={18} /> 配置表共有
                 </button>
             </div>
 
@@ -281,6 +288,10 @@ const SystemSettingsTab = ({
 
             {activeSubTab === 'lineworks' && (
                 <LineWorksSettings />
+            )}
+
+            {activeSubTab === 'scheduleShare' && (
+                <ScheduleShareSettings />
             )}
         </div>
     );

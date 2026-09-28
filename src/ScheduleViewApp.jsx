@@ -1,21 +1,31 @@
 import React, { useState, useMemo } from 'react';
-import { Calendar, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, Loader2, LinkIcon } from 'lucide-react';
 import { toDateStr, addDays, getMonday, buildDateColumns, buildWeekGroups } from './utils/dateUtils';
-import { DEFAULT_COLORS, SCHEDULE_TYPES } from './utils/constants';
+import { DEFAULT_COLORS, SCHEDULE_TYPES, PROJECT_STATUS } from './utils/constants';
 import { useAuth } from './hooks/useAuth';
 import { useScheduleViewData } from './hooks/useScheduleViewData';
 import LoginScreen from './components/auth/LoginScreen';
 import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
 
 
+// メイン配置表と同様、有給用の案件はバーに出さない
+const EXCLUDED_BAR_NAMES = ['【会社】有給', '有給', '【有給】'];
+
+// 共有キー付きURL（?mode=schedule&key=xxxx）ならログイン不要で閲覧できる
+const getShareKey = () => {
+    const key = new URLSearchParams(window.location.search).get('key');
+    return key && key.trim() !== '' ? key.trim() : null;
+};
+
 const ScheduleViewApp = () => {
     const { isAuthenticated, isLoading: isAuthLoading, isPasswordRecovery } = useAuth();
+    const [shareKey] = useState(getShareKey);
 
     // 表示期間: 2週間
     const [startDate, setStartDate] = useState(() => getMonday(new Date()));
     const totalDays = 14;
 
-    const { workers, assignments, barProjects, isLoading } = useScheduleViewData(startDate, totalDays);
+    const { workers, assignments, barProjects, isLoading, error } = useScheduleViewData(startDate, totalDays, shareKey);
 
     const dateColumns = useMemo(() => buildDateColumns(startDate, totalDays), [startDate, totalDays]);
     const weekGroups = useMemo(() => buildWeekGroups(dateColumns), [dateColumns]);
@@ -42,6 +52,23 @@ const ScheduleViewApp = () => {
         return map;
     }, [barProjects]);
 
+    // 上部バーチャート: メイン配置表と同じく予定・施工中の案件のみ、表示期間に掛かるものを表示
+    const visibleBars = useMemo(() => {
+        const viewEnd = addDays(startDate, totalDays - 1);
+        return barProjects
+            .filter(p => [PROJECT_STATUS.SCHEDULED, PROJECT_STATUS.IN_PROGRESS].includes(p.status)
+                && !EXCLUDED_BAR_NAMES.includes(p.name))
+            .map(p => {
+                const pStart = new Date(p.startDate + 'T00:00:00');
+                const pEnd = new Date(p.endDate + 'T00:00:00');
+                if (pEnd < startDate || pStart > viewEnd) return null;
+                const startIdx = Math.max(0, Math.round((pStart - startDate) / 86400000));
+                const endIdx = Math.min(totalDays - 1, Math.round((pEnd - startDate) / 86400000));
+                return { ...p, startIdx, endIdx };
+            })
+            .filter(Boolean);
+    }, [barProjects, startDate, totalDays]);
+
     const getDayBg = (dow) => {
         if (dow === 0) return { bg: '#FEE2E2', color: '#DC2626' };
         if (dow === 6) return { bg: '#DBEAFE', color: '#2563EB' };
@@ -53,14 +80,29 @@ const ScheduleViewApp = () => {
     const movePeriod = (weeks) => setStartDate(prev => addDays(prev, weeks * 7));
     const goToToday = () => setStartDate(getMonday(new Date()));
 
-    const shortenName = (name) => {
+    // 1件のみのセルは2行（最大8文字）、複数件のセルは1行（最大4文字）で表示
+    const shortenName = (name, maxLen = 4) => {
         if (!name) return '';
-        return name.length > 4 ? name.substring(0, 4) : name;
+        return name.length > maxLen ? name.substring(0, maxLen) : name;
     };
 
     const periodLabel = `${startDate.getMonth() + 1}/${startDate.getDate()} 〜 ${addDays(startDate, totalDays - 1).getMonth() + 1}/${addDays(startDate, totalDays - 1).getDate()}`;
 
-    if (isAuthLoading) {
+    if (shareKey && error === 'invalid_key') {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-slate-100 p-6">
+                <div className="bg-white rounded-xl shadow-md p-6 max-w-sm w-full text-center">
+                    <LinkIcon className="w-10 h-10 text-slate-400 mx-auto mb-3" />
+                    <h1 className="font-bold text-slate-800 mb-2">共有URLが無効です</h1>
+                    <p className="text-sm text-slate-500">
+                        このURLは停止または再発行されています。管理者に新しいURLを確認してください。
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
+    if (!shareKey && isAuthLoading) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-slate-100">
                 <Loader2 className="w-10 h-10 text-blue-500 animate-spin" />
@@ -68,11 +110,11 @@ const ScheduleViewApp = () => {
         );
     }
 
-    if (isPasswordRecovery) {
+    if (!shareKey && isPasswordRecovery) {
         return <ResetPasswordScreen />;
     }
 
-    if (!isAuthenticated) {
+    if (!shareKey && !isAuthenticated) {
         return <LoginScreen title="工程表閲覧" subtitle="ログイン" />;
     }
 
@@ -96,6 +138,8 @@ const ScheduleViewApp = () => {
                     <div className="flex items-center gap-1">
                         <button
                             onClick={() => movePeriod(-2)}
+                            aria-label="前の2週間"
+                            title="前の2週間"
                             className="p-1.5 rounded-md hover:bg-blue-500 transition"
                         >
                             <ChevronLeft size={18} />
@@ -111,6 +155,8 @@ const ScheduleViewApp = () => {
                         </span>
                         <button
                             onClick={() => movePeriod(2)}
+                            aria-label="次の2週間"
+                            title="次の2週間"
                             className="p-1.5 rounded-md hover:bg-blue-500 transition"
                         >
                             <ChevronRight size={18} />
@@ -174,6 +220,56 @@ const ScheduleViewApp = () => {
                         </tr>
                     </thead>
 
+                    {/* 案件バーチャート */}
+                    <tbody className="border-b-2 border-slate-400">
+                        {visibleBars.length === 0 ? (
+                            <tr>
+                                <td className="sticky left-0 z-10 bg-white text-[10px] text-slate-400 p-1 border border-slate-200">案件</td>
+                                <td colSpan={totalDays} className="text-[10px] text-slate-400 p-1 border border-slate-200">
+                                    この期間の案件はありません
+                                </td>
+                            </tr>
+                        ) : visibleBars.map(p => {
+                            const labelIdx = dateColumns.findIndex((c, i) => i >= p.startIdx && i <= p.endIdx && !c.isWeekend);
+                            const labelAt = labelIdx === -1 ? p.startIdx : labelIdx;
+                            return (
+                                <tr key={p.id} className="bg-white">
+                                    <td
+                                        className="sticky left-0 z-10 bg-white text-[10px] font-bold p-1 border border-slate-200"
+                                        title={p.name}
+                                    >
+                                        {/* 幅固定しないと長い案件名で表全体が広がる */}
+                                        <div className="w-16 truncate">{p.name}</div>
+                                    </td>
+                                    {dateColumns.map((col, i) => {
+                                        const inBar = i >= p.startIdx && i <= p.endIdx;
+                                        const today = isToday(col.dateStr);
+                                        const bg = inBar
+                                            ? (col.isWeekend ? '#FEE2E24D' : p.color + 'CC')
+                                            : today ? '#EFF6FF' : col.isWeekend ? '#F9FAFB' : undefined;
+                                        return (
+                                            <td
+                                                key={i}
+                                                className="relative p-0 border border-slate-200"
+                                                style={{ backgroundColor: bg }}
+                                            >
+                                                <div className="h-5"></div>
+                                                {inBar && i === labelAt && (
+                                                    <div
+                                                        className="absolute left-0.5 top-0 h-5 flex items-center text-[10px] font-bold whitespace-nowrap pointer-events-none z-[5]"
+                                                        style={{ textShadow: '0 0 2px #fff, 0 0 2px #fff' }}
+                                                    >
+                                                        {p.name}
+                                                    </div>
+                                                )}
+                                            </td>
+                                        );
+                                    })}
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+
                     {/* 作業員配置 */}
                     <tbody>
                         {workers.map((worker, widx) => (
@@ -207,12 +303,13 @@ const ScheduleViewApp = () => {
                                                         const schedType = !a.projectId && a.title
                                                             ? SCHEDULE_TYPES.find(s => s.title === a.title)
                                                             : null;
-                                                        const displayName = a.title || shortenName(pInfo?.name || '');
+                                                        const twoLine = cellAssigns.length === 1;
+                                                        const displayName = a.title || shortenName(pInfo?.name || '', twoLine ? 8 : 4);
                                                         const bgColor = schedType?.color || pInfo?.color || '#94A3B8';
                                                         return (
                                                             <div
                                                                 key={ai}
-                                                                className="text-[8px] font-bold rounded px-0.5 py-0.5 text-black truncate"
+                                                                className={`text-[8px] font-bold rounded px-0.5 py-0.5 text-black ${twoLine ? 'line-clamp-2 break-all leading-tight' : 'truncate'}`}
                                                                 style={{
                                                                     backgroundColor: bgColor,
                                                                     color: 'black'
