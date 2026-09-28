@@ -4,9 +4,12 @@ import { useToast } from '../../components/Toast';
 import ConfirmModal from '../ConfirmModal';
 import { STAFF_ROLE, STAFF_ROLE_LABEL, STAFF_ROLE_LIST } from '../../utils/constants';
 import { useStaffSettingsData } from '../../hooks/useStaffSettingsData';
+import { useAuth } from '../../hooks/useAuth';
 
 const StaffSettings = () => {
     const { showToast } = useToast();
+    const { currentStaff } = useAuth();
+    const isAdmin = currentStaff?.role === STAFF_ROLE.ADMIN;
     const { staffList, isLoading, refetch, createStaff, updateStaff, deleteStaff, inviteStaff } = useStaffSettingsData();
     const [isSaving, setIsSaving] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -278,9 +281,10 @@ const StaffSettings = () => {
                                                 </button>
                                                 <button
                                                     onClick={() => setConfirmDeleteId(staff.id)}
-                                                    disabled={isSaving}
-                                                    className="bg-white border border-slate-200 text-red-500 hover:text-red-600 hover:border-red-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50"
-                                                    title="削除"
+                                                    disabled={isSaving || !isAdmin}
+                                                    aria-label={isAdmin ? '削除' : '削除（管理者のみ）'}
+                                                    title={isAdmin ? '削除' : '削除には管理者権限が必要です'}
+                                                    className="bg-white border border-slate-200 text-red-500 hover:text-red-600 hover:border-red-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50 disabled:hover:text-red-500 disabled:hover:border-slate-200 disabled:cursor-not-allowed"
                                                 >
                                                     <Trash2 size={16} />
                                                 </button>

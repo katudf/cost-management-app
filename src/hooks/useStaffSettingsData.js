@@ -31,8 +31,13 @@ export function useStaffSettingsData() {
     }, []);
 
     const deleteStaff = useCallback(async (id) => {
-        const { error } = await supabase.from('office_staff').delete().eq('id', id);
+        // RLSで削除権限がない場合、PostgRESTはエラーを返さず0件削除のまま204を返す。
+        // .select() で削除された行を受け取り、0件なら権限不足として明示的にエラーにする。
+        const { data, error } = await supabase.from('office_staff').delete().eq('id', id).select();
         if (error) throw error;
+        if (!data || data.length === 0) {
+            throw new Error('削除する権限がないか、対象の担当者が見つかりません。');
+        }
     }, []);
 
     const inviteStaff = useCallback(async (staffId, email) => {
