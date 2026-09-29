@@ -85,7 +85,7 @@ const StaffSettings = () => {
             refetch();
         } catch (error) {
             console.error('招待エラー:', error);
-            showToast('招待の送信に失敗しました', 'error');
+            showToast(`招待の送信に失敗しました: ${error.message}`, 'error');
         } finally {
             setIsInviting(false);
         }
@@ -93,7 +93,8 @@ const StaffSettings = () => {
 
     const filteredStaff = staffList.filter(s =>
         s.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (STAFF_ROLE_LABEL[s.role] || s.role || '').toLowerCase().includes(searchQuery.toLowerCase())
+        (STAFF_ROLE_LABEL[s.role] || s.role || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (s.email || '').toLowerCase().includes(searchQuery.toLowerCase())
     );
 
     return (
@@ -176,7 +177,7 @@ const StaffSettings = () => {
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
                     <input
                         type="text"
-                        placeholder="名前や役職で検索..."
+                        placeholder="名前・役職・メールで検索..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:border-blue-400 focus:bg-white outline-none font-bold text-slate-700 transition-all"
@@ -225,10 +226,17 @@ const StaffSettings = () => {
                                         </td>
                                         <td className="p-4 text-sm">
                                             {staff.auth_user_id ? (
-                                                <span className="inline-flex items-center gap-1.5 text-green-600 text-xs font-bold bg-green-50 border border-green-200 px-2.5 py-1 rounded-full">
-                                                    <CheckCircle2 size={14} /> 招待済み
-                                                </span>
-                                            ) : inviteTargetId === staff.id ? (
+                                                <div className="flex flex-col items-start gap-1">
+                                                    <span className="inline-flex items-center gap-1.5 text-green-600 text-xs font-bold bg-green-50 border border-green-200 px-2.5 py-1 rounded-full">
+                                                        <CheckCircle2 size={14} /> 招待済み
+                                                    </span>
+                                                    {staff.email && (
+                                                        <span className="inline-flex items-center gap-1 text-xs text-slate-500 font-medium break-all" title={staff.email}>
+                                                            <Mail size={12} className="shrink-0" /> {staff.email}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            ) :inviteTargetId === staff.id ? (
                                                 <div className="flex items-center gap-2">
                                                     <div className="relative">
                                                         <Mail className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 w-3.5 h-3.5" />

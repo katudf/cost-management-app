@@ -148,12 +148,38 @@ serve(async (req) => {
       throw new Error("招待ユーザーの作成に失敗しました。")
     }
 
+    // 既存Authユーザーが別の担当者に紐付いている場合（同じメールアドレスを別の担当者で使っている等）は、
+    // auth_user_id の一意制約違反になるため、紐付け前に検出して分かりやすいエラーを返す。
+    const { data: linkedStaff, error: linkedStaffError } = await adminClient
+      .from('office_staff')
+      .select('id, name')
+      .eq('auth_user_id', newAuthUserId)
+      .neq('id', staffRow.id)
+      .maybeSingle()
+
+    if (linkedStaffError) throw linkedStaffError
+    if (linkedStaff) {
+      return new Response(
+        JSON.stringify({ error: `このメールアドレスは既に担当者「${linkedStaff.name}」のログインに使われています。別のメールアドレスを指定してください。` }),
+        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      )
+    }
+
     const { error: linkError } = await adminClient.rpc('link_office_staff_auth_user', {
       p_staff_id: staffRow.id,
       p_auth_user_id: newAuthUserId,
     })
 
-    if (linkError) throw linkError
+    if (linkError) {
+      // 上のチェックと同時に別の招待が走った場合の一意制約違反
+      if (linkError.code === '23505') {
+        return new Response(
+          JSON.stringify({ error: "このメールアドレスは既に別の担当者のログインに使われています。" }),
+          { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        )
+      }
+      throw linkError
+    }
 
     return new Response(
       JSON.stringify({ success: true }),

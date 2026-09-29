@@ -14,7 +14,14 @@ export function useStaffSettingsData() {
                 .order('name', { ascending: true });
 
             if (error) throw error;
-            setStaffList(data || []);
+
+            // ログイン用メールアドレスは auth.users 側にしか無いため RPC で取得して合成する。
+            // 管理者以外は0件が返る（メールは表示しない）。取得失敗時も一覧自体は表示する。
+            const { data: emails, error: emailError } = await supabase.rpc('get_office_staff_emails');
+            if (emailError) console.warn('担当者メールアドレスの取得に失敗しました:', emailError);
+            const emailMap = new Map((emails || []).map(e => [e.staff_id, e.email]));
+
+            setStaffList((data || []).map(s => ({ ...s, email: emailMap.get(s.id) || null })));
         } finally {
             setIsLoading(false);
         }
@@ -47,7 +54,11 @@ export function useStaffSettingsData() {
         const { error } = await supabase.functions.invoke('invite-staff', {
             body: { staffId, email, redirectTo },
         });
-        if (error) throw error;
+        if (error) {
+            // Edge Function が返したエラーメッセージ（{ error: '...' }）を取り出して画面に出せるようにする
+            const body = await error.context?.json?.().catch(() => null);
+            throw new Error(body?.error || error.message);
+        }
     }, []);
 
     return { staffList, isLoading, refetch, createStaff, updateStaff, deleteStaff, inviteStaff };
