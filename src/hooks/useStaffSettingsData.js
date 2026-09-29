@@ -41,8 +41,11 @@ export function useStaffSettingsData() {
     }, []);
 
     const inviteStaff = useCallback(async (staffId, email) => {
+        // 招待メールのリンク先を、いま開いている画面（本番URL等）にする。
+        // 未指定だと Supabase の Site URL が使われ、localhost に飛ばされることがある。
+        const redirectTo = `${window.location.origin}${window.location.pathname}`;
         const { error } = await supabase.functions.invoke('invite-staff', {
-            body: { staffId, email },
+            body: { staffId, email, redirectTo },
         });
         if (error) throw error;
     }, []);
