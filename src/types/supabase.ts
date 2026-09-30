@@ -1482,6 +1482,27 @@ export type Database = {
           },
         ]
       }
+      WorkerDailyBreakSettings: {
+        Row: {
+          break_durations: Json
+          date: string
+          updated_at: string
+          worker_name: string
+        }
+        Insert: {
+          break_durations?: Json
+          date: string
+          updated_at?: string
+          worker_name: string
+        }
+        Update: {
+          break_durations?: Json
+          date?: string
+          updated_at?: string
+          worker_name?: string
+        }
+        Relationships: []
+      }
       Warehouses: {
         Row: {
           created_at: string | null

@@ -39,6 +39,13 @@ export const fetchWorkerDailyRecordsResult = (workerName, date) =>
         .eq('worker_name', workerName)
         .eq('date', date);
 
+/** 作業員・日付単位の休憩設定。 */
+export const fetchWorkerDailyBreakSettingsResult = (workerName, date) =>
+    supabase.from('WorkerDailyBreakSettings').select('*')
+        .eq('worker_name', workerName)
+        .eq('date', date)
+        .maybeSingle();
+
 /** 指定現場の工種一覧。 */
 export const fetchProjectTasksResult = (projectId) =>
     supabase.from('ProjectTasks').select('*')
@@ -103,6 +110,18 @@ export async function fetchWorkerDailyRecords(workerName, date) {
         .eq('date', date);
     if (error) throw error;
     return data || [];
+}
+
+/** 作業員・日付単位の休憩設定を保存する。 */
+export async function saveWorkerDailyBreakSettings(workerName, date, breakDurations) {
+    const { data, error } = await supabase.from('WorkerDailyBreakSettings').upsert({
+        worker_name: workerName,
+        date,
+        break_durations: breakDurations,
+        updated_at: new Date().toISOString(),
+    }, { onConflict: 'worker_name,date' }).select().single();
+    if (error) throw error;
+    return data;
 }
 
 // ============================================================

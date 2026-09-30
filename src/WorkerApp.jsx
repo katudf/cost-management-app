@@ -3,6 +3,7 @@ import {
     fetchWorkersDirectoryResult,
     fetchProjectsResult,
     fetchWorkerDailyRecordsResult,
+    fetchWorkerDailyBreakSettingsResult,
     fetchProjectTasksResult,
     fetchTaskRecordsResult,
     fetchSubcontractorRecordsResult,
@@ -15,8 +16,9 @@ import {
     insertDefaultProjectTask,
     deleteProjectDayRecords,
     saveDailyReport,
+    saveWorkerDailyBreakSettings,
 } from './hooks/useDailyReport';
-import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2, PlusCircle, Clock, X, Wifi, WifiOff, FileText, CalendarDays, CopyPlus, GripVertical } from 'lucide-react';
+import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2, PlusCircle, Clock, X, Wifi, WifiOff, FileText, CalendarDays, CopyPlus, GripVertical, ChevronDown } from 'lucide-react';
 import WorkerAssignmentView from './components/worker/WorkerAssignmentView';
 import { useAuth } from './hooks/useAuth';
 import LoginScreen from './components/auth/LoginScreen';
@@ -65,6 +67,9 @@ const WorkerApp = () => {
     const [allProjectRecords, setAllProjectRecords] = useState([]);
     const [allSubcontractorRecords, setAllSubcontractorRecords] = useState([]);
     const [workerDailyAllRecords, setWorkerDailyAllRecords] = useState([]);
+    const [dailyBreakSettings, setDailyBreakSettings] = useState(null);
+    const [isLoadingBreakSettings, setIsLoadingBreakSettings] = useState(true);
+    const [isBreakSettingsExpanded, setIsBreakSettingsExpanded] = useState(false);
     const [draftQueue, setDraftQueue] = useState([]);
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
     const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -163,6 +168,34 @@ const WorkerApp = () => {
             } catch (e) { console.error(e); }
         };
         fetch();
+    }, [loggedInWorker, selectedDate]);
+
+    // 休憩設定は現場をまたいで共有するため、作業員・日付単位で取得する。
+    useEffect(() => {
+        let active = true;
+        setIsLoadingBreakSettings(true);
+        setDailyBreakSettings(null);
+        setIsBreakSettingsExpanded(false);
+        if (!loggedInWorker || !selectedDate) {
+            setIsLoadingBreakSettings(false);
+            return () => { active = false; };
+        }
+        fetchWithCache(`worker-break-settings-${loggedInWorker.name}-${selectedDate}`,
+            () => fetchWorkerDailyBreakSettingsResult(loggedInWorker.name, selectedDate)
+        ).then(({ data }) => {
+            if (!active) return;
+            const standard = getSeasonConfig(selectedDate).breaks.map(brk => brk.e - brk.s);
+            const saved = Array.isArray(data?.break_durations) ? data.break_durations : standard;
+            setDailyBreakSettings({ workerName: loggedInWorker.name, date: selectedDate, durations: saved });
+        }).catch(error => {
+            console.error('Daily break settings load error:', error);
+            if (active) {
+                const standard = getSeasonConfig(selectedDate).breaks.map(brk => brk.e - brk.s);
+                setDailyBreakSettings({ workerName: loggedInWorker.name, date: selectedDate, durations: standard });
+                showToast('休憩設定を読み込めませんでした。通信状態を確認してください。', 'error');
+            }
+        }).finally(() => { if (active) setIsLoadingBreakSettings(false); });
+        return () => { active = false; };
     }, [loggedInWorker, selectedDate]);
 
     // Load tasks when project is selected
@@ -718,6 +751,7 @@ const WorkerApp = () => {
                     tasks,
                     subcontractors,
                     deletedSubcontractorIds,
+                    breakDurations: dailyBreakSettings?.durations,
                     isAutoSaved: true,
                 });
                 // 自動保存の失敗（容量超過など）はここでは通知しない。
@@ -727,14 +761,18 @@ const WorkerApp = () => {
             }, 1000);
             return () => clearTimeout(timer);
         }
-    }, [tasks, subcontractors, deletedSubcontractorIds, hasUnsavedChanges, selectedProjectId, selectedDate]);
+    }, [tasks, subcontractors, deletedSubcontractorIds, dailyBreakSettings, hasUnsavedChanges, selectedProjectId, selectedDate]);
 
     // ========== 時間自動計算 (各タスク×各スロット) ==========
+    const defaultBreakDurations = getSeasonConfig(selectedDate).breaks.map(brk => brk.e - brk.s);
+    const effectiveBreakDurations = dailyBreakSettings?.workerName === loggedInWorker?.name && dailyBreakSettings?.date === selectedDate
+        ? dailyBreakSettings.durations
+        : defaultBreakDurations;
     const tasksWithCalculation = useMemo(() => {
         return tasks.map(t => {
             const slotCalcs = t.time_slots.map(slot => {
                 if (slot.start_time && slot.end_time) {
-                    const c = calculateWorkHours(slot.start_time, slot.end_time, selectedDate, slot.is_overnight);
+                    const c = calculateWorkHours(slot.start_time, slot.end_time, selectedDate, slot.is_overnight, effectiveBreakDurations);
                     return { ...c, has_input: true };
                 }
                 return { netWorkHours: 0, overtimeHours: 0, regularHours: 0, breakMinutes: 0, grossMinutes: 0, has_input: false };
@@ -745,7 +783,7 @@ const WorkerApp = () => {
             const has_any_input = slotCalcs.some(c => c.has_input);
             return { ...t, slotCalcs, total_hours: Math.round(total_hours * 100) / 100, total_overtime: Math.round(total_overtime * 100) / 100, total_break, has_any_input };
         });
-    }, [tasks, selectedDate]);
+    }, [tasks, selectedDate, effectiveBreakDurations]);
 
     // 時間帯ラップ（重複）チェック。
     // 判定ロジックは timeOverlapUtils に切り出してユニットテストで固定済み。
@@ -779,6 +817,13 @@ const WorkerApp = () => {
         setSelectedProjectId(draft.selectedProjectId);
         setSelectedDate(draft.selectedDate);
         setTasks(applyTaskOrder(draft.tasks || [], draft.selectedProjectId));
+        setDailyBreakSettings({
+            workerName: loggedInWorker.name,
+            date: draft.selectedDate,
+            durations: Array.isArray(draft.breakDurations)
+                ? draft.breakDurations
+                : getSeasonConfig(draft.selectedDate).breaks.map(brk => brk.e - brk.s),
+        });
         setSubcontractors(draft.subcontractors || []);
         setDeletedSubcontractorIds(draft.deletedSubcontractorIds || []);
         setHasUnsavedChanges(true);
@@ -797,6 +842,20 @@ const WorkerApp = () => {
         if (!saved) {
             showToast('下書きの破棄を保存できませんでした。次回起動時に復活する可能性があります。', 'error');
         }
+    };
+
+    const updateDailyBreakDuration = (index, duration) => {
+        setDailyBreakSettings(current => {
+            const currentDurations = current?.workerName === loggedInWorker.name && current?.date === selectedDate
+                ? current.durations
+                : getSeasonConfig(selectedDate).breaks.map(brk => brk.e - brk.s);
+            return {
+                workerName: loggedInWorker.name,
+                date: selectedDate,
+                durations: currentDurations.map((value, i) => i === index ? duration : value),
+            };
+        });
+        setHasUnsavedChanges(true);
     };
 
     // ========== 入力済み現場レコードの削除 ==========
@@ -887,6 +946,7 @@ const WorkerApp = () => {
             const targetDate = selectedDate;
             const project = projects.find(p => p.id === Number(selectedProjectId));
             const isForeman = project && project.foreman_worker_id === loggedInWorker.id;
+            const dailyRecordsForBreakRecalc = await fetchWorkerDailyRecords(loggedInWorker.name, targetDate);
 
             // --- 1件ずつの逐次 await（N+1）を避け、操作種別ごとにまとめて実行する ---
             const deleteIds = [];          // 削除する TaskRecords の id
@@ -938,6 +998,31 @@ const WorkerApp = () => {
                 }
             }
 
+            // 休憩設定は日単位のため、同じ日に別現場へ保存済みの時刻付き実績も再計算する。
+            const currentProjectIds = new Set(updateOps.map(op => op.id));
+            const deletedRecordIds = new Set(deleteIds);
+            const otherProjectOvertimeTotals = new Map();
+            dailyRecordsForBreakRecalc.forEach(record => {
+                if (String(record.project_id) === String(selectedProjectId)) return;
+                const projectKey = String(record.project_id);
+                if (!otherProjectOvertimeTotals.has(projectKey)) otherProjectOvertimeTotals.set(projectKey, 0);
+                if (!record.start_time || !record.end_time) {
+                    otherProjectOvertimeTotals.set(projectKey, otherProjectOvertimeTotals.get(projectKey) + (Number(record.overtime_hours) || 0));
+                    return;
+                }
+                const startTime = formatTimeDisplay(record.start_time);
+                const endTime = formatTimeDisplay(record.end_time);
+                const isOvernight = startTime > endTime && endTime !== '';
+                const calculated = calculateWorkHours(startTime, endTime, targetDate, isOvernight, effectiveBreakDurations);
+                otherProjectOvertimeTotals.set(projectKey, otherProjectOvertimeTotals.get(projectKey) + calculated.overtimeHours);
+                if (!currentProjectIds.has(record.id) && !deletedRecordIds.has(record.id)) {
+                    updateOps.push({
+                        id: record.id,
+                        data: { hours: calculated.netWorkHours, overtime_hours: calculated.overtimeHours },
+                    });
+                }
+            });
+
             // 協力業者（職長のみ）
             const subcontractorUpdates = [];
             const subInsertPayloads = [];
@@ -953,6 +1038,9 @@ const WorkerApp = () => {
             }
 
             // 削除 → 更新 → 追加 → 協力業者 を1つの保存トランザクションとして実行
+            await saveWorkerDailyBreakSettings(loggedInWorker.name, targetDate, effectiveBreakDurations);
+            setDailyBreakSettings({ workerName: loggedInWorker.name, date: targetDate, durations: effectiveBreakDurations });
+
             const insertedRecords = await saveDailyReport({
                 deleteIds,
                 updateOps,
@@ -987,6 +1075,19 @@ const WorkerApp = () => {
                 /* 残業承認の同期失敗は日報保存自体は成功扱いとし、致命的にはしない */
             }
 
+            for (const [projectId, overtimeTotal] of otherProjectOvertimeTotals) {
+                try {
+                    await syncOvertimeApproval({
+                        projectId,
+                        workerName: loggedInWorker.name,
+                        date: targetDate,
+                        overtimeTotal,
+                    });
+                } catch (e) {
+                    console.error('Other project overtime approval sync error:', e);
+                }
+            }
+
             // 作業手当承認の同期（その日・その現場・この作業員で手当対象にチェックされた工種名で起票/更新/削除）
             try {
                 const allowanceTaskNames = tasks.filter(t => t.work_allowance).map(t => t.name);
@@ -1013,7 +1114,11 @@ const WorkerApp = () => {
             setDraftQueue(removeDraft(selectedProjectId, selectedDate).queue);
             setHasUnsavedChanges(false);
 
-            setSaveMessage('日報を送信しました！お疲れ様です。');
+            const breakSummary = effectiveBreakDurations.map((duration, index) => {
+                const labels = ['10時', '昼', '15時'];
+                return `${labels[index]}${duration}分`;
+            }).join('・');
+            setSaveMessage(`日報を送信しました｜本日合計 ${totalDailyHours.toFixed(1)}h｜休憩 ${breakSummary}`);
             setTimeout(() => setSaveMessage(''), 5000);
         } catch (error) {
             console.error('Submit error:', error);
@@ -1110,7 +1215,15 @@ const WorkerApp = () => {
 
     const otherProjectsHours = workerDailyAllRecords
         .filter(r => String(r.project_id) !== String(selectedProjectId))
-        .reduce((s, r) => s + (Number(r.hours) || 0) + (Number(r.overtime_hours) || 0), 0);
+        .reduce((s, r) => {
+            if (r.start_time && r.end_time) {
+                const startTime = formatTimeDisplay(r.start_time);
+                const endTime = formatTimeDisplay(r.end_time);
+                const calculated = calculateWorkHours(startTime, endTime, selectedDate, startTime > endTime && endTime !== '', effectiveBreakDurations);
+                return s + calculated.netWorkHours + calculated.overtimeHours;
+            }
+            return s + (Number(r.hours) || 0) + (Number(r.overtime_hours) || 0);
+        }, 0);
     const totalDailyHours = totalInputHours + otherProjectsHours;
 
 
@@ -1274,6 +1387,57 @@ const WorkerApp = () => {
                         <span className={`text-xs font-bold px-2 py-1 rounded-full ${seasonLabel === '夏季' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}`}>{seasonLabel}</span>
                         <span className="text-xs font-bold text-slate-400">定時 {scheduledStartStr}〜{scheduledEndStr}</span>
                     </div>
+
+                    <section className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-3" aria-label="休憩設定">
+                        <button type="button" aria-expanded={isBreakSettingsExpanded} aria-controls="worker-break-settings-panel"
+                            onClick={() => setIsBreakSettingsExpanded(value => !value)}
+                            className="w-full flex items-center justify-between gap-3 text-left">
+                            <span className="flex items-center gap-2 min-w-0">
+                                <span className="text-sm font-black text-amber-900 shrink-0">休憩設定</span>
+                                <span className="text-[10px] font-bold text-amber-700 truncate">
+                                    {effectiveBreakDurations.every((duration, index) => duration === defaultBreakDurations[index])
+                                        ? '標準設定'
+                                        : '変更あり'}
+                                </span>
+                            </span>
+                            <ChevronDown size={18} aria-hidden="true"
+                                className={`shrink-0 text-amber-800 transition-transform ${isBreakSettingsExpanded ? 'rotate-180' : ''}`} />
+                        </button>
+                        {isBreakSettingsExpanded && (
+                            <div id="worker-break-settings-panel" className="pt-3">
+                                <p className="text-[11px] text-amber-800 mb-3">休憩を短縮・取らなかった時間帯だけ変更してください。</p>
+                                <div className="space-y-2">
+                                    {seasonConfig.breaks.map((brk, index) => {
+                                        const standard = brk.e - brk.s;
+                                        const shortDuration = Math.floor((standard / 2) / 15) * 15;
+                                        const options = [...new Set([standard, shortDuration, 0])];
+                                        const labels = ['10時休憩', '昼休憩', '15時休憩'];
+                                        return (
+                                            <div key={`${brk.s}-${brk.e}`} className="flex items-center justify-between gap-2">
+                                                <span className="text-xs font-bold text-slate-700 w-20 shrink-0">{labels[index]}</span>
+                                                <div className="flex gap-1.5 flex-1">
+                                                    {options.map(duration => {
+                                                        const selected = effectiveBreakDurations[index] === duration;
+                                                        const label = duration === 0 ? '取得なし' : duration === standard ? `通常 ${duration}分` : `${duration}分`;
+                                                        return (
+                                                            <button key={duration} type="button"
+                                                                disabled={isLoadingBreakSettings || isSaving}
+                                                                aria-label={`${labels[index]}を${label}に設定`}
+                                                                aria-pressed={selected}
+                                                                onClick={() => updateDailyBreakDuration(index, duration)}
+                                                                className={`flex-1 min-h-10 px-2 rounded-lg border text-[11px] font-bold transition disabled:opacity-50 ${selected ? 'bg-amber-600 border-amber-600 text-white shadow-sm' : 'bg-white border-amber-200 text-slate-600 hover:bg-amber-100'}`}>
+                                                                {label}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+                    </section>
 
                     {/* 本日サマリー */}
                     {(() => {

@@ -122,7 +122,8 @@ export const calculateWorkHours = (
     startTime: string | null | undefined, 
     endTime: string | null | undefined, 
     dateStr: string | null | undefined, 
-    isOvernight = false
+    isOvernight = false,
+    breakDurations?: number[]
 ): WorkHoursResult => {
     const startMin = toMinutes(startTime);
     let endMin = toMinutes(endTime);
@@ -154,9 +155,17 @@ export const calculateWorkHours = (
     const config = getSeasonConfig(dateStr);
     const grossMinutes = endMin - startMin;
 
+    // 日別設定があれば標準休憩の長さだけを調整する（休憩時刻は移動しない）。
+    const breaks = breakDurations
+        ? config.breaks.map((brk, index) => ({
+            s: brk.s,
+            e: brk.s + Math.min(brk.e - brk.s, Math.max(0, Number(breakDurations[index] ?? (brk.e - brk.s)))),
+        }))
+        : config.breaks;
+
     // 作業時間帯と重複する休憩時間を計算
     let breakMinutes = 0;
-    config.breaks.forEach(brk => {
+    breaks.forEach(brk => {
         // 通常の休憩時間との重複
         breakMinutes += overlapMinutes(startMin, endMin, brk.s, brk.e);
         
@@ -176,7 +185,7 @@ export const calculateWorkHours = (
         const earlyEnd = Math.min(endMin, config.scheduledStart);
         let earlyGross = earlyEnd - startMin;
         // 早出時間帯の休憩重複を控除
-        config.breaks.forEach(brk => {
+        breaks.forEach(brk => {
             earlyGross -= overlapMinutes(startMin, earlyEnd, brk.s, brk.e);
         });
         earlyOvertimeMinutes = Math.max(0, earlyGross);
@@ -189,7 +198,7 @@ export const calculateWorkHours = (
         const lateStart = Math.max(startMin, config.scheduledEnd);
         let lateGross = endMin - lateStart;
         // 残業時間帯の休憩重複を控除
-        config.breaks.forEach(brk => {
+        breaks.forEach(brk => {
             lateGross -= overlapMinutes(lateStart, endMin, brk.s, brk.e);
             if (isOvernight) {
                lateGross -= overlapMinutes(lateStart, endMin, brk.s + 1440, brk.e + 1440);
