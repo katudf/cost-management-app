@@ -671,8 +671,8 @@ const renderPdfRow = (row, idx, pageBottomBorderStyle, shouldBreak) => {
 // シートモデル（design.md §4）: 各明細シートが自前の末尾合計で閉じる。
 //   - トップシート: 末尾＝税抜合計（＋NET）。消費税・税込合計は鑑側。
 //   - サブシート : 末尾＝合　計（リンク解決済みシート合計 sheetTotal）。
-// ページ番号は鑑を No.1 とする通し番号（startPageNumber からの連番）。
-const DetailPage = ({ sheet, items, isTopSheet, totals, sheetTotal, showTotalRow, settings, startPageNumber }) => {
+// ページ番号は鑑を No.1 とする通し番号（レンダラーが返すドキュメント全体の番号）。
+const DetailPage = ({ sheet, items, isTopSheet, totals, sheetTotal, showTotalRow, settings }) => {
   const rows = buildSheetRowsPDF(items, sheet.header, isTopSheet, totals, sheetTotal, showTotalRow);
   const sheetTitle = sheet.title || '見積内訳明細書';
   const estimateNumber = sheet.header.estimate_number;
@@ -708,10 +708,10 @@ const DetailPage = ({ sheet, items, isTopSheet, totals, sheetTotal, showTotalRow
 
       <Text style={S.footerCompany} fixed>{settings?.company_name || ''}</Text>
 
-      {/* 通しページ番号（鑑 = No.1。このシートは startPageNumber から始まる） */}
+      {/* 通しページ番号（pageNumber は表紙を含むドキュメント全体の番号） */}
       <Text
         style={S.pageNumber}
-        render={({ pageNumber }) => `No.${startPageNumber + pageNumber - 1}`}
+        render={({ pageNumber }) => `No.${pageNumber}`}
         fixed
       />
     </Page>
@@ -749,17 +749,6 @@ const EstimateDocument = ({ estimate, settings }) => {
   const shouldShowTotalRow = (sheet, idx) =>
     idx === 0 || linkedSheetIds.has(sheet.id) || idx === sheets.length - 1;
 
-  // 各シート先頭ページの通しページ番号（鑑 = No.1）
-  let running = 2;
-  const sheetStartPages = sheets.map((sheet, idx) => {
-    const start = running;
-    const rows = buildSheetRowsPDF(
-      sheet.items || [], header, idx === 0, totals, sheet.sheetTotal, shouldShowTotalRow(sheet, idx)
-    );
-    running += rows.length / ROWS_PER_PAGE;
-    return start;
-  });
-
   return (
     <Document>
       <CoverPage estimate={estimate} settings={settings} totals={totals} />
@@ -773,7 +762,6 @@ const EstimateDocument = ({ estimate, settings }) => {
           sheetTotal={sheet.sheetTotal}
           showTotalRow={shouldShowTotalRow(sheet, idx)}
           settings={settings}
-          startPageNumber={sheetStartPages[idx]}
         />
       ))}
     </Document>
