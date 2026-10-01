@@ -498,6 +498,7 @@ export type Database = {
           payment_terms: string
           project_id: number | null
           returned_reason: string | null
+          show_reform_logo: boolean
           show_approver: boolean
           show_fixed_fees: boolean
           show_net: boolean
@@ -533,6 +534,7 @@ export type Database = {
           payment_terms?: string
           project_id?: number | null
           returned_reason?: string | null
+          show_reform_logo?: boolean
           show_approver?: boolean
           show_fixed_fees?: boolean
           show_net?: boolean
@@ -568,6 +570,7 @@ export type Database = {
           payment_terms?: string
           project_id?: number | null
           returned_reason?: string | null
+          show_reform_logo?: boolean
           show_approver?: boolean
           show_fixed_fees?: boolean
           show_net?: boolean

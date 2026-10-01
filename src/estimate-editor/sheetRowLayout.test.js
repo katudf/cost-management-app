@@ -125,6 +125,17 @@ describe('buildSheetRowsShared', () => {
     expect(itemRows[2].itemNo).toBe(2);
   });
 
+  it('保存済みコメントは全文を保持し、明細番号と工種金額に含めない', () => {
+    const comment = makeItem({ category_symbol: '__comment__', name: '※資材価格変動についての長いコメント本文', amount: 999 });
+    const items = [{ item_type: ITEM_TYPE.CATEGORY, name: '工種' }, comment, makeItem({ amount: 100 })];
+    const rows = buildSheetRowsShared(items, {}, false, {}, 100, false, isBlankRowSentinel, ROWS_PER_PAGE);
+    expect(rows[0].catTotal).toBe(100);
+    expect(rows[1].kind).toBe('comment');
+    expect(rows[1].item.name).toBe(comment.name);
+    expect(rows[2].itemNo).toBe(1);
+    expect(comment.item_type).toBe(ITEM_TYPE.ITEM);
+  });
+
   it('sentinel判定: category_symbolがBLANK_SENTINELでなければ空扱いしない（quantity/unit_priceがnullでも）', () => {
     const item = { id: 1, item_type: ITEM_TYPE.ITEM, category_symbol: undefined, name: '', spec: '', quantity: null, unit_price: null };
     const rows = buildSheetRowsShared([item], {}, false, {}, 0, false, isBlankRowSentinel, ROWS_PER_PAGE);

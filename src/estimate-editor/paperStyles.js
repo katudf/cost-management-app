@@ -51,18 +51,20 @@ export const cover = {
   titleLetterSpacing: pt(8),
   titleWidth: pt(320),                 // 下線の長さ
   titlePaddingBottom: pt(6),
-  titleMarginBottom: pt(10),
+  titleMarginTop: pt(8),
+  titleMarginBottom: pt(30),
   headerFontSize: pt(12),              // 見積No・見積日の行
-  headerRowMarginBottom: pt(8),
+  headerRowMarginBottom: pt(24),
   leftWidth: pt(460),                  // 顧客情報側（coverLeft）
   rightWidth: pt(200),                 // 自社情報側（coverRight）
-  rightPaddingTop: pt(12),
+  rightPaddingTop: pt(20),
   rightMarginRight: pt(24),
   customerFontSize: pt(24),            // 顧客名（calcFontSizeの基準値）
   customerMaxChars: 40,
   subTextFontSize: pt(12),             // 「下記の通り...」等
   totalBoxWidth: pt(380),              // 合計金額ボックス
-  totalBoxLabelWidth: pt(150),
+  totalBoxMarginTop: pt(16),
+  totalBoxLabelWidth: pt(190),
   totalBoxFontSize: pt(24),
   companyFontSize: pt(12),             // 自社情報テキスト
   companyNameFontSize: pt(14),
@@ -136,4 +138,11 @@ export const calcFontSize = (text, baseSize, maxChars) => {
   if (len <= maxChars) return baseSize;
   const ratio = maxChars / len;
   return Math.max(baseSize * 0.5, baseSize * ratio);
+};
+
+export const fitSingleLineFontSize = (text, baseSize, width) => {
+  const units = Array.from(String(text || '')).reduce(
+    (sum, char) => sum + (/^[\x00-\x7f]$/.test(char) ? 0.6 : 1), 0,
+  );
+  return units ? Math.min(baseSize, width / units) : baseSize;
 };

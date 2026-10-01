@@ -82,7 +82,7 @@ const SettingsPanel = ({
   currentEstimateId = null,
   onOpenPreview,
 }) => {
-  const [pdfExpanded, setPdfExpanded] = useState(false);
+  const [pdfExpanded, setPdfExpanded] = useState(true);
   const [approvalModalMode, setApprovalModalMode] = useState(null); // 'approved' | 'returned' | null
   const [lostModalOpen, setLostModalOpen] = useState(false);
   const [submitModalOpen, setSubmitModalOpen] = useState(false);
@@ -458,14 +458,14 @@ const SettingsPanel = ({
         </div>
       )}
 
-      {/* ===== PDF表示設定 アコーディオン ===== */}
+      {/* ===== 表示設定 アコーディオン ===== */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
         <button
           type="button"
           onClick={() => setPdfExpanded(v => !v)}
           className="w-full flex items-center justify-between px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 transition"
         >
-          <span>PDF表示設定</span>
+          <span>表示設定</span>
           {pdfExpanded
             ? <ChevronUp size={16} className="text-slate-400" />
             : <ChevronDown size={16} className="text-slate-400" />
@@ -476,32 +476,29 @@ const SettingsPanel = ({
             {[
               { key: 'show_net',        label: 'NET金額を表示' },
               { key: 'show_subtotals',  label: '工種ごとに合計行を表示' },
-              { key: 'show_approver',   label: '上長印欄を表示' },
+              { key: 'show_reform_logo', label: '住宅リフォーム事業団体のロゴを表示' },
             ].map(({ key, label }) => (
               <label key={key} className="flex items-center gap-2 cursor-pointer">
                 <input
                   disabled={saving || isLocked}
                   type="checkbox"
-                  checked={header[key]}
+                  checked={!!header[key]}
                   onChange={e => onChange(key, e.target.checked)}
                   className="rounded"
                 />
                 <span className="text-slate-600">{label}</span>
               </label>
             ))}
-            <div className="mt-2">
-              <p className="text-xs font-semibold text-slate-500 mb-1">社印</p>
-              <select
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
                 disabled={saving || isLocked}
-                value={header.stamp_header}
-                onChange={e => onChange('stamp_header', e.target.value)}
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
-              >
-                <option value="company">社印</option>
-                <option value="representative">代表印</option>
-                <option value="none">表示しない</option>
-              </select>
-            </div>
+                type="checkbox"
+                checked={header.stamp_header !== 'none'}
+                onChange={e => onChange('stamp_header', e.target.checked ? 'company' : 'none')}
+                className="rounded"
+              />
+              <span className="text-slate-600">社印・代表印</span>
+            </label>
           </div>
         )}
       </div>

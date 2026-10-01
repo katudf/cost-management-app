@@ -14,6 +14,8 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { ArrowLeft, FileText, Lock, Eye, RefreshCw, Download, X, AlertCircle, Maximize2, Minimize2, History } from 'lucide-react';
+import EstimatePdfFrame from '../components/EstimatePdfFrame';
+import { estimatePdfFileName } from '../utils/estimatePdfDelivery';
 import { BlobProvider } from '@react-pdf/renderer';
 import ConfirmModal from '../components/ConfirmModal';
 import EstimateDocument, { downloadEstimatePDF } from '../EstimatePDF';
@@ -174,10 +176,11 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
     notes: '',
     tax_rate: 0.10,
     status: ESTIMATE_STATUS.DRAFT,
-    show_net: true,
+    show_net: false,
     show_subtotals: false,
     stamp_header: 'company',
-    show_approver: false,
+    show_approver: true,
+    show_reform_logo: false,
     staff_id: '',
     net_calc_type: 'perc', // perc, manual ("auto"は廃止)
     net_perc: 95,
@@ -302,10 +305,11 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
             notes:          est.notes || '',
             tax_rate:       est.tax_rate ?? 0.10,
             status:         est.status || ESTIMATE_STATUS.DRAFT,
-            show_net:        est.show_net ?? true,
+            show_net:        est.show_net ?? false,
             show_subtotals:  est.show_subtotals ?? false,
             stamp_header:    est.stamp_header || 'company',
-            show_approver:   est.show_approver ?? false,
+            show_approver:   true,
+            show_reform_logo: est.show_reform_logo ?? false,
             staff_id:        String(est.staff_id || ''),
             net_calc_type:   (est.net_calc_type === 'auto' || !est.net_calc_type) ? 'perc' : est.net_calc_type,
             net_perc:        est.net_perc ?? 95,
@@ -1076,7 +1080,8 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
       show_net:        header.show_net,
       show_subtotals:  header.show_subtotals,
       stamp_header:    header.stamp_header,
-      show_approver:   header.show_approver,
+      show_approver:   true,
+      show_reform_logo: !!header.show_reform_logo,
       staff_id:        header.staff_id ? Number(header.staff_id) : null,
       net_calc_type:   header.net_calc_type,
       net_perc:        Number(header.net_perc),
@@ -1412,7 +1417,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
             </button>
             <button
               onClick={() => previewSnapshot && downloadEstimatePDF(previewSnapshot, settings)}
-              title="PDFをダウンロード（新規タブで開く）"
+              title="PDFをダウンロード"
               aria-label="PDFをダウンロード"
               className="flex items-center gap-1.5 text-sm text-slate-600 hover:text-slate-800 border border-slate-200 hover:border-slate-400 px-3 py-1.5 rounded-lg transition"
             >
@@ -1436,7 +1441,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
                 key={previewKey}
                 document={<EstimateDocument estimate={previewSnapshot} settings={settings} />}
               >
-                {({ url, loading: pdfLoading, error: pdfError }) => {
+                {({ blob, loading: pdfLoading, error: pdfError }) => {
                   if (pdfLoading) {
                     return (
                       <div className="w-full h-full flex items-center justify-center">
@@ -1459,12 +1464,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
                     );
                   }
                   return (
-                    <iframe
-                      src={url}
-                      title="見積書プレビュー"
-                      className="w-full h-full"
-                      style={{ border: 'none', display: 'block' }}
-                    />
+                    <EstimatePdfFrame blob={blob} fileName={estimatePdfFileName(previewSnapshot)} />
                   );
                 }}
               </BlobProvider>

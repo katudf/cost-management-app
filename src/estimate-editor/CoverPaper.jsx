@@ -7,14 +7,13 @@
 //         EstimatePDF.jsx 側との一致を必ず確認すること。
 //
 // - isLocked 時はプレーンテキスト描画（印刷結果と同じ見え方）
-// - 社判・代表印は PDF と同様「URLが設定されていれば描画」（stamp_header は
-//   現行PDFでも参照していないため、挙動を揃えている）
+// - 社判・代表印は stamp_header が none 以外なら両方描画する
 // - wrapText（ヘアスペース挿入）は react-pdf の折返し対策なのでHTML側では不要
 import React from 'react';
 import CustomerCombobox from './CustomerCombobox';
 import {
   pt, PAPER_WIDTH, PAPER_HEIGHT, COLORS, page, cover, table,
-  fmt, fmtDate, calcFontSize,
+  fmt, fmtDate, calcFontSize, fitSingleLineFontSize,
 } from './paperStyles';
 
 const HONORIFICS = ['御中', '様', '殿', 'なし'];
@@ -149,6 +148,7 @@ const CoverPaper = ({
           letterSpacing: cover.titleLetterSpacing,
           borderBottom: `${pt(1.5)}px solid ${COLORS.ink}`,
           paddingBottom: cover.titlePaddingBottom,
+          marginTop: cover.titleMarginTop,
           marginBottom: cover.titleMarginBottom,
           width: cover.titleWidth,
           alignSelf: 'center',
@@ -253,7 +253,7 @@ const CoverPaper = ({
             <div style={{
               display: 'flex',
               border: `${pt(1.5)}px solid ${COLORS.ink}`,
-              marginTop: pt(4),
+              marginTop: cover.totalBoxMarginTop,
               marginBottom: pt(4),
               width: cover.totalBoxWidth,
               boxSizing: 'border-box',
@@ -265,6 +265,8 @@ const CoverPaper = ({
                 fontWeight: 'bold',
                 borderRight: `${pt(1)}px solid ${COLORS.ink}`,
                 width: cover.totalBoxLabelWidth,
+                flexShrink: 0,
+                whiteSpace: 'nowrap',
                 boxSizing: 'border-box',
                 display: 'flex',
                 alignItems: 'center',
@@ -301,7 +303,7 @@ const CoverPaper = ({
             }}>
               {/* 印鑑画像を先に描画し、テキストの背面に配置する
                   （テキスト側を position:relative にしてDOM後勝ちで前面へ） */}
-              {settings?.stamp_company_url && (
+              {header.stamp_header !== 'none' && settings?.stamp_company_url && (
                 <img
                   src={settings.stamp_company_url}
                   alt="社判"
@@ -315,7 +317,7 @@ const CoverPaper = ({
                   }}
                 />
               )}
-              {settings?.stamp_representative_url && (
+              {header.stamp_header !== 'none' && settings?.stamp_representative_url && (
                 <img
                   src={settings.stamp_representative_url}
                   alt="代表印"
@@ -339,7 +341,7 @@ const CoverPaper = ({
                 {settings?.company_name || ''}
               </div>
               {settings?.company_address && (
-                <div style={{ position: 'relative' }}>{settings.company_address}</div>
+                <div style={{ position: 'relative', whiteSpace: 'nowrap', fontSize: fitSingleLineFontSize(settings.company_address, cover.companyFontSize, cover.rightWidth - pt(2)) }}>{settings.company_address}</div>
               )}
               {settings?.company_tel && (
                 <div style={{ position: 'relative' }}>TEL：{settings.company_tel}</div>
@@ -368,9 +370,9 @@ const CoverPaper = ({
               </div>
             </div>
 
-            {/* 印鑑枠部分（show_approver時は承認欄の空枠を追加） */}
+            {/* 印鑑枠部分（上長印欄は常に表示） */}
             <div style={{ display: 'flex', gap: pt(4), marginTop: pt(8) }}>
-              {header.show_approver && (
+              {(
                 <div style={{
                   width: cover.stampBoxSize,
                   height: cover.stampBoxSize,
@@ -408,6 +410,9 @@ const CoverPaper = ({
                   </div>
                 )}
               </div>
+              {header.show_reform_logo && (
+                <img src="/logo-reform-association.svg" alt="住宅リフォーム事業団体" style={{ width: pt(66), height: cover.stampBoxSize, objectFit: 'contain', marginLeft: pt(4) }} />
+              )}
             </div>
           </div>
 
@@ -455,7 +460,7 @@ const CoverPaper = ({
               <textarea
                 value={header.notes || ''}
                 onChange={e => onChange('notes', e.target.value)}
-                rows={5}
+                rows={9}
                 aria-label="備考"
                 className={`${FIELD_CLS} resize-none`}
                 style={{ ...fieldStyle, width: cover.notesValueWidth, fontSize: notesFontSize }}

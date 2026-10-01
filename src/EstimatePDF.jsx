@@ -2,11 +2,13 @@
 // 見積書PDF出力コンポーネント（@react-pdf/renderer）
 
 import React from 'react';
+import { estimatePdfFileName } from './utils/estimatePdfDelivery';
+import { ReformAssociationLogoPDF } from './estimate-editor/ReformAssociationLogoPDF';
 import {
   Document, Page, Text, View, StyleSheet, Font, pdf, Image
 } from '@react-pdf/renderer';
 import { calcTopSheetTotals } from './supabaseEstimates';
-import { fmt, fmtDate, calcFontSize, ROWS_PER_PAGE } from './estimate-editor/paperStyles';
+import { fmt, fmtDate, calcFontSize, fitSingleLineFontSize, ROWS_PER_PAGE } from './estimate-editor/paperStyles';
 import { buildSheetRowsShared } from './estimate-editor/sheetRowLayout';
 
 // ============================================================
@@ -85,14 +87,15 @@ const S = StyleSheet.create({
     letterSpacing: 8,
     borderBottom: '1.5pt solid #1a1a1a',
     paddingBottom: 6,
-    marginBottom: 10,
+    marginTop: 8,
+    marginBottom: 30,
     width: 320,           // ラインの長さを 320pt に固定
     alignSelf: 'center',  // 要素自体を中央に配置
   },
   coverHeaderRow: { // 見積Noと見積日の行
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 24,
   },
   coverTwoCol: { // 顧客情報(左)と自社情報(右)を並べるためのコンテナ
     flexDirection: 'row',
@@ -104,7 +107,7 @@ const S = StyleSheet.create({
   coverRight: { // 自社情報側の幅調整
     width: 200,
     alignItems: 'flex-start',
-    paddingTop: 12,    // 1行分下げる
+    paddingTop: 20,
     marginRight: 24,   // 左に2文字分寄せる
   },
   customerName: { // 顧客名（〇〇御中）
@@ -118,7 +121,7 @@ const S = StyleSheet.create({
   totalBox: { // 合計金額を囲む四角いボックス全体
     flexDirection: 'row',
     border: '1.5pt solid #1a1a1a',
-    marginTop: 4,
+    marginTop: 16,
     marginBottom: 4,
     width: 380,
   },
@@ -128,7 +131,8 @@ const S = StyleSheet.create({
     fontSize: 24,
     fontWeight: 'bold',
     borderRight: '1pt solid #1a1a1a',
-    width: 150,
+    width: 190,
+    flexShrink: 0,
     justifyContent: 'center',
   },
   totalBoxAmount: { // 金額表示部分
@@ -429,10 +433,10 @@ const CoverPage = ({ estimate, settings, totals }) => {
           <View style={S.coverRight}>
             <View style={[S.companyBlock, { position: 'relative' }]}>
               {/* 印鑑画像を先に描画し、テキストの背面に配置する */}
-              {settings?.stamp_company_url && (
+              {estimate.stamp_header !== 'none' && settings?.stamp_company_url && (
                 <Image src={settings.stamp_company_url} style={{ position: 'absolute', top: -5, right: 80, width: 60, height: 60, objectFit: 'contain' }} />
               )}
-              {settings?.stamp_representative_url && (
+              {estimate.stamp_header !== 'none' && settings?.stamp_representative_url && (
                 <Image src={settings.stamp_representative_url} style={{ position: 'absolute', top: 15, right: 5, width: 50, height: 50, objectFit: 'contain' }} />
               )}
 
@@ -440,7 +444,7 @@ const CoverPage = ({ estimate, settings, totals }) => {
                 {settings?.company_name || ''}
               </Text>
               {settings?.company_address && (
-                <Text>{settings.company_address}</Text>
+                <Text style={{ fontSize: fitSingleLineFontSize(settings.company_address, 12, 198) }}>{settings.company_address}</Text>
               )}
               {settings?.company_tel && (
                 <Text>TEL：{settings.company_tel}</Text>
@@ -453,11 +457,9 @@ const CoverPage = ({ estimate, settings, totals }) => {
               )}
             </View>
 
-            {/* 印鑑枠部分 (有効時のみ表示など) */}
+            {/* 上長印欄と担当者印欄 */}
             <View style={S.stampRow}>
-              {estimate.show_approver && (
-                <View style={S.stampBox} />
-              )}
+              <View style={S.stampBox} />
               <View style={S.stampBox}>
                 {estimate.staff?.name && (
                   <View style={S.personalStamp}>
@@ -467,6 +469,7 @@ const CoverPage = ({ estimate, settings, totals }) => {
                   </View>
                 )}
               </View>
+              {estimate.show_reform_logo && <ReformAssociationLogoPDF />}
             </View>
           </View>
 
@@ -571,12 +574,7 @@ const renderPdfRow = (row, idx, pageBottomBorderStyle, shouldBreak) => {
       return (
         <View key={idx} style={[S.tableRow, pageBottomBorderStyle]} wrap={false} break={shouldBreak}>
           <Text style={S.cellNo}></Text>
-          <Text style={[S.cellName, { flex: 5 }]}>{wrapText(item.name)}</Text>
-          <Text style={S.cellQty}></Text>
-          <Text style={S.cellUnit}></Text>
-          <Text style={S.cellPrice}></Text>
-          <Text style={S.cellAmount}></Text>
-          <Text style={S.cellNote}></Text>
+          <Text style={{ flex: 1, paddingHorizontal: 6, paddingVertical: 4, fontSize: fitSingleLineFontSize(item.name, 9, 718) }}>{wrapText(item.name)}</Text>
         </View>
       );
     }
@@ -786,94 +784,19 @@ const EstimateDocument = ({ estimate, settings }) => {
 // PDFプレビュー・ダウンロード関数（外部から呼び出す）
 // ============================================================
 export const downloadEstimatePDF = async (estimate, settings) => {
-  console.log('[PDF] downloadEstimatePDF 開始 (新規タブプレビュー方式)');
-
-  // 1. 直ちに新しいタブを開く（ユーザー操作に直結させ、生成完了を待たずに確保）
-  const previewWindow = window.open('', '_blank');
-
-  if (previewWindow) {
-    previewWindow.document.write(`
-      <html>
-        <head>
-          <title>見積書生成中...</title>
-          <style>
-            body { 
-              display: flex; 
-              justify-content: center; 
-              align-items: center; 
-              height: 100vh; 
-              margin: 0; 
-              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-              background-color: #f8fafc;
-              color: #64748b;
-            }
-            .loader-container { text-align: center; }
-            .loader {
-              border: 3px solid #e2e8f0;
-              border-top: 3px solid #3b82f6;
-              border-radius: 50%;
-              width: 30px;
-              height: 30px;
-              animation: spin 1s linear infinite;
-              margin: 0 auto 15px;
-            }
-            @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-          </style>
-        </head>
-        <body>
-          <div class="loader-container">
-            <div class="loader"></div>
-            <p>PDFを生成しています。少々お待ちください...</p>
-          </div>
-        </body>
-      </html>
-    `);
-  }
-
+  const fileName = estimatePdfFileName(estimate);
+  const blob = await pdf(<EstimateDocument estimate={estimate} settings={settings} />).toBlob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
   try {
-    const generateBlob = () => {
-      return new Promise(async (resolve, reject) => {
-        // タイムアウトを少し伸ばす（複雑な見積もり用）
-        const timeoutMs = 45000;
-        const timer = setTimeout(() => {
-          reject(new Error('PDF生成がタイムアウトしました。'));
-        }, timeoutMs);
-
-        try {
-          const doc = <EstimateDocument estimate={estimate} settings={settings} />;
-          const instance = pdf(doc);
-          const blob = await instance.toBlob();
-          clearTimeout(timer);
-          resolve(blob);
-        } catch (err) {
-          clearTimeout(timer);
-          reject(err);
-        }
-      });
-    };
-
-    const blob = await generateBlob();
-    const url = URL.createObjectURL(blob);
-
-    if (previewWindow && !previewWindow.closed) {
-      // 2. ウィンドウが有効なら、生成したURLに遷移
-      previewWindow.location.href = url;
-      console.log('[PDF] 新規タブへ送信完了');
-    } else {
-      // ウィンドウが閉じられている、またはブロックされた場合のフォールバック（直接ダウンロード）
-      console.log('[PDF] ウィンドウが無効なため直接ダウンロード実行');
-      const a = document.createElement('a');
-      const safeFileName = `見積書_${estimate.estimate_number}.pdf`.replace(/[\\s　]+/g, '_');
-      a.href = url;
-      a.download = safeFileName;
-      a.click();
-    }
-  } catch (err) {
-    console.error('[PDF] 生成エラー:', err);
-    if (previewWindow) {
-      previewWindow.document.body.innerHTML = `<div style="text-align:center;color:#ef4444;padding:20px;">生成に失敗しました: ${err.message}</div>`;
-    }
-    throw err;
+    link.click();
+  } finally {
+    link.remove();
+    // Allow the browser to start reading the download before releasing the blob.
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
   }
 };
 

@@ -7,7 +7,7 @@
  * BLANK_SENTINEL 必須・null/undefinedのみ空扱い、EstimatePDF.jsx はセンチネル
  * 不要・空文字も空扱い）ため、パラメータとして注入する。
  */
-import { ITEM_TYPE } from '../utils/constants';
+import { ITEM_TYPE, ITEM_SENTINEL } from '../utils/constants';
 import { sumItemAmounts } from '../supabaseEstimates';
 
 export const buildSheetRowsShared = (
@@ -20,6 +20,10 @@ export const buildSheetRowsShared = (
   isBlankRowFn,
   rowsPerPage
 ) => {
+  // Saved comments use the legacy item type plus a sentinel symbol.
+  items = items.map(item => item.item_type === ITEM_TYPE.ITEM && item.category_symbol === ITEM_SENTINEL.COMMENT
+    ? { ...item, item_type: ITEM_TYPE.COMMENT, category_symbol: null }
+    : item);
   const rows = [];
 
   const netRowCount = isTopSheet && header.show_net ? 1 : 0;

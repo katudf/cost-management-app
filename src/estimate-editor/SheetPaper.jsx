@@ -526,18 +526,13 @@ const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom, cycleUids }, e
         <div key={rowKey} className={editable ? 'sheet-edit-row' : undefined} style={rowStyle}>
           {toolbar}
           <div style={CELLS.no} />
-          <div style={{ ...CELLS.name, flex: 5 }}>
+          <div style={{ ...CELLS.name, flex: 1, borderRight: 'none' }}>
             {editable ? (
               <TextCell uid={uid} col="name" value={item.name} italic color={COLORS.noteInk}
                 placeholder="コメント" onChange={(c, v) => edit.onUpdateItem(uid, c, v)}
                 onKeyDown={edit.onKeyDown} />
             ) : (item.name)}
           </div>
-          <div style={CELLS.qty} />
-          <div style={CELLS.unit} />
-          <div style={CELLS.price} />
-          <div style={CELLS.amount} />
-          <div style={CELLS.note} />
         </div>
       );
     }

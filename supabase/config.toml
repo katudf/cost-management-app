@@ -405,3 +405,7 @@ entrypoint = "./functions/gemini-optimize/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/gemini-optimize/*.html" ]
+
+# Native PDF viewer requests authenticate with the expiring Storage signed token.
+[functions.estimate-pdf]
+verify_jwt = false
