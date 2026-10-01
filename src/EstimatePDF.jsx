@@ -2,6 +2,7 @@
 // 見積書PDF出力コンポーネント（@react-pdf/renderer）
 
 import React from 'react';
+import { getApproverStampName } from './utils/estimateApprovalStamp';
 import { estimatePdfFileName } from './utils/estimatePdfDelivery';
 import { ReformAssociationLogoPDF } from './estimate-editor/ReformAssociationLogoPDF';
 import {
@@ -459,7 +460,13 @@ const CoverPage = ({ estimate, settings, totals }) => {
 
             {/* 上長印欄と担当者印欄 */}
             <View style={S.stampRow}>
-              <View style={S.stampBox} />
+              <View style={S.stampBox}>
+                {getApproverStampName(estimate) && (
+                  <View style={S.personalStamp}>
+                    <Text style={S.personalStampText}>{getApproverStampName(estimate)}</Text>
+                  </View>
+                )}
+              </View>
               <View style={S.stampBox}>
                 {estimate.staff?.name && (
                   <View style={S.personalStamp}>

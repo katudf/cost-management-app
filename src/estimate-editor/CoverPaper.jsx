@@ -10,6 +10,7 @@
 // - 社判・代表印は stamp_header が none 以外なら両方描画する
 // - wrapText（ヘアスペース挿入）は react-pdf の折返し対策なのでHTML側では不要
 import React from 'react';
+import { getApproverStampName } from '../utils/estimateApprovalStamp';
 import CustomerCombobox from './CustomerCombobox';
 import {
   pt, PAPER_WIDTH, PAPER_HEIGHT, COLORS, page, cover, table,
@@ -45,6 +46,7 @@ const CoverPaper = ({
   isLocked,
 }) => {
   const { subtotal, tax, total } = totals;
+  const approverStampName = getApproverStampName(header, officeStaff.find(s => String(s.id) === String(header.approved_by)));
 
   const estimateNumber = `${header.estimate_number_date}-${header.estimate_number_seq}-${header.estimate_number_branch}`;
   const selectedCustomer = customers.find(c => String(c.id) === String(header.customer_id));
@@ -378,7 +380,14 @@ const CoverPaper = ({
                   height: cover.stampBoxSize,
                   border: `${pt(0.5)}px solid ${COLORS.dashed}`,
                   boxSizing: 'border-box',
-                }} />
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  {approverStampName && (
+                    <div style={{ width: cover.personalStampSize, height: cover.personalStampSize, borderRadius: '50%', border: `${pt(1)}px solid ${COLORS.stampRed}`, boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <span style={{ color: COLORS.stampRed, fontSize: cover.personalStampFontSize, fontFamily: "'Shippori Mincho', serif" }}>{approverStampName}</span>
+                    </div>
+                  )}
+                </div>
               )}
               <div style={{
                 width: cover.stampBoxSize,

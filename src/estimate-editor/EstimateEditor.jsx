@@ -974,6 +974,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
       estimate_number: estimateNumber,
       customer,
       staff,
+      approver: officeStaff.find(s => String(s.id) === String(header.approved_by)) || null,
       sheets: pdfSheets,
       tax_rate:   Number(header.tax_rate),
       net_perc:   Number(header.net_perc),

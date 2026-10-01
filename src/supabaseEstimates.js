@@ -44,6 +44,12 @@ export const fetchEstimateById = async (id) => {
   if (error) throw error;
 
   if (data) {
+    if (data.approved_at && /^\d+$/.test(String(data.approved_by || '').trim())) {
+      const { data: approver, error: approverError } = await supabase
+        .from('office_staff').select('id, name').eq('id', data.approved_by).maybeSingle();
+      if (approverError) throw approverError;
+      data.approver = approver;
+    }
     data.sheets = (data.sheets || []).sort((a, b) => a.sort_order - b.sort_order);
 
     // シート未生成の見積（旧エディタ・Excel取込が作成した新規分）は
