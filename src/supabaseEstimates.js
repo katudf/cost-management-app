@@ -244,6 +244,10 @@ export const duplicateEstimate = async (id) => {
     ...headerData,
     estimate_number: newNumber,
     status: ESTIMATE_STATUS.DRAFT,
+    approved_by: null,
+    approved_at: null,
+    returned_reason: '',
+    lost_reason: '',
     issue_date: new Date().toISOString().split('T')[0],
   });
 
@@ -282,6 +286,20 @@ export const saveEstimateItemsV2 = async (estimateId, payloadSheets, payloadItem
 
   if (error) throw error;
   return data?.sheet_ids || [];
+};
+
+// 表紙・シート・明細と任意の申請を一つのトランザクションで確定する。
+export const saveEstimateV3 = async (estimateId, header, sheets, items, approverStaffId = null) => {
+  const { data, error } = await supabase.rpc('save_estimate_v3', {
+    p_estimate_id: estimateId || null,
+    p_header: header,
+    p_sheets: sheets,
+    p_items: items,
+    p_submit: approverStaffId != null,
+    p_approver_staff_id: approverStaffId,
+  });
+  if (error) throw error;
+  return data;
 };
 
 // ============================================================
@@ -548,7 +566,7 @@ export const calcTotals = (items, taxRate = 0.1, netCalcSettings = {}) => {
 // フィールドから calcTotals を呼ぶ」処理がべた書きされ重複していたため一本化する。
 export const calcTopSheetTotals = (topSheetItems, source) => {
   const visibleItems = topSheetItems.filter(i => i.item_type === ITEM_TYPE.ITEM);
-  return calcTotals(visibleItems, Number(source.tax_rate || 0.1), {
+  return calcTotals(visibleItems, Number(source.tax_rate ?? 0.1), {
     type: source.net_calc_type,
     perc: source.net_perc,
     manualAmount: source.net_amount,

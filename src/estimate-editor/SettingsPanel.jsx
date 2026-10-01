@@ -97,9 +97,10 @@ const SettingsPanel = ({
     && !!header.approver_staff_id
     && currentStaff?.id === header.approver_staff_id;
   // 担当者(staff_id)未設定の見積書は誰でも編集可能。設定済みなら本人のみ「下書きに戻す」が可能。
-  const isCreator = !header.staff_id || String(header.staff_id) === String(currentStaff?.id);
+  const isCreator = currentStaff?.role === 'admin' || !header.staff_id || String(header.staff_id) === String(currentStaff?.id);
 
   const handleBadgeClick = (value) => {
+    if (saving) return;
     if (value === ESTIMATE_STATUS.APPROVED || value === ESTIMATE_STATUS.RETURNED) {
       // 申請中以外からの直接遷移、または指名された承認者以外からの操作は不可
       // 承認・差し戻しは申請中（ロック状態）で行うアクションのため isLocked では弾かない
@@ -115,23 +116,19 @@ const SettingsPanel = ({
     onChange('status', value);
   };
 
-  const handleSubmitConfirm = (approverStaffId) => {
-    onSubmit?.(approverStaffId);
-    setSubmitModalOpen(false);
+  const handleSubmitConfirm = async (approverStaffId) => {
+    if (await onSubmit?.(approverStaffId)) setSubmitModalOpen(false);
   };
 
-  const handleApprovalConfirm = (payload) => {
-    if (approvalModalMode === ESTIMATE_STATUS.APPROVED) {
-      onApprove?.();
-    } else if (approvalModalMode === ESTIMATE_STATUS.RETURNED) {
-      onReturn?.(payload.reason);
-    }
-    setApprovalModalMode(null);
+  const handleApprovalConfirm = async (payload) => {
+    const ok = approvalModalMode === ESTIMATE_STATUS.APPROVED
+      ? await onApprove?.()
+      : await onReturn?.(payload.reason);
+    if (ok) setApprovalModalMode(null);
   };
 
-  const handleLostConfirm = (reason) => {
-    onLose?.(reason);
-    setLostModalOpen(false);
+  const handleLostConfirm = async (reason) => {
+    if (await onLose?.(reason)) setLostModalOpen(false);
   };
 
   const handleImportConfirm = (groups) => {
@@ -154,10 +151,9 @@ const SettingsPanel = ({
     },
   };
 
-  const handleStatusActionConfirm = () => {
+  const handleStatusActionConfirm = async () => {
     const action = STATUS_ACTION_CONFIG[pendingStatusAction];
-    action?.run();
-    setPendingStatusAction(null);
+    if (await action?.run()) setPendingStatusAction(null);
   };
 
   return (
@@ -221,7 +217,7 @@ const SettingsPanel = ({
                   key={value}
                   type="button"
                   onClick={() => handleBadgeClick(value)}
-                  disabled={badgeDisabled}
+                  disabled={saving || badgeDisabled}
                   title={isApprovalAction && !isActive && !isDesignatedApprover ? '指名された承認者のみ操作できます' : undefined}
                   className={`px-2.5 py-1 rounded-full text-xs font-bold border transition ${
                     isActive
@@ -267,6 +263,7 @@ const SettingsPanel = ({
             <button
               type="button"
               onClick={() => setPendingStatusAction('submit-to-customer')}
+              disabled={saving}
               className="mt-3 w-full flex items-center justify-center gap-1.5 border border-blue-300 text-blue-700 hover:bg-blue-50 px-2.5 py-1.5 rounded-lg text-xs font-bold transition"
             >
               <Send size={13} />
@@ -278,6 +275,7 @@ const SettingsPanel = ({
               <button
                 type="button"
                 onClick={() => setPendingStatusAction('order')}
+              disabled={saving}
                 className="flex-1 flex items-center justify-center gap-1.5 border border-green-300 text-green-700 hover:bg-green-50 px-2.5 py-1.5 rounded-lg text-xs font-bold transition"
               >
                 <Trophy size={13} />
@@ -286,6 +284,7 @@ const SettingsPanel = ({
               <button
                 type="button"
                 onClick={() => setLostModalOpen(true)}
+              disabled={saving}
                 className="flex-1 flex items-center justify-center gap-1.5 border border-red-300 text-red-700 hover:bg-red-50 px-2.5 py-1.5 rounded-lg text-xs font-bold transition"
               >
                 <XCircle size={13} />
@@ -307,6 +306,7 @@ const SettingsPanel = ({
             <button
               type="button"
               onClick={onReissueNumber}
+            disabled={saving || isLocked}
               className="w-full flex items-center justify-center gap-1.5 border border-red-300 text-red-700 hover:bg-red-100 px-2.5 py-1.5 rounded-lg text-xs font-bold transition"
             >
               <RefreshCw size={13} />
@@ -359,6 +359,7 @@ const SettingsPanel = ({
           <button
             type="button"
             onClick={() => setImportModalOpen(true)}
+            disabled={saving || isLocked}
             className="w-full flex items-center justify-center gap-1.5 border border-slate-300 text-slate-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 px-3 py-2 rounded-lg text-sm font-medium transition"
           >
             過去見積から取込
@@ -368,6 +369,7 @@ const SettingsPanel = ({
           <button
             type="button"
             onClick={onGenerateSummary}
+            disabled={saving || isLocked}
             title="各明細シートのカテゴリ小計を集計した総括表シートを先頭に自動生成します"
             className="w-full flex items-center justify-center gap-1.5 border border-slate-300 text-slate-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 px-3 py-2 rounded-lg text-sm font-medium transition"
           >
@@ -382,6 +384,7 @@ const SettingsPanel = ({
         <h3 className="font-bold text-slate-700 text-sm mb-3">消費税率</h3>
         <div className="flex items-center gap-2">
           <input
+            disabled={saving || isLocked}
             type="number"
             min="0"
             max="100"
@@ -402,6 +405,7 @@ const SettingsPanel = ({
             <div className="flex items-center gap-4">
               <label className="flex items-center gap-1.5 cursor-pointer">
                 <input
+                  disabled={saving || isLocked}
                   type="radio"
                   name="net_type"
                   checked={header.net_calc_type === 'perc' || header.net_calc_type === 'auto'}
@@ -412,6 +416,7 @@ const SettingsPanel = ({
               </label>
               <label className="flex items-center gap-1.5 cursor-pointer">
                 <input
+                  disabled={saving || isLocked}
                   type="radio"
                   name="net_type"
                   checked={header.net_calc_type === 'manual'}
@@ -424,6 +429,7 @@ const SettingsPanel = ({
             {header.net_calc_type !== 'manual' ? (
               <div className="flex items-center gap-2">
                 <input
+                  disabled={saving || isLocked}
                   type="number"
                   min="0"
                   max="100"
@@ -438,6 +444,7 @@ const SettingsPanel = ({
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs">¥</span>
                 <input
+                  disabled={saving || isLocked}
                   type="number"
                   min="0"
                   value={header.net_amount}
@@ -473,6 +480,7 @@ const SettingsPanel = ({
             ].map(({ key, label }) => (
               <label key={key} className="flex items-center gap-2 cursor-pointer">
                 <input
+                  disabled={saving || isLocked}
                   type="checkbox"
                   checked={header[key]}
                   onChange={e => onChange(key, e.target.checked)}
@@ -484,6 +492,7 @@ const SettingsPanel = ({
             <div className="mt-2">
               <p className="text-xs font-semibold text-slate-500 mb-1">社印</p>
               <select
+                disabled={saving || isLocked}
                 value={header.stamp_header}
                 onChange={e => onChange('stamp_header', e.target.value)}
                 className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
@@ -499,25 +508,28 @@ const SettingsPanel = ({
 
       {approvalModalMode && (
         <EstimateApprovalModal
+          saving={saving}
           mode={approvalModalMode}
           currentStaff={currentStaff}
           onConfirm={handleApprovalConfirm}
-          onCancel={() => setApprovalModalMode(null)}
+          onCancel={() => !saving && setApprovalModalMode(null)}
         />
       )}
 
       {lostModalOpen && (
         <EstimateLostReasonModal
+          saving={saving}
           onConfirm={handleLostConfirm}
-          onCancel={() => setLostModalOpen(false)}
+          onCancel={() => !saving && setLostModalOpen(false)}
         />
       )}
 
       {submitModalOpen && (
         <EstimateSubmitModal
+          saving={saving}
           officeStaff={officeStaff}
           onConfirm={handleSubmitConfirm}
-          onCancel={() => setSubmitModalOpen(false)}
+          onCancel={() => !saving && setSubmitModalOpen(false)}
         />
       )}
 
@@ -531,7 +543,7 @@ const SettingsPanel = ({
 
       <ConfirmModal
         isOpen={pendingStatusAction !== null}
-        onClose={() => setPendingStatusAction(null)}
+        onClose={() => !saving && setPendingStatusAction(null)}
         onConfirm={handleStatusActionConfirm}
         title={pendingStatusAction ? STATUS_ACTION_CONFIG[pendingStatusAction].title : ''}
         message={pendingStatusAction ? STATUS_ACTION_CONFIG[pendingStatusAction].message : ''}

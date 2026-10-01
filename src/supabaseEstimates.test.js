@@ -3,6 +3,9 @@ import { calcTotals, calcTopSheetTotals, sumItemAmounts } from './supabaseEstima
 import { ITEM_TYPE } from './utils/constants';
 
 describe('sumItemAmounts', () => {
+  it('トップシートの税率0を保存時にも維持する', () => {
+    expect(calcTopSheetTotals([{ item_type: ITEM_TYPE.ITEM, amount: 100 }], { tax_rate: 0 })).toMatchObject({ subtotal: 100, tax: 0, total: 100 });
+  });
   // EstimatePDF/SheetPaperのシート合計フォールバックとcalcTotalsのitemTotal算出で、
   // ITEM行のamountだけを合計するreduceが3箇所にべた書きされていたための一本化（§9.20）。
   it('ITEM行のamountのみを合計する', () => {

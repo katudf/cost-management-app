@@ -71,8 +71,11 @@ export const clearEstimateDraft = (estimateId) => {
 };
 
 // 退避時刻を「◯分前」等の相対表記にして復元プロンプトに表示する
+// 数値(epoch ms)・ISO文字列・Date を受け付け、解釈できない値は空文字を返す（「NaN日前」防止）。
 export const formatDraftAge = (savedAt) => {
-  const diffMs = Date.now() - savedAt;
+  const ts = typeof savedAt === 'number' ? savedAt : new Date(savedAt).getTime();
+  if (savedAt == null || !Number.isFinite(ts)) return '';
+  const diffMs = Math.max(0, Date.now() - ts);
   const diffMin = Math.floor(diffMs / 60000);
   if (diffMin < 1) return 'たった今';
   if (diffMin < 60) return `${diffMin}分前`;

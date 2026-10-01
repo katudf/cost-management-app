@@ -1742,6 +1742,17 @@ export type Database = {
         Args: { p_estimate_id: number; p_items: Json; p_sheets: Json }
         Returns: Json
       }
+      save_estimate_v3: {
+        Args: {
+          p_estimate_id: number | null
+          p_header: Json
+          p_sheets: Json
+          p_items: Json
+          p_submit?: boolean
+          p_approver_staff_id?: number | null
+        }
+        Returns: Json
+      }
     }
     Enums: {
       [_ in never]: never

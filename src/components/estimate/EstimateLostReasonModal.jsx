@@ -4,12 +4,12 @@
 import React, { useState } from 'react';
 import { XCircle } from 'lucide-react';
 
-const EstimateLostReasonModal = ({ onConfirm, onCancel }) => {
+const EstimateLostReasonModal = ({ onConfirm, onCancel, saving = false }) => {
   const [reason, setReason] = useState('');
   const canConfirm = reason.trim().length > 0;
 
   const handleConfirm = () => {
-    if (!canConfirm) return;
+    if (saving || !canConfirm) return;
     onConfirm(reason.trim());
   };
 
@@ -27,6 +27,7 @@ const EstimateLostReasonModal = ({ onConfirm, onCancel }) => {
         </div>
 
         <textarea
+            disabled={saving}
           value={reason}
           onChange={e => setReason(e.target.value)}
           rows={3}
@@ -37,13 +38,14 @@ const EstimateLostReasonModal = ({ onConfirm, onCancel }) => {
         <div className="flex gap-3 justify-end">
           <button
             onClick={onCancel}
+            disabled={saving}
             className="px-4 py-2 rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold transition"
           >
             キャンセル
           </button>
           <button
             onClick={handleConfirm}
-            disabled={!canConfirm}
+            disabled={saving || !canConfirm}
             className="px-4 py-2 rounded-lg text-white font-bold transition disabled:bg-slate-300 disabled:cursor-not-allowed bg-red-500 hover:bg-red-600"
           >
             失注にする

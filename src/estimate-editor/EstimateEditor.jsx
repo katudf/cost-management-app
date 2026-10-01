@@ -8,7 +8,7 @@
 // Phase 3 の範囲:
 //   - 紙面スタック表示（鑑インライン編集 CoverPaper ＋ 読み取り専用 SheetPaper）
 //   - 左ナビ PageNav（シート移動・追加・削除）／右 SettingsPanel（設定・ステータス操作）
-//   - 保存ラウンドトリップ（buildSaveItemsPayload → saveEstimateItemsV2 → sheet_id再マップ）
+//   - 表紙・シート・明細と申請を saveEstimateV3 で一体保存
 //   - PDFプレビューは暫定で全シートをフラット化し旧 EstimateDocument に渡す（Phase 6で本対応）
 // 明細セル編集は Phase 4、計算・リンクエンジンは Phase 5 で実装する。
 
@@ -21,11 +21,10 @@ import { useToast } from '../components/Toast';
 import { useAuth } from '../hooks/useAuth';
 import {
   fetchEstimateById,
-  createEstimate,
   updateEstimate,
   approveEstimate,
   returnEstimate,
-  saveEstimateItemsV2,
+  saveEstimateV3,
   buildSaveItemsPayload,
   syncEstimateToProject,
   copyEstimateItemsToProjectTasks,
@@ -146,10 +145,15 @@ const nextCategorySymbol = (items) => {
 
 const MAX_ROWS = 300;
 
+// 新規見積の支払条件の初期値（既存見積の保存値の復元には使わない。null/欠損時のみ補完）
+const DEFAULT_PAYMENT_TERMS = '従来通り';
+
 // ============================================================
 // メインコンポーネント
 // ============================================================
-const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
+const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChanged }) => {
+  const [estimateId, setEstimateId] = useState(documentId);
+  const operationInFlight = useRef(false);
   const isNew = !estimateId;
   const { showToast } = useToast();
   const { currentStaff } = useAuth();
@@ -166,7 +170,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
     work_period: '',
     issue_date: toInputDate(new Date()),
     valid_until: '',
-    payment_terms: '従来通り',
+    payment_terms: DEFAULT_PAYMENT_TERMS,
     notes: '',
     tax_rate: 0.10,
     status: ESTIMATE_STATUS.DRAFT,
@@ -203,7 +207,8 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   const [numberError, setNumberError] = useState('');
   const [originalStatus, setOriginalStatus] = useState(ESTIMATE_STATUS.DRAFT);
   // 編集ロック判定（handleGenerateSummary やdirty追跡effect等が isLocked を参照するため、それらより前で確定させる）
-  const isLocked = !isNew && originalStatus !== ESTIMATE_STATUS.DRAFT;
+  const isLocked = originalStatus !== ESTIMATE_STATUS.DRAFT;
+  const inputsLocked = isLocked || saving;
 
   // プレビュー state
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -255,7 +260,8 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
         setOfficeStaff(staffData);
         setSettings(settingsData);
 
-        if (isNew) {
+        setEstimateId(documentId);
+        if (!documentId) {
           const prefix = todayPrefix();
           const seq = await getNextEstimateSeq(prefix);
           const validDays = Number(settingsData.est_default_valid_days) || 30;
@@ -277,7 +283,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
             { ...newItemRow(topSheetId, 1) },
           ]);
         } else {
-          const est = await fetchEstimateById(estimateId);
+          const est = await fetchEstimateById(documentId);
           const parts = est.estimate_number.split('-');
           setHeader({
             estimate_number_date: parts[0] || '',
@@ -290,9 +296,11 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
             work_period:    est.work_period || '',
             issue_date:     toInputDate(est.issue_date),
             valid_until:    toInputDate(est.valid_until),
-            payment_terms:  est.payment_terms || '従来通り',
+            // 保存済みの空文字は意図的な空欄として維持する。null/undefined（型上は非null列のため
+            // 旧データ・欠損のみ）は新規時の既定値と同じ意味の「従来通り」として扱う。
+            payment_terms:  est.payment_terms ?? DEFAULT_PAYMENT_TERMS,
             notes:          est.notes || '',
-            tax_rate:       est.tax_rate || 0.10,
+            tax_rate:       est.tax_rate ?? 0.10,
             status:         est.status || ESTIMATE_STATUS.DRAFT,
             show_net:        est.show_net ?? true,
             show_subtotals:  est.show_subtotals ?? false,
@@ -324,7 +332,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
         }
 
         // 前回の未保存入力が退避されていれば復元を提案する。
-        const draft = loadEstimateDraft(estimateId);
+        const draft = loadEstimateDraft(documentId);
         if (draft) {
           setPendingDraft(draft);
         }
@@ -339,7 +347,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
       }
     };
     init();
-  }, [estimateId, isNew]);
+  }, [documentId]);
 
   useEffect(() => {
     if (!isInitialized.current) return;
@@ -360,15 +368,15 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   useEffect(() => {
     if (!isInitialized.current) return;
     if (pendingDraft) return;
-    if (!isNew && originalStatus !== ESTIMATE_STATUS.DRAFT) return;
+    if (isLocked || saving) return;
     if (!isDirty.current) return;
 
     const timer = setTimeout(() => {
       saveEstimateDraft(estimateId, { header, sheets, items });
-      setLastDraftSavedAt(new Date().toISOString());
+      setLastDraftSavedAt(Date.now());
     }, 1500);
     return () => clearTimeout(timer);
-  }, [header, sheets, items, estimateId, isNew, originalStatus, pendingDraft]);
+  }, [header, sheets, items, estimateId, isLocked, saving, pendingDraft]);
 
   useEffect(() => {
     const handleBeforeUnload = (e) => {
@@ -384,8 +392,9 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   // ヘッダー入力ハンドラ
   // ============================================================
   const handleHeaderChange = useCallback((field, value) => {
+    if (inputsLocked || operationInFlight.current) return;
     setHeader(h => ({ ...h, [field]: value }));
-  }, []);
+  }, [inputsLocked]);
 
   // 顧客ドロップダウンからの新規顧客登録（登録後は自動選択する）
   const handleCreateCustomer = useCallback(async (name) => {
@@ -405,10 +414,13 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
 
   // ステータス変更系の操作は、画面遷移で失われないようその場でSupabaseへ反映する
   const persistStatus = useCallback(async (patch) => {
+    if (operationInFlight.current || !estimateId) return false;
+    operationInFlight.current = true;
     try {
       setSaving(true);
-      await updateEstimate(estimateId, patch);
-      setHeader(h => ({ ...h, ...patch }));
+      const saved = await updateEstimate(estimateId, patch);
+      setHeader(h => ({ ...h, ...saved }));
+      setOriginalStatus(saved.status);
 
       // 「受注」への遷移時はProjectsテーブルへ連携する（handleSave経由の保存を通らない
       // ステータスバッジ操作のため、ここでも同じ連携処理を行う必要がある）
@@ -435,69 +447,72 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
       }
 
       onStatusChanged?.();
+      return true;
     } catch (e) {
       setError('ステータスの変更に失敗しました: ' + e.message);
+      showToast('ステータスの変更に失敗しました: ' + e.message, 'error');
+      return false;
     } finally {
+      operationInFlight.current = false;
       setSaving(false);
     }
   }, [estimateId, onStatusChanged, header.project_id, header.title, header.customer_id, originalStatus, showToast, items]);
 
   // 承認・差し戻し（SECURITY DEFINER RPC経由。証跡カラムはDB側で記録される）
   const handleApprove = useCallback(async () => {
+    if (operationInFlight.current || !estimateId) return false;
+    operationInFlight.current = true;
     try {
       setSaving(true);
       const trail = await approveEstimate(estimateId);
       setHeader(h => ({ ...h, ...trail }));
+      setOriginalStatus(trail.status);
       onStatusChanged?.();
+      return true;
     } catch (e) {
       setError('承認に失敗しました: ' + e.message);
+      showToast('承認に失敗しました: ' + e.message, 'error');
+      return false;
     } finally {
+      operationInFlight.current = false;
       setSaving(false);
     }
-  }, [estimateId, onStatusChanged]);
+  }, [estimateId, onStatusChanged, showToast]);
 
   const handleReturn = useCallback(async (reason) => {
+    if (operationInFlight.current || !estimateId) return false;
+    operationInFlight.current = true;
     try {
       setSaving(true);
       const trail = await returnEstimate(estimateId, reason);
       setHeader(h => ({ ...h, ...trail }));
+      setOriginalStatus(trail.status);
       onStatusChanged?.();
+      return true;
     } catch (e) {
       setError('差し戻しに失敗しました: ' + e.message);
+      showToast('差し戻しに失敗しました: ' + e.message, 'error');
+      return false;
     } finally {
+      operationInFlight.current = false;
       setSaving(false);
     }
-  }, [estimateId, onStatusChanged]);
+  }, [estimateId, onStatusChanged, showToast]);
 
-  // 申請中（承認依頼）: 承認者を指名してステータスを申請中にする
-  const handleSubmit = useCallback((approverStaffId) => {
-    persistStatus({
-      status: ESTIMATE_STATUS.PENDING,
-      approver_staff_id: approverStaffId,
-      returned_reason: '',
-    });
-  }, [persistStatus]);
-
-  const handleSubmitToCustomer = useCallback(() => {
-    persistStatus({ status: ESTIMATE_STATUS.SUBMITTED });
-  }, [persistStatus]);
-
-  const handleOrder = useCallback(() => {
-    persistStatus({ status: ESTIMATE_STATUS.ORDERED, lost_reason: '' });
-  }, [persistStatus]);
-
-  const handleLose = useCallback((reason) => {
-    persistStatus({ status: ESTIMATE_STATUS.LOST, lost_reason: reason });
-  }, [persistStatus]);
+  const handleSubmit = (approverStaffId) => saveCurrentEstimate(approverStaffId);
+  const handleSubmitToCustomer = () => persistStatus({ status: ESTIMATE_STATUS.SUBMITTED });
+  const handleOrder = () => persistStatus({ status: ESTIMATE_STATUS.ORDERED, lost_reason: '' });
+  const handleLose = (reason) => persistStatus({ status: ESTIMATE_STATUS.LOST, lost_reason: reason });
 
   // 担当者(staff_id)未設定の見積書は作成者チェック対象外とし、誰でも編集可能とする
-  const isCreator = !header.staff_id || String(header.staff_id) === String(currentStaff?.id);
+  const isCreator = currentStaff?.role === 'admin' || !header.staff_id || String(header.staff_id) === String(currentStaff?.id);
   const creatorStaff = officeStaff.find(s => String(s.id) === String(header.staff_id)) || null;
 
   // ============================================================
   // シート操作
   // ============================================================
   const handleAddSheet = useCallback(() => {
+    if (operationInFlight.current) return;
     setSheets(prev => {
       const nextIndex = prev.length + 1;
       const id = newSheetTempId();
@@ -513,6 +528,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   }, []);
 
   const handleDeleteSheet = useCallback((sheetIndex) => {
+    if (operationInFlight.current) return;
     setSheets(prev => {
       const target = prev[sheetIndex];
       if (!target) return prev;
@@ -528,6 +544,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   // 過去見積からの取込（トップシートの末尾へ追記）
   // ============================================================
   const handleImportGroups = useCallback((groups) => {
+    if (operationInFlight.current) return;
     const topSheetId = sheets[0]?.id;
     if (!topSheetId) return;
     setItems(prev => {
@@ -575,6 +592,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   const SUMMARY_TITLE = '総括表';
 
   const handleGenerateSummary = useCallback(() => {
+    if (operationInFlight.current) return;
     if (isLocked) return;
     setSheets(prevSheets => {
       // 既存の総括表シートは一旦除外し、明細シートだけを対象にする
@@ -640,6 +658,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
 
   // セル値の更新（1フィールド）
   const updateItem = useCallback((uid, field, value) => {
+    if (operationInFlight.current) return;
     setItems(prev => prev.map(it =>
       it._uid === uid ? withAutoAmount(it, field, value) : it
     ));
@@ -647,6 +666,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
 
   // 指定行の直後に新しい明細行を挿入して返す（同一シート内）
   const addRowAfter = useCallback((uid, kind = ITEM_TYPE.ITEM) => {
+    if (operationInFlight.current) return;
     setItems(prev => {
       const idx = prev.findIndex(it => it._uid === uid);
       if (idx < 0) return prev;
@@ -665,6 +685,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
 
   // 指定シート末尾へ新規行を追加
   const addRowToSheet = useCallback((sheetId, kind = ITEM_TYPE.ITEM) => {
+    if (operationInFlight.current) return;
     setItems(prev => {
       const factory =
         kind === ITEM_TYPE.CATEGORY ? newCategoryRow
@@ -683,6 +704,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
 
   // 行削除（シート内の最後の1行は削除しない＝空シート化を防ぐ）
   const removeRow = useCallback((uid) => {
+    if (operationInFlight.current) return;
     setItems(prev => {
       const target = prev.find(it => it._uid === uid);
       if (!target) return prev;
@@ -696,6 +718,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
 
   // 行の複製（直後に同内容の行を挿入。_uid/_tempId/id は新規採番）
   const duplicateRow = useCallback((uid) => {
+    if (operationInFlight.current) return;
     setItems(prev => {
       const idx = prev.findIndex(it => it._uid === uid);
       if (idx < 0) return prev;
@@ -713,6 +736,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
 
   // 行の上下移動（同一シート内でのみ入れ替え）
   const moveRow = useCallback((uid, dir) => {
+    if (operationInFlight.current) return;
     setItems(prev => {
       const idx = prev.findIndex(it => it._uid === uid);
       if (idx < 0) return prev;
@@ -731,6 +755,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   // TSV貼り付け（Excelからの複数セル貼り付け）。基準行 uid から、行×列で
   // name/spec/quantity/unit/unit_price/note を流し込み、行が足りなければ追加する。
   const pasteTsv = useCallback((uid, tsv) => {
+    if (operationInFlight.current) return;
     const COLS = ['name', 'spec', 'quantity', 'unit', 'unit_price', 'note'];
     const rows = tsv
       .replace(/\r\n?/g, '\n')
@@ -784,6 +809,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   //   kind=null       : リンク解除
   // リンク作成前に wouldCreateCycle で到達可能性を検査し、循環になる場合は拒否する。
   const setRowLink = useCallback((uid, kind, targetRef) => {
+    if (operationInFlight.current) return;
     setItems(prev => {
       const row = prev.find(it => it._uid === uid);
       if (!row) return prev;
@@ -893,21 +919,13 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   }, [sheets, itemsBySheet, header, totals, sheetTotals, linkedSheetIds]);
 
   const handleUnlock = async () => {
-    if (!isCreator) return;
-    try {
-      setSaving(true);
-      await updateEstimate(estimateId, { status: ESTIMATE_STATUS.DRAFT });
-      setHeader(h => ({ ...h, status: ESTIMATE_STATUS.DRAFT }));
-      setOriginalStatus(ESTIMATE_STATUS.DRAFT);
-    } catch (e) {
-      setError('ステータスの変更に失敗しました: ' + e.message);
-    } finally {
-      setSaving(false);
-    }
+    if (!isCreator) return false;
+    return persistStatus({ status: ESTIMATE_STATUS.DRAFT });
   };
 
   // 見積番号の競合時、空いている枝番を自動で探して採番し直す
   const handleReissueNumber = async () => {
+    if (operationInFlight.current || isLocked) return;
     try {
       setNumberError('');
       const newBranch = await findAvailableBranchNumber(
@@ -1003,174 +1021,130 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   // ============================================================
   // 保存処理
   // ============================================================
-  const handleSave = async () => {
-    if (isLocked) { setError('提出済み以降の見積書は編集できません。「下書きに戻す」を実行してください。'); return; }
-    if (!header.customer_id) { setError('顧客が選択されていません。鑑（表紙）の「顧客」欄で選択してください。'); scrollToCover(); return; }
-    if (!header.title.trim()) { setError('工事名が入力されていません。鑑（表紙）の「工事名」欄に入力してください。'); scrollToCover(); return; }
-    if (!estimateNumber.match(/^\d{6}-\d{4}-\d{3}$/)) {
-      setNumberError('見積番号の形式が正しくありません（正しい形式: YYMMDD-NNNN-NNN）。右側の設定パネルで確認してください。');
-      return;
+  const buildCurrentSavePayload = async () => {
+    if (isLocked) throw new Error('下書きに戻してから編集してください。');
+    if (!header.customer_id) { scrollToCover(); throw new Error('顧客を選択してください。'); }
+    if (!header.title.trim()) { scrollToCover(); throw new Error('工事名を入力してください。'); }
+    if (!/^\d{6}-\d{4}-\d{3}$/.test(estimateNumber)) {
+      throw new Error('見積番号の形式は YYMMDD-NNNN-NNN です。');
     }
-    // Phase 3の確定判断: カテゴリ必須明細バリデーションは廃止。空行は保持する。
-
-    if (items.length > MAX_ROWS) {
-      setError(`明細行数が上限（${MAX_ROWS}行）を超えています。現在 ${items.length} 行です。`);
-      return;
+    if (items.length > MAX_ROWS) throw new Error(`明細は${MAX_ROWS}行まで保存できます。`);
+    if (await checkDuplicateNumber(estimateNumber, estimateId || null)) {
+      const duplicate = new Error('この見積番号は既に使用されています。再採番してください。');
+      duplicate.code = '23505';
+      throw duplicate;
     }
-
-    try {
-      setSaving(true);
-      setError(null);
-      setNumberError('');
-
-      const isDuplicate = await checkDuplicateNumber(estimateNumber, estimateId || null);
-      if (isDuplicate) {
-        setNumberError(`見積番号「${estimateNumber}」は既に使用されています。右側の設定パネルの「再採番」ボタンで別の番号を自動採番できます。`);
-        setSaving(false);
-        return;
-      }
-
-      // 保存用明細を組み立てる（シート順に連結、COMMENTエンコード、SUBTOTAL注入）。
-      // 空行の除去や name 空フィルタは行わない（Phase 3: 空行保持）。
-      // プレビュー構築（buildSheetItems）と同一パイプラインのため
-      // encodeSheetItemsForOutput に集約している（§9.17）。
-      const savingItems = [];
-      sheets.forEach((sheet) => {
-        const sheetItems = encodeSheetItemsForOutput(itemsBySheet.get(sheet.id) || [], {
-          showSubtotals: header.show_subtotals,
-          extraFields: () => ({ sheet_id: sheet.id }),
-          subtotalExtraFields: () => ({ sheet_id: sheet.id }),
-        });
-
-        savingItems.push(...sheetItems);
+    // 保存用明細を組み立てる（シート順に連結、COMMENTエンコード、SUBTOTAL注入）。
+    // 空行の除去や name 空フィルタは行わない（Phase 3: 空行保持）。
+    // プレビュー構築（buildSheetItems）と同一パイプラインのため
+    // encodeSheetItemsForOutput に集約している（§9.17）。
+    const savingItems = [];
+    sheets.forEach((sheet) => {
+      const sheetItems = encodeSheetItemsForOutput(itemsBySheet.get(sheet.id) || [], {
+        showSubtotals: header.show_subtotals,
+        extraFields: () => ({ sheet_id: sheet.id }),
+        subtotalExtraFields: () => ({ sheet_id: sheet.id }),
       });
 
-      // 税込合計はトップシートの明細から算出（鑑と一致させる）
-      const topSheetId = sheets[0]?.id;
-      const savingTopItems = savingItems.filter(i => i.sheet_id === topSheetId);
-      const savingTotals = calcTopSheetTotals(savingTopItems, header);
+      savingItems.push(...sheetItems);
+    });
 
-      // 他画面での工事削除により project_id が孤立参照（FK違反）になっていないか事前チェックする。
-      // 孤立していれば連携を解除して保存を続行する（工事一覧から手動で再連携可能）。
-      let safeProjectId = header.project_id || null;
-      if (safeProjectId && !(await projectExists(safeProjectId))) {
-        safeProjectId = null;
-        setHeader(prev => ({ ...prev, project_id: null }));
-        showToast('連携していた工事案件が見つからないため、連携を解除して保存しました。', 'error');
+    // 税込合計はトップシートの明細から算出（鑑と一致させる）
+    const topSheetId = sheets[0]?.id;
+    const savingTopItems = savingItems.filter(i => i.sheet_id === topSheetId);
+    const savingTotals = calcTopSheetTotals(savingTopItems, header);
+
+    // 他画面での工事削除により project_id が孤立参照（FK違反）になっていないか事前チェックする。
+    // 孤立していれば連携を解除して保存を続行する（工事一覧から手動で再連携可能）。
+    let safeProjectId = header.project_id || null;
+    if (safeProjectId && !(await projectExists(safeProjectId))) {
+      safeProjectId = null;
+    }
+
+    const payload = {
+      estimate_number: estimateNumber,
+      customer_id:    Number(header.customer_id),
+      customer_honorific: header.customer_honorific,
+      title:          header.title,
+      site_location:  header.site_location || null,
+      work_period:    header.work_period || null,
+      issue_date:     header.issue_date || null,
+      valid_until:    header.valid_until || null,
+      payment_terms:  header.payment_terms,
+      notes:          header.notes || null,
+      tax_rate:       Number(header.tax_rate),
+      show_net:        header.show_net,
+      show_subtotals:  header.show_subtotals,
+      stamp_header:    header.stamp_header,
+      show_approver:   header.show_approver,
+      staff_id:        header.staff_id ? Number(header.staff_id) : null,
+      net_calc_type:   header.net_calc_type,
+      net_perc:        Number(header.net_perc),
+      net_amount:      header.net_amount !== '' ? Number(header.net_amount) : null,
+      total_with_tax:  savingTotals.total,
+      project_id:      safeProjectId,
+    };
+
+    const { payloadSheets, payloadItems } = buildSaveItemsPayload(sheets, savingItems);
+    return { payload, payloadSheets, payloadItems };
+  };
+
+  const saveCurrentEstimate = async (approverStaffId = null) => {
+    if (operationInFlight.current) return false;
+    operationInFlight.current = true;
+    setSaving(true);
+    setError(null);
+    setNumberError('');
+    try {
+      if (approverStaffId != null && !officeStaff.some(s => String(s.id) === String(approverStaffId) && s.is_approver)) {
+        throw new Error('有効な承認者を選択してください。');
       }
-
-      const payload = {
-        estimate_number: estimateNumber,
-        customer_id:    Number(header.customer_id),
-        customer_honorific: header.customer_honorific,
-        title:          header.title,
-        site_location:  header.site_location || null,
-        work_period:    header.work_period || null,
-        issue_date:     header.issue_date || null,
-        valid_until:    header.valid_until || null,
-        payment_terms:  header.payment_terms,
-        notes:          header.notes || null,
-        tax_rate:       Number(header.tax_rate),
-        status:         header.status,
-        lost_reason:    header.lost_reason || null,
-        show_net:        header.show_net,
-        show_subtotals:  header.show_subtotals,
-        stamp_header:    header.stamp_header,
-        show_approver:   header.show_approver,
-        staff_id:        header.staff_id ? Number(header.staff_id) : null,
-        net_calc_type:   header.net_calc_type,
-        net_perc:        Number(header.net_perc),
-        net_amount:      header.net_amount !== '' ? Number(header.net_amount) : null,
-        total_with_tax:  savingTotals.total,
-        approved_by:     header.approved_by || null,
-        approved_at:     header.approved_at || null,
-        returned_reason: header.returned_reason || null,
-        approver_staff_id: header.approver_staff_id || null,
-        project_id:      safeProjectId,
+      const { payload, payloadSheets, payloadItems } = await buildCurrentSavePayload();
+      const saved = await saveEstimateV3(estimateId, payload, payloadSheets, payloadItems, approverStaffId);
+      const savedHeader = {
+        ...header, project_id: payload.project_id, status: saved.status,
+        ...(approverStaffId != null ? { approver_staff_id: approverStaffId } : {}),
       };
-
-      let savedId = estimateId;
-      if (isNew) {
-        const created = await createEstimate(payload);
-        savedId = created.id;
-      } else {
-        await updateEstimate(estimateId, payload);
-      }
-
-      // シート＋明細を v2 RPC で保存（シート順に UPSERT、明細は全削除→再INSERT）
-      const { payloadSheets, payloadItems } = buildSaveItemsPayload(sheets, savingItems);
-      const savedSheetIds = await saveEstimateItemsV2(savedId, payloadSheets, payloadItems);
-
-      // 返却された sheet_ids を index順に適用し、state の仮ID→本UUID を再マップする
-      // （次回保存で既存シートとして扱われるよう、items の sheet_id も更新）
-      if (Array.isArray(savedSheetIds) && savedSheetIds.length === sheets.length) {
-        const idRemap = new Map();
-        const remappedSheets = sheets.map((s, idx) => {
-          idRemap.set(s.id, savedSheetIds[idx]);
-          return { ...s, id: savedSheetIds[idx] };
-        });
-        setSheets(remappedSheets);
-        setItems(prev => prev.map(it => ({
-          ...it,
-          sheet_id: idRemap.get(it.sheet_id) ?? it.sheet_id,
-        })));
-      }
-
-      // 「受注」時の自動連動（Projectsテーブルへのコピー）。
-      // 受注への遷移時に加え、受注済みなのに工事案件が未連携の見積（連携前の旧データ、
-      // 工事削除で連携が外れたもの、ゴミ箱から復元したもの等）も保存時に連携する。
-      if (header.status === ESTIMATE_STATUS.ORDERED &&
-          (originalStatus !== ESTIMATE_STATUS.ORDERED || !safeProjectId)) {
-        try {
-          const linkedProjectId = await syncEstimateToProject({
-            projectId: safeProjectId,
-            title: header.title,
-            customerId: header.customer_id,
-          });
-          if (linkedProjectId !== safeProjectId) {
-            await updateEstimate(savedId, { project_id: linkedProjectId });
-            setHeader(prev => ({ ...prev, project_id: linkedProjectId }));
-            showToast('受注案件を現場管理に登録しました', 'success');
-          }
-          await copyEstimateItemsToProjectTasks(linkedProjectId, items);
-        } catch (syncErr) {
-          console.error('工事マスタへの連携に失敗しました:', syncErr);
-          showToast(
-            '見積は保存しましたが、工事案件への連携に失敗しました。工事一覧から手動で登録してください。',
-            'error'
-          );
-        }
-      }
-
-      setOriginalStatus(header.status);
+      const idRemap = new Map(sheets.map((sheet, idx) => [sheet.id, saved.sheet_ids[idx]]));
+      const savedSheets = sheets.map(sheet => ({ ...sheet, id: idRemap.get(sheet.id) }));
+      const savedItems = items.map(item => ({
+        ...item, sheet_id: idRemap.get(item.sheet_id) ?? item.sheet_id,
+        linked_sheet_id: idRemap.get(item.linked_sheet_id) ?? item.linked_sheet_id,
+      }));
+      setEstimateId(saved.id);
+      setHeader(savedHeader);
+      setSheets(savedSheets);
+      setItems(savedItems);
+      setOriginalStatus(saved.status);
       isDirty.current = false;
-      // 保存に伴う setSheets/setItems/setHeader の反映レンダーで
-      // dirty追跡effectが1回発火するが、それはユーザーの変更ではないのでスキップする。
       skipNextDirtyCheck.current = true;
       clearEstimateDraft(estimateId);
-      // 保存成功時点の内容を「直前の保存内容」として退避する。
-      // 保存後に明細を誤って上書き・削除してしまった場合の救済用（このブラウザ内のみ・3日間）。
-      saveLastSavedSnapshot(savedId, { header, sheets, items });
-      showToast('見積を保存しました', 'success');
-      onSaved?.(savedId);
+      clearEstimateDraft(saved.id);
+      saveLastSavedSnapshot(saved.id, { header: savedHeader, sheets: savedSheets, items: savedItems });
+      showToast(approverStaffId != null ? '最新の内容を保存して承認を依頼しました' : '見積を保存しました', 'success');
+      if (approverStaffId != null) onStatusChanged?.();
+      else onSaved?.(saved.id);
+      return true;
     } catch (e) {
-      // 23505 = Postgres unique_violation。事前チェックと保存実行の間に
-      // 他ユーザーが同一番号で保存した競合ウィンドウのケース。
-      if (e.code === '23505') {
-        setNumberError(`見積番号「${estimateNumber}」は他のユーザーによって使用されました。再採番してください。`);
-      } else {
-        setError('保存に失敗しました: ' + e.message);
-        showToast('保存に失敗しました: ' + e.message, 'error');
-      }
+      const message = e.code === '23505'
+        ? `見積番号「${estimateNumber}」は既に使用されています。再採番してください。`
+        : '保存・申請に失敗しました: ' + e.message;
+      if (e.code === '23505') setNumberError(message);
+      setError(message);
+      showToast(message, 'error');
+      return false;
     } finally {
+      operationInFlight.current = false;
       setSaving(false);
     }
   };
+  const handleSave = () => saveCurrentEstimate();
 
   // ============================================================
   // 自動退避データの復元／破棄
   // ============================================================
   const handleRestoreDraft = () => {
+    if (operationInFlight.current || isLocked) return;
     if (pendingDraft) {
       // ステータスの変更はデータの変更とは別に管理する。
       // 退避データはステータスバッジ操作より前の古いステータスを含んでいる場合があるため、
@@ -1201,6 +1175,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
   // 直近の保存成功時点の内容（このブラウザ内に3日間保持）に画面上の内容を戻す。
   // あくまで画面上の状態を戻すだけで、戻した後にあらためて「保存」を押すまでDBには反映されない。
   const handleRestoreLastSaved = () => {
+    if (operationInFlight.current || isLocked) return;
     const snapshot = loadLastSavedSnapshot(estimateId);
     if (snapshot) {
       setHeader(snapshot.header);
@@ -1224,6 +1199,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
       {/* ===== ヘッダーバー ===== */}
       <div className="bg-white border-b border-slate-200 px-4 py-2.5 flex items-center gap-3 shrink-0 flex-wrap">
         <button
+          disabled={saving}
           onClick={() => (!isLocked && isDirty.current) ? setShowLeaveConfirm(true) : onBack()}
           aria-label="一覧に戻る"
           title="一覧に戻る"
@@ -1245,7 +1221,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
             <Lock size={12} /> 編集ロック中
           </span>
         )}
-        {!isLocked && lastDraftSavedAt && (
+        {!isLocked && formatDraftAge(lastDraftSavedAt) && (
           <span
             className="flex items-center gap-1 text-xs text-slate-400"
             title="この端末のブラウザにのみ一時保存されています。別の端末では復元できません。正式に保存するには「保存」ボタンを押してください。"
@@ -1257,6 +1233,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
         {!isNew && !isLocked && loadLastSavedSnapshot(estimateId) && (
           <button
             onClick={() => setShowRestoreLastSaved(true)}
+            disabled={saving}
             title="保存後に明細を誤って上書き・削除してしまった場合、直前に保存した内容へ画面を戻せます（このブラウザ内のみ・3日間有効。戻した後は改めて「保存」を押すまでDBには反映されません）"
             aria-label="直前の保存内容に戻す"
             className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600 transition"
@@ -1304,7 +1281,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
             items={items}
             onDeleteSheet={handleDeleteSheet}
             onAddSheet={handleAddSheet}
-            isLocked={isLocked}
+            isLocked={inputsLocked}
           />
         </div>
 
@@ -1320,7 +1297,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
               officeStaff={officeStaff}
               settings={settings}
               totals={totals}
-              isLocked={isLocked}
+              isLocked={inputsLocked}
             />
 
             {/* 各明細シート */}
@@ -1348,7 +1325,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
                   cycleUids={cycleUids}
                   linkTargets={linkTargets}
                   startPageNumber={sheetStartPages[idx]}
-                  isLocked={isLocked}
+                  isLocked={inputsLocked}
                   onUpdateItem={updateItem}
                   onAddRowAfter={addRowAfter}
                   onAddRowToSheet={addRowToSheet}
@@ -1362,7 +1339,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
             ))}
 
             {/* シート追加（最終シート下） */}
-            {!isLocked && (
+            {!inputsLocked && (
               <button
                 type="button"
                 onClick={handleAddSheet}
@@ -1544,7 +1521,7 @@ const EstimateEditor = ({ estimateId, onBack, onSaved, onStatusChanged }) => {
                 cycleUids={cycleUids}
                 linkTargets={linkTargets}
                 startPageNumber={sheetStartPages[fullscreenSheetIndex]}
-                isLocked={isLocked}
+                isLocked={inputsLocked}
                 onUpdateItem={updateItem}
                 onAddRowAfter={addRowAfter}
                 onAddRowToSheet={addRowToSheet}

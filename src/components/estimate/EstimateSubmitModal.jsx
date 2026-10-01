@@ -5,13 +5,13 @@
 import React, { useState } from 'react';
 import { Send } from 'lucide-react';
 
-const EstimateSubmitModal = ({ officeStaff, onConfirm, onCancel }) => {
+const EstimateSubmitModal = ({ officeStaff, onConfirm, onCancel, saving = false }) => {
   const [staffId, setStaffId] = useState('');
   const canConfirm = !!staffId;
   const approvers = officeStaff.filter(s => s.is_approver);
 
   const handleConfirm = () => {
-    if (!canConfirm) return;
+    if (saving || !canConfirm) return;
     onConfirm(Number(staffId));
   };
 
@@ -34,6 +34,7 @@ const EstimateSubmitModal = ({ officeStaff, onConfirm, onCancel }) => {
           </p>
         ) : (
           <select
+            disabled={saving}
             value={staffId}
             onChange={e => setStaffId(e.target.value)}
             className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white mb-5"
@@ -46,13 +47,14 @@ const EstimateSubmitModal = ({ officeStaff, onConfirm, onCancel }) => {
         <div className="flex gap-3 justify-end">
           <button
             onClick={onCancel}
+            disabled={saving}
             className="px-4 py-2 rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold transition"
           >
             キャンセル
           </button>
           <button
             onClick={handleConfirm}
-            disabled={!canConfirm}
+            disabled={saving || !canConfirm}
             className="px-4 py-2 rounded-lg text-white font-bold transition disabled:bg-slate-300 disabled:cursor-not-allowed bg-amber-500 hover:bg-amber-600"
           >
             申請する
