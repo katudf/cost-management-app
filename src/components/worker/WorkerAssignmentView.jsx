@@ -7,22 +7,21 @@ import { isNonWorkingDay, getHolidayStyle } from '../../utils/holidayUtils';
 const CELL_WIDTH = 90;      // 現場名をできるだけ長く表示するため広めに取る（管理者版は48px）
 const NAME_COL_WIDTH = 72;
 
-// セル内チップ（現場名2行折り返し・実績はストライプ）
+// セル全体に現場名を表示（2行折り返し・実績はストライプ）
 const AssignmentChip = ({ item }) => (
     <div
-        className={`text-[10px] font-bold rounded px-1 py-0.5 text-black leading-tight ${item.isActual ? 'shadow-sm border border-black/20' : ''}`}
+        className={`flex-1 min-h-8 flex items-center justify-center text-center text-[10px] font-bold px-1 py-0.5 text-black leading-tight ${item.isActual ? 'border border-black/20' : ''}`}
         style={{
             background: item.isActual
                 ? `repeating-linear-gradient(-45deg, rgba(255,255,255,0.2), rgba(255,255,255,0.2) 3px, transparent 3px, transparent 6px), ${item.bgColor}`
                 : item.bgColor,
-            display: '-webkit-box',
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: 'vertical',
             overflow: 'hidden',
             wordBreak: 'break-all',
         }}
     >
-        {item.displayName}
+        <span style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+            {item.displayName}
+        </span>
     </div>
 );
 
@@ -264,11 +263,11 @@ const WorkerAssignmentView = ({ workers, projects, loggedInWorker, onClose }) =>
                                                 <td
                                                     key={col.dateStr}
                                                     className="border border-slate-200 p-0 align-middle"
-                                                    style={{ backgroundColor: cellBg, overflow: 'hidden' }}
+                                                    style={{ backgroundColor: cellBg, overflow: 'hidden', height: '1px' }}
                                                     onClick={() => handleCellTap(worker, col, items)}
                                                 >
                                                     {items.length > 0 ? (
-                                                        <div className="flex flex-col gap-0.5 p-0.5" style={{ overflow: 'hidden' }}>
+                                                        <div className="h-full flex flex-col" style={{ overflow: 'hidden', minHeight: '32px' }}>
                                                             {items.map((item) => <AssignmentChip key={item.key} item={item} />)}
                                                         </div>
                                                     ) : (
