@@ -184,7 +184,7 @@ export const exportAssignmentChartToExcel = (
                             cell.s = {
                                 ...cell.s,
                                 fill: { fgColor: { rgb: hexColor } },
-                                font: { ...cell.s.font, sz: 8, color: { rgb: 'FFFFFF' }, bold: true }
+                                font: { ...cell.s.font, sz: 8, color: { rgb: '000000' }, bold: true }
                             };
                         }
                     }
