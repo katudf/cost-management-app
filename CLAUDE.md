@@ -60,7 +60,7 @@ src/
 │   ├── workTimeUtils.ts       # 人工・労働時間計算
 │   └── projectUtils.js        # 原価集計
 ├── types/index.ts             # 共通型定義（TypeScript段階移行中）
-├── EstimateForm.jsx           # 見積書作成（大きなファイル）
+├── estimate-editor/EstimateEditor.jsx  # 見積書WYSIWYGエディタ（大きなファイル）
 ├── supabaseEstimates.js       # 見積DB操作（ソフト削除・復元含む）
 └── lib/supabase.js            # Supabaseクライアント
 ```
@@ -114,6 +114,13 @@ src/
 - `public/fonts/` にNotoSansJPを格納。PDF生成時にフェッチして埋め込むため、devサーバー起動中でないとPDFプレビューが崩れる場合あり
 - Gemini APIキーのセキュリティ: クライアント側の漏洩を防ぐため、Supabase Edge Functions 経由の呼び出しに移行しました。キーは本番 Supabase の Secrets で設定します。
 - `system_settings` テーブルは `id=1` の固定1行で管理。INSERT不要、UPDATEのみ
+
+## コンテキスト節約ルール
+
+- `src/types/supabase.ts`（自動生成・約2000行）は丸読みしない。テーブル名・型名で Grep し、該当箇所だけ offset/limit で読む
+- 1000行超のファイル（`WorkerApp.jsx`, `estimate-editor/EstimateEditor.jsx`, `PurchaseLedgerTab.jsx`, `useAssignmentState.js` 等）も、まず Grep で位置を特定してから範囲指定で読む
+- 設計資料の正本は `docs/design.md`。`docs/*.docx` と `docs/archive/` は読まない（ユーザーから指示があった場合を除く）
+- 一時ファイル（スクショ等）はプロジェクト直下ではなくスクラッチパッドに置き、`tmp-*` は使用後に削除する
 
 ## 複数エージェントでの作業
 
