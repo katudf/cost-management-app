@@ -1,13 +1,15 @@
-import React, { useMemo, useCallback, useState } from 'react';
+import React, { useMemo, useCallback, useState, useRef } from 'react';
 import { Calendar, ChevronLeft, ChevronRight, Download, Undo2 } from 'lucide-react';
 import { exportAssignmentChartToExcel } from '../../utils/assignmentChartExport';
 import { addDays, toDateStr, buildDateColumns } from '../../utils/dateUtils';
 import { useToast } from '../../components/Toast';
 import { useAssignmentState } from '../../hooks/useAssignmentState';
+import { useAssignmentCellComments } from '../../hooks/useAssignmentCellComments';
 import { useDailyWeatherCodes } from '../../hooks/useWeather';
 import { getWeatherIcon } from '../../utils/weatherIcons';
 import EditColorPopup from '../assignment/EditColorPopup';
 import EditHolidayPopup from '../assignment/EditHolidayPopup';
+import CellCommentPopup from '../assignment/CellCommentPopup';
 import AssignmentPopup from '../assignment/AssignmentPopup';
 import ProjectBarRow from '../assignment/ProjectBarRow';
 import WorkerRow from '../assignment/WorkerRow';
@@ -16,6 +18,7 @@ import { isNonWorkingDay, getHolidayStyle } from '../../utils/holidayUtils';
 
 // メモ化した行コンポーネントに「変化なし」を安定した参照で伝えるための定数
 const EMPTY_ARRAY = [];
+const EMPTY_OBJECT = {};
 // Excel出力で指定できる最大日数
 const MAX_EXPORT_DAYS = 366;
 const DAY_MS = 1000 * 60 * 60 * 24;
@@ -111,6 +114,26 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         setActiveProjectId(projectId);
         setActiveTab('master');
     }, [setActiveProjectId, setActiveTab]);
+
+    // 案件バーのセル（案件×日付）コメント
+    const { commentsByProject, saveCellComment, deleteCellComment } = useAssignmentCellComments({ startDate, totalDays, showToast });
+    const [editCommentCell, setEditCommentCell] = useState(null);
+    // ハンドラ参照を安定させ、全行の再レンダリングを避けるため最新値をrefで参照する
+    const commentsByProjectRef = useRef(commentsByProject);
+    commentsByProjectRef.current = commentsByProject;
+
+    const handleCellComment = useCallback((proj, dateStr, e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const containerRect = tableContainerRef.current?.getBoundingClientRect();
+        setEditCommentCell({
+            projectId: proj.id,
+            projectName: proj.name,
+            dateStr,
+            comment: commentsByProjectRef.current[proj.id]?.[dateStr] || '',
+            top: rect.bottom - (containerRect?.top || 0) + (tableContainerRef.current?.scrollTop || 0),
+            left: rect.left - (containerRect?.left || 0) + (tableContainerRef.current?.scrollLeft || 0)
+        });
+    }, [tableContainerRef]);
 
     const periodLabel = `${startDate.getFullYear()}/${startDate.getMonth() + 1}/${startDate.getDate()} 〜 ${addDays(startDate, totalDays - 1).getMonth() + 1}/${addDays(startDate, totalDays - 1).getDate()}`;
 
@@ -342,6 +365,8 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                 onNameMouseEnter={handleProjectNameMouseEnter}
                                 onNameMouseLeave={handleNameMouseLeave}
                                 onOpenProject={handleOpenProject}
+                                comments={commentsByProject[proj.id] || EMPTY_OBJECT}
+                                onCellComment={handleCellComment}
                             />
                         ))}
 
@@ -508,6 +533,14 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                     editHolidayCell={editHolidayCell}
                     onClose={() => setEditHolidayCell(null)}
                     onUpdateHoliday={updateCompanyHoliday}
+                />
+
+                {/* 案件バーのセルコメント編集ポップアップ */}
+                <CellCommentPopup
+                    editCommentCell={editCommentCell}
+                    onClose={() => setEditCommentCell(null)}
+                    onSave={saveCellComment}
+                    onDelete={deleteCellComment}
                 />
             </div>
 

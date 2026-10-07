@@ -1,6 +1,8 @@
 import React from 'react';
 import { isNonWorkingDay } from '../../utils/holidayUtils';
 
+const EMPTY_COMMENTS = {};
+
 /**
  * 案件バーチャートの1行。
  * React.memo でメモ化し、ガントバードラッグ中は対象行のみ再レンダリングされるよう
@@ -20,12 +22,23 @@ const ProjectBarRow = ({
     handleProjectReorder,
     onNameMouseEnter,
     onNameMouseLeave,
-    onOpenProject
+    onOpenProject,
+    comments = EMPTY_COMMENTS, // この案件のセルコメント { dateStr: comment }
+    onCellComment              // (proj, dateStr, event) => void
 }) => {
     const isDraggingThis = !!draggingGantt;
     const effStart = isDraggingThis ? draggingGantt.tempStartStr : proj.startDate;
     const effEnd = isDraggingThis ? draggingGantt.tempEndStr : proj.endDate;
     const bar = getBarSpan({ startDate: effStart, endDate: effEnd });
+
+    // バー本体は開始セルの子要素として全期間に重なるため、イベントは開始セルに届く。
+    // クリック位置のX座標から実際の日付列を求める。
+    const resolveDateStr = (e, i) => {
+        const td = e.currentTarget;
+        const offset = Math.floor((e.clientX - td.getBoundingClientRect().left) / td.offsetWidth);
+        const idx = Math.min(dateColumns.length - 1, Math.max(0, i + offset));
+        return dateColumns[idx].dateStr;
+    };
 
     return (
         <tr className="assignment-row-hover">
@@ -78,6 +91,17 @@ const ProjectBarRow = ({
                     ? suspensions.find(s => col.dateStr >= s.start_date && col.dateStr <= s.end_date)
                     : null;
                 const isSuspended = !!suspensionMatch;
+                const cellComment = comments[col.dateStr];
+                const cellTitle = [
+                    isSuspended ? `休工: ${suspensionMatch.reason || ''}` : '',
+                    cellComment ? `コメント: ${cellComment}` : ''
+                ].filter(Boolean).join('\n');
+                // コメント表示幅: 次のコメントセルの手前まで右へはみ出して表示
+                const commentSpan = cellComment ? (() => {
+                    let span = 1;
+                    while (i + span < dateColumns.length && !comments[dateColumns[i + span].dateStr]) span++;
+                    return span;
+                })() : 0;
                 const isSuspensionStart = isSuspended && col.dateStr === suspensionMatch.start_date;
                 // 休工期間の表示スパン計算
                 const suspensionSpan = isSuspensionStart ? (() => {
@@ -89,15 +113,42 @@ const ProjectBarRow = ({
                         key={i}
                         className={`border border-slate-200 p-0 relative ${isInBar ? 'cursor-pointer' : (!proj.startDate || !proj.endDate) ? 'cursor-pointer hover:bg-blue-50/50' : ''}`}
                         style={{
-                            backgroundColor: (isInBar && !isHolidayOrWeekend && !isSuspended)
+                            backgroundColor: (cellComment || (isInBar && !isHolidayOrWeekend && !isSuspended))
                                 ? proj.color + (isDraggingThis ? '99' : 'CC')
                                 : isHolidayOrWeekend ? '#FEE2E24D' : isToday ? '#FEFCE8' : 'white',
-                            ...(isSuspended ? {
+                            ...(isSuspended && !cellComment ? {
                                 background: `repeating-linear-gradient(45deg, ${proj.color}40, ${proj.color}40 4px, ${proj.color}18 4px, ${proj.color}18 8px)`,
                             } : {})
                         }}
-                        title={isSuspended ? `休工: ${suspensionMatch.reason || ''}` : ''}
+                        title={cellTitle}
+                        onContextMenu={onCellComment ? (e) => {
+                            e.preventDefault();
+                            onCellComment(proj, resolveDateStr(e, i), e);
+                        } : undefined}
+                        onDoubleClick={onCellComment ? (e) => onCellComment(proj, resolveDateStr(e, i), e) : undefined}
                     >
+                        {cellComment && (
+                            <div
+                                className="absolute top-0 right-0 w-0 h-0 pointer-events-none z-30"
+                                style={{
+                                    borderTop: '7px solid #F97316',
+                                    borderLeft: '7px solid transparent'
+                                }}
+                                aria-hidden="true"
+                            />
+                        )}
+                        {cellComment && (
+                            <div
+                                className="absolute inset-y-0 left-0 flex items-center text-[11px] font-bold text-slate-900 px-1 whitespace-nowrap overflow-hidden pointer-events-none z-[25]"
+                                style={{
+                                    width: `${commentSpan * 48}px`,
+                                    userSelect: 'none',
+                                    textShadow: '0 0 3px white, 0 0 3px white'
+                                }}
+                            >
+                                <span className="truncate">{cellComment}</span>
+                            </div>
+                        )}
                         {isSuspensionStart && suspensionMatch.reason && (
                             <div
                                 className="absolute inset-y-0 left-0 flex items-center text-[12px] font-bold text-orange-700 px-1 whitespace-nowrap overflow-hidden pointer-events-none z-[5]"

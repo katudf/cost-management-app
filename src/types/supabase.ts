@@ -14,6 +14,41 @@ export type Database = {
   }
   public: {
     Tables: {
+      AssignmentCellComments: {
+        Row: {
+          comment: string
+          created_at: string
+          date: string
+          id: number
+          project_id: number
+          updated_at: string
+        }
+        Insert: {
+          comment: string
+          created_at?: string
+          date: string
+          id?: number
+          project_id: number
+          updated_at?: string
+        }
+        Update: {
+          comment?: string
+          created_at?: string
+          date?: string
+          id?: number
+          project_id?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "AssignmentCellComments_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "Projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       Assignments: {
         Row: {
           assignment_order: number | null
