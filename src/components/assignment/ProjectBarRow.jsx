@@ -27,20 +27,6 @@ const ProjectBarRow = ({
     const effEnd = isDraggingThis ? draggingGantt.tempEndStr : proj.endDate;
     const bar = getBarSpan({ startDate: effStart, endDate: effEnd });
 
-    // 工事名ラベルは、バーのうち実際に色が付いて表示される最初のセル
-    // （休日・休工期間を除く）の左端に揃える。色付きセルが無ければ表示しない
-    let labelIdx = -1;
-    if (bar) {
-        for (let i = bar.startIdx; i <= bar.endIdx; i++) {
-            const col = dateColumns[i];
-            if (!col) continue;
-            if (isNonWorkingDay(col.dow, holidayMap[col.dateStr])) continue;
-            if (suspensions.some(s => col.dateStr >= s.start_date && col.dateStr <= s.end_date)) continue;
-            labelIdx = i;
-            break;
-        }
-    }
-
     return (
         <tr className="assignment-row-hover">
             <td
@@ -85,7 +71,6 @@ const ProjectBarRow = ({
             {dateColumns.map((col, i) => {
                 const isInBar = bar && i >= bar.startIdx && i <= bar.endIdx;
                 const isBarStart = bar && i === bar.startIdx;
-                const isLabelStart = bar && i === labelIdx;
                 const registeredHoliday = holidayMap[col.dateStr];
                 const isHolidayOrWeekend = isNonWorkingDay(col.dow, registeredHoliday);
                 const isToday = col.dateStr === todayStr;
@@ -145,14 +130,6 @@ const ProjectBarRow = ({
                                     className="absolute right-0 top-0 bottom-0 w-3 cursor-e-resize z-20 hover:bg-white/40 border-r-2 border-white/50 pointer-events-auto"
                                     onPointerDown={(e) => handleGanttPointerDown(e, proj, 'end')}
                                 ></div>
-                            </div>
-                        )}
-                        {isLabelStart && (
-                            <div
-                                className="absolute inset-y-0 left-0 flex items-center text-[12px] font-bold text-black px-1 whitespace-nowrap pointer-events-none z-[6]"
-                                style={{ userSelect: 'none' }}
-                            >
-                                <span>{proj.name}</span>
                             </div>
                         )}
                         <div className="h-6"></div>
