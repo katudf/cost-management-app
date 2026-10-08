@@ -1352,6 +1352,7 @@ const WorkerApp = () => {
                         >
                             ◀
                         </button>
+                        <div className="relative flex-1 min-w-0">
                         <input type="date" value={selectedDate} onChange={async (e) => {
                             const value = e.target.value;
                             if (hasUnsavedChanges && !(await confirm({
@@ -1362,7 +1363,18 @@ const WorkerApp = () => {
                             setHasUnsavedChanges(false);
                             setSelectedDate(value);
                         }}
-                            className="flex-1 bg-white border-2 border-blue-200 text-slate-800 p-4 rounded-xl font-bold text-lg outline-none focus:border-blue-500 shadow-sm appearance-none" />
+                            className="w-full bg-white border-2 border-blue-200 text-slate-800 p-4 rounded-xl font-bold text-lg outline-none focus:border-blue-500 shadow-sm appearance-none" />
+                        {(() => {
+                            const dow = new Date(selectedDate + 'T00:00:00').getDay();
+                            if (Number.isNaN(dow)) return null;
+                            const color = dow === 0 ? 'text-red-600' : dow === 6 ? 'text-blue-600' : 'text-slate-700';
+                            return (
+                                <span className={`absolute right-14 top-1/2 -translate-y-1/2 pointer-events-none font-bold text-lg ${color}`} data-testid="selected-weekday">
+                                    ({'日月火水木金土'[dow]})
+                                </span>
+                            );
+                        })()}
+                        </div>
                         <button
                             type="button"
                             onClick={async () => {
