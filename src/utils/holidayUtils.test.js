@@ -24,10 +24,10 @@ describe('holidayUtils', () => {
     });
 
     it('自由記入は先頭2文字をラベルに使う', () => {
-        expect(getHolidayStyle({ description: '安全大会' }).shortLabel).toBe('安全');
+        expect(getHolidayStyle({ description: '安全大会' }).shortLabel).toBe('安全大会');
         expect(getHolidayStyle({ description: '休日' }).shortLabel).toBe('休');
         expect(getHolidayStyle({ description: '会議' }).shortLabel).toBe('会議');
-        expect(getHolidayStyle({ description: '社員旅行' }).shortLabel).toBe('社員');
+        expect(getHolidayStyle({ description: '社員旅行' }).shortLabel).toBe('社員旅行');
         expect(getHolidayStyle(null)).toBeNull();
     });
 });

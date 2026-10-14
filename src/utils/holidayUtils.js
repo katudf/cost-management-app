@@ -65,7 +65,7 @@ const EVENT_STYLES = {
 /** 会社行事以外（通常の休日）の表示スタイル */
 const DEFAULT_HOLIDAY_STYLE = { bgColor: '#FECACA', shortLabel: '休', textColor: 'text-red-600' };
 
-/** 自由記入の会社行事の表示スタイル（shortLabel は記入内容の先頭2文字） */
+/** 自由記入の会社行事の表示スタイル（shortLabel は記入内容そのまま。セル側で2行に収める） */
 const FREE_TEXT_EVENT_STYLE = { bgColor: '#FDE68A', textColor: 'text-amber-800' };
 
 /**
@@ -78,5 +78,5 @@ export function getHolidayStyle(holiday) {
     if (!holiday) return null;
     if (isActualHoliday(holiday)) return DEFAULT_HOLIDAY_STYLE;
     return EVENT_STYLES[holiday.description]
-        || { ...FREE_TEXT_EVENT_STYLE, shortLabel: holiday.description.slice(0, 2) };
+        || { ...FREE_TEXT_EVENT_STYLE, shortLabel: holiday.description };
 }

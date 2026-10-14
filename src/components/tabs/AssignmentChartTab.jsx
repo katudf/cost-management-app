@@ -457,8 +457,9 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                         title={holidayObj?.description || undefined}
                                     >
                                         {holidayObj && (
-                                            <div className={`flex items-center justify-center h-full text-[10px] ${textColor} font-bold`}>
-                                                {displayText}
+                                            <div className={`flex items-center justify-center h-full px-0.5 text-[10px] leading-tight ${textColor} font-bold`}>
+                                                {/* 長い自由記入は2行まで表示し、それ以上は省略（全文は title で確認） */}
+                                                <span className="line-clamp-2 break-all">{displayText}</span>
                                             </div>
                                         )}
                                     </td>
