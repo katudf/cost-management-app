@@ -41,6 +41,7 @@ describe('getReportDayOffLabel', () => {
         expect(getReportDayOffLabel(DATE, { hasRecords: false, companyHolidays: [{ date: DATE, description: null }] })).toBe('休日');
         expect(getReportDayOffLabel(DATE, { hasRecords: false, companyHolidays: [{ date: DATE, description: '休日' }] })).toBe('休日');
         expect(getReportDayOffLabel(DATE, { hasRecords: false, companyHolidays: [{ date: DATE, description: '社員旅行' }] })).toBe('社員旅行');
+        expect(getReportDayOffLabel(DATE, { hasRecords: false, companyHolidays: [{ date: DATE, description: '安全大会' }] })).toBe('安全大会');
     });
 
     it('該当なしは null', () => {

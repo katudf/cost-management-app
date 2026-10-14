@@ -7,7 +7,7 @@ import { isActualHoliday, HOLIDAY_DESCRIPTION } from './holidayUtils';
  * 優先順位:
  *   1. その日に作業実績（TaskRecords）がある → null（作業内容をそのまま表示する）
  *   2. 配置表のスケジュール種別（有給 / 休み / 健診 など）→ その title
- *   3. 会社カレンダーの休日 → '休日'、会社行事（会議 / 社員旅行）→ 行事名
+ *   3. 会社カレンダーの休日 → '休日'、会社行事（会議 / 自由記入）→ 行事名
  *   4. どれでもない → null
  *
  * @param {string} date 'YYYY-MM-DD'

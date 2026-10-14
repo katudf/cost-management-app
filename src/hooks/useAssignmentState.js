@@ -806,8 +806,11 @@ export function useAssignmentState({
         } catch (e) {
             console.error('配置追加エラー:', e);
             setAssignments(prev => prev.filter(a => a.id !== tempId));
+            showToast(e?.code === '42501'
+                ? '配置表の編集権限がありません（管理者・事務のみ編集可）'
+                : '配置の追加に失敗しました。', 'error');
         }
-    }, [assignmentLookup, pushUndo, deleteAssignmentsByIds]);
+    }, [assignmentLookup, showToast, pushUndo, deleteAssignmentsByIds]);
 
     const addAssignmentBatch = useCallback(async (workerId, dateStrs, projectId, title = null) => {
         const newRecords = [];
@@ -868,7 +871,9 @@ export function useAssignmentState({
         } catch (e) {
             console.error('一括配置追加エラー:', e);
             setAssignments(prev => prev.filter(a => !tempIds.includes(a.id)));
-            showToast('配置の追加に失敗しました。', 'error');
+            showToast(e?.code === '42501'
+                ? '配置表の編集権限がありません（管理者・事務のみ編集可）'
+                : '配置の追加に失敗しました。', 'error');
         }
     }, [assignmentLookup, showToast, pushUndo, deleteAssignmentsByIds]);
 

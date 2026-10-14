@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { useToast } from './Toast';
 import { useCompanyHolidays, deleteCompanyHoliday, upsertCompanyHoliday } from '../hooks/useCompanyHolidays';
-import { isNonWorkingDay, COMPANY_EVENT, HOLIDAY_DESCRIPTION } from '../utils/holidayUtils';
+import { isNonWorkingDay, isActualHoliday, COMPANY_EVENT, HOLIDAY_DESCRIPTION } from '../utils/holidayUtils';
 
 const DOW_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
 const MONTH_NAMES = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
@@ -10,8 +10,16 @@ const MONTH_NAMES = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8�
 const HOLIDAY_TYPES = [
     { key: 'holiday', label: HOLIDAY_DESCRIPTION, color: '#FECACA', textColor: '#DC2626', description: null },
     { key: 'meeting', label: COMPANY_EVENT.MEETING, color: '#DCFCE7', textColor: '#15803d', description: COMPANY_EVENT.MEETING },
-    { key: 'trip', label: COMPANY_EVENT.TRIP, color: '#DDD6FE', textColor: '#6D28D9', description: COMPANY_EVENT.TRIP },
 ];
+
+/** 配置表で自由記入された会社行事（このカレンダーからは選択不可・表示のみ） */
+const FREE_TEXT_TYPE = { key: 'free', label: '自由記入', color: '#FDE68A', textColor: '#92400E' };
+
+/** 休日レコードに対応する種別（表示色）を返す */
+const getHolidayType = (holiday) => {
+    if (isActualHoliday(holiday)) return HOLIDAY_TYPES[0];
+    return HOLIDAY_TYPES.find(t => t.description === holiday.description) || FREE_TEXT_TYPE;
+};
 
 const HolidayCalendar = () => {
     const { showToast } = useToast();
@@ -68,8 +76,7 @@ const HolidayCalendar = () => {
     const getDateColor = (dateStr, dow) => {
         const h = getHoliday(dateStr);
         if (h) {
-            const type = HOLIDAY_TYPES.find(t => t.description === (h.description || null));
-            return type || HOLIDAY_TYPES[0];
+            return getHolidayType(h);
         }
         if (dow === 0) return { color: '#FEF2F2', textColor: '#DC2626' };
         if (dow === 6) return { color: '#EFF6FF', textColor: '#2563EB' };
@@ -102,7 +109,7 @@ const HolidayCalendar = () => {
                     onClick={() => toggleDate(dateStr)}
                     className="p-0 text-center cursor-pointer transition-all hover:scale-110 hover:shadow-md relative"
                     style={{
-                        backgroundColor: holiday ? (HOLIDAY_TYPES.find(t => t.description === (holiday.description || null))?.color || '#FECACA') : (colorInfo?.color || 'transparent'),
+                        backgroundColor: holiday ? getHolidayType(holiday).color : (colorInfo?.color || 'transparent'),
                         borderRadius: '4px',
                     }}
                     title={holiday ? `${dateStr} - ${holiday.description || '休日'}（クリックで解除）` : `${dateStr}（クリックで設定）`}
@@ -110,7 +117,7 @@ const HolidayCalendar = () => {
                     <div
                         className="w-8 h-8 flex items-center justify-center text-xs font-bold mx-auto"
                         style={{
-                            color: holiday ? (HOLIDAY_TYPES.find(t => t.description === (holiday.description || null))?.textColor || '#DC2626') : (colorInfo?.textColor || '#334155'),
+                            color: holiday ? getHolidayType(holiday).textColor : (colorInfo?.textColor || '#334155'),
                         }}
                     >
                         {day}
@@ -254,7 +261,7 @@ const HolidayCalendar = () => {
             {/* 凡例 */}
             <div className="mt-4 flex items-center gap-4 text-[11px] text-slate-500 border-t border-slate-100 pt-3">
                 <span className="font-bold">凡例:</span>
-                {HOLIDAY_TYPES.map(type => (
+                {[...HOLIDAY_TYPES, FREE_TEXT_TYPE].map(type => (
                     <div key={type.key} className="flex items-center gap-1.5">
                         <div className="w-4 h-4 rounded" style={{ backgroundColor: type.color, border: `1px solid ${type.textColor}40` }}></div>
                         <span>{type.label}</span>

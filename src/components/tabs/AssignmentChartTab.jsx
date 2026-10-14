@@ -444,6 +444,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                             setEditHolidayCell({
                                                 dateStr: col.dateStr,
                                                 existingId: holidayObj?.id || null,
+                                                existingDescription: holidayObj?.description || null,
                                                 top: rect.bottom - (containerRect?.top || 0) + (tableContainerRef.current?.scrollTop || 0),
                                                 left: rect.left - (containerRect?.left || 0) + (tableContainerRef.current?.scrollLeft || 0)
                                             });
@@ -453,6 +454,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                             backgroundColor: isEditingEvent ? '#E2E8F0' : bgColor,
                                             height: '24px'
                                         }}
+                                        title={holidayObj?.description || undefined}
                                     >
                                         {holidayObj && (
                                             <div className={`flex items-center justify-center h-full text-[10px] ${textColor} font-bold`}>

@@ -55,7 +55,7 @@ const WorkerAssignmentView = ({ workers, projects, loggedInWorker, onClose }) =>
         scrollRef.current.scrollLeft = todayIdx > 0 ? (todayIdx - 1) * CELL_WIDTH : 0;
     }, [isLoading, dateColumns, todayStr]);
 
-    // 会社行事（会議・社員旅行）は休日扱いにしない（管理者版と同じ判定）
+    // 会社行事（会議・自由記入）は休日扱いにしない（管理者版と同じ判定）
     const isHolidayColumn = (col) => isNonWorkingDay(col.dow, holidayMap[col.dateStr]);
 
     // セルの表示アイテムを組み立てる（過去日は日報実績を優先、管理者版と同じルール）
