@@ -1,4 +1,5 @@
 import * as xlsx from 'xlsx-js-style';
+import { SCHEDULE_TYPES } from './constants';
 
 /**
  * 配置表をExcelに出力する
@@ -57,31 +58,53 @@ export const exportAssignmentChartToExcel = (
     sheetData.push(sepHeader);
 
     // 作業員配置行
+    // 1日に複数現場がある場合は現場ごとに行を分けて色分けする。
+    // 作業員ごとに「期間内で最も現場数が多い日」の数だけ行を確保し、
+    // 現場が少ない日は縦方向にセル結合する。
     const workerStartRow = sheetData.length;
+    const workerMerges = [];
+    const workerCellColors = {}; // `${R}_${C}` → 塗りつぶし色（結合範囲内の全セル分）
     workers.forEach(worker => {
-        const row = [worker.name];
-        dateColumns.forEach(col => {
-            const key = `${worker.id}_${col.dateStr}`;
-            const cellAssigns = assignmentLookup[key] || [];
-            if (cellAssigns.length > 0) {
-                const names = cellAssigns.map(a => {
-                    if (a.title) return a.title;
-                    const pInfo = projectMap[a.projectId];
-                    return pInfo?.name || '';
-                });
-                row.push(names.join('\n'));
-            } else {
-                row.push('');
-            }
+        const dayAssigns = dateColumns.map(col => assignmentLookup[`${worker.id}_${col.dateStr}`] || []);
+        const subRowCount = Math.max(1, ...dayAssigns.map(a => a.length));
+        const baseRow = sheetData.length;
+        const rows = Array.from({ length: subRowCount }, (_, s) => [s === 0 ? worker.name : '']);
+
+        if (subRowCount > 1) {
+            workerMerges.push({ s: { r: baseRow, c: 0 }, e: { r: baseRow + subRowCount - 1, c: 0 } });
+        }
+
+        dayAssigns.forEach((cellAssigns, i) => {
+            const C = i + 1;
+            rows.forEach(r => r.push(''));
+            const segments = cellAssigns.length > 0 ? cellAssigns : [null];
+            segments.forEach((a, k) => {
+                // k番目の現場が受け持つ行範囲（行数を現場数で均等割り）
+                const from = Math.floor(k * subRowCount / segments.length);
+                const to = Math.floor((k + 1) * subRowCount / segments.length) - 1;
+                if (a) {
+                    const pInfo = a.projectId ? projectMap[a.projectId] : null;
+                    const schedType = !a.projectId && a.title ? SCHEDULE_TYPES.find(s => s.title === a.title) : null;
+                    rows[from][C] = a.title || pInfo?.name || '';
+                    const color = schedType?.color || pInfo?.color || '#94A3B8';
+                    for (let s = from; s <= to; s++) {
+                        workerCellColors[`${baseRow + s}_${C}`] = color.replace('#', '');
+                    }
+                }
+                if (to > from) {
+                    workerMerges.push({ s: { r: baseRow + from, c: C }, e: { r: baseRow + to, c: C } });
+                }
+            });
         });
-        sheetData.push(row);
+        sheetData.push(...rows);
     });
 
     const ws = xlsx.utils.aoa_to_sheet(sheetData);
 
-    // マージ: タイトル行
+    // マージ: タイトル行 + 作業員配置行
     if (!ws['!merges']) ws['!merges'] = [];
     ws['!merges'].push({ s: { r: 0, c: 0 }, e: { r: 0, c: Math.min(totalDays, 7) } });
+    ws['!merges'].push(...workerMerges);
 
     // 列幅
     ws['!cols'] = [{ wch: 16 }];
@@ -167,31 +190,15 @@ export const exportAssignmentChartToExcel = (
 
             // 作業員配置セル: 色付け
             if (R >= workerStartRow && C > 0) {
-                const workerIdx = R - workerStartRow;
-                const worker = workers[workerIdx];
-                if (worker && cell.v) {
-                    const dateCol = dateColumns[C - 1];
-                    if (dateCol) {
-                        const key = `${worker.id}_${dateCol.dateStr}`;
-                        const assigns = assignmentLookup[key] || [];
-                        if (assigns.length > 0) {
-                            const firstAssign = assigns[0];
-                            let color = '#94A3B8';
-                            if (firstAssign.projectId) {
-                                color = projectMap[firstAssign.projectId]?.color || color;
-                            }
-                            const hexColor = color.replace('#', '');
-                            cell.s = {
-                                ...cell.s,
-                                fill: { fgColor: { rgb: hexColor } },
-                                font: { ...cell.s.font, sz: 8, color: { rgb: '000000' }, bold: true }
-                            };
-                        }
-                    }
-                }
-
-                // 土日の背景色
-                if (!cell.v || cell.v === '') {
+                const hexColor = workerCellColors[`${R}_${C}`];
+                if (hexColor) {
+                    cell.s = {
+                        ...cell.s,
+                        fill: { fgColor: { rgb: hexColor } },
+                        font: { ...cell.s.font, sz: 8, color: { rgb: '000000' }, bold: true }
+                    };
+                } else {
+                    // 土日の背景色
                     const dateCol = dateColumns[C - 1];
                     if (dateCol?.dow === 0) {
                         cell.s = { ...cell.s, fill: { fgColor: { rgb: 'FEE2E2' } } };
