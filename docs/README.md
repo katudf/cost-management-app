@@ -27,6 +27,8 @@
 | [`admin-manual.md`](manuals/admin-manual.md) | 管理者画面（AdminApp）の全機能 |
 | [`worker-manual.md`](manuals/worker-manual.md) | 作業員画面（WorkerApp）の日報入力 |
 | [`role-overview.md`](manuals/role-overview.md) | 役割別の使い分け概要 |
+| [`estimate-editor-manual.md`](manuals/estimate-editor-manual.md) | 見積エディタでの見積書作成 |
+| [`assignment-chart-manual.md`](manuals/assignment-chart-manual.md) | 配置表の編集操作（スクリーンショット付き。PDF版: [`assignment-chart-manual.pdf`](manuals/assignment-chart-manual.pdf)） |
 
 ## archive/
 
