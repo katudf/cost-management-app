@@ -85,6 +85,10 @@ export default defineConfig({
                 // Supabase API呼び出しはService Workerでキャッシュせず、
                 // アプリ側のofflineCache.jsによるlocalStorageフォールバックに任せる
                 navigateFallbackDenylist: [/^\/api\//],
+                // 共有URL（/schedule.html?key=...）はkeyが付くとプリキャッシュに一致せず
+                // navigateFallbackのindex.html（デフォルトmanifest, start_url "/"）が返ってしまい、
+                // ホーム画面追加時に管理者トップがインストールされる。keyを無視して schedule.html を返す。
+                ignoreURLParametersMatching: [/^utm_/, /^fbclid$/, /^key$/],
                 runtimeCaching: [
                     {
                         urlPattern: ({ url }) => url.pathname.startsWith('/fonts/'),
