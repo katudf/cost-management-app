@@ -12,13 +12,21 @@ const App = () => {
     useEffect(() => {
         const queryParams = new URLSearchParams(window.location.search);
         const queryMode = queryParams.get('mode');
-        // worker.html / inventory.html から開いた場合はホーム画面アイコン用に専用モード固定
+        // worker.html / inventory.html / schedule.html から開いた場合はホーム画面アイコン用に専用モード固定
         // （PWAとしてインストールした際に正しいアイコン・マニフェストのエントリから起動するため）
         const path = window.location.pathname;
 
         if (queryMode === 'worker' || path.endsWith('/worker.html')) {
             setMode('worker');
-        } else if (queryMode === 'schedule') {
+        } else if (queryMode === 'schedule' || path.endsWith('/schedule.html')) {
+            // 旧形式の共有URL（/?mode=schedule&key=…）は専用エントリへ移す。
+            // index.html のままだとホーム画面追加時に管理者用マニフェスト（start_url: /）が使われてしまう
+            if (!path.endsWith('/schedule.html')) {
+                queryParams.delete('mode');
+                const qs = queryParams.toString();
+                window.location.replace(`/schedule.html${qs ? `?${qs}` : ''}`);
+                return;
+            }
             setMode('schedule');
         } else if (queryMode === 'inventory' || path.endsWith('/inventory.html')) {
             setMode('inventory');

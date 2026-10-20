@@ -6,7 +6,7 @@ import { VitePWA } from 'vite-plugin-pwa'
 // vite-plugin-pwaはgenerateSWモードで、ビルド成果物の書き込み後（closeBundle）に
 // 全HTMLエントリの</head>直前へデフォルトmanifest（/manifest.webmanifest）への
 // <link rel="manifest">を直接書き込むため、transformIndexHtmlフックでは間に合わない。
-// worker.html / inventory.html が独自に持つ専用manifestタグと重複してしまうので、
+// worker.html / inventory.html / schedule.html が独自に持つ専用manifestタグと重複してしまうので、
 // closeBundle完了後にdistファイルを直接後処理して重複分を除去する。
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -45,10 +45,10 @@ export default defineConfig({
             includeAssets: [
                 'favicon.png', 'apple-touch-icon.png', 'fonts/*',
                 'icons/worker/*.png', 'icons/inventory/*.png',
-                'manifest-worker.webmanifest', 'manifest-inventory.webmanifest',
+                'manifest-worker.webmanifest', 'manifest-inventory.webmanifest', 'manifest-schedule.webmanifest',
             ],
             // index.html（管理者トップ）用のデフォルトマニフェスト。
-            // worker.html / inventory.html は各HTMLの<link rel="manifest">で専用マニフェストを参照し、
+            // worker.html / inventory.html / schedule.html は各HTMLの<link rel="manifest">で専用マニフェストを参照し、
             // ホーム画面追加時に個別のアイコン・名前を持たせている。
             manifest: {
                 name: 'CostNavi',
@@ -102,6 +102,7 @@ export default defineConfig({
         }),
         stripDuplicateManifestLink('worker'),
         stripDuplicateManifestLink('inventory'),
+        stripDuplicateManifestLink('schedule'),
     ],
     build: {
         rollupOptions: {
@@ -109,6 +110,7 @@ export default defineConfig({
                 main: 'index.html',
                 worker: 'worker.html',
                 inventory: 'inventory.html',
+                schedule: 'schedule.html',
             },
         },
     },

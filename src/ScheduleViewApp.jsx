@@ -12,10 +12,20 @@ import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
 // メイン配置表と同様、有給用の案件はバーに出さない
 const EXCLUDED_BAR_NAMES = ['【会社】有給', '有給', '【有給】'];
 
-// 共有キー付きURL（?mode=schedule&key=xxxx）ならログイン不要で閲覧できる
+// 共有キー付きURL（/schedule.html?key=xxxx）ならログイン不要で閲覧できる。
+// ホーム画面から起動した際にクエリが落ちていても表示できるよう、最後に開いたキーを保存しておく
+const SHARE_KEY_STORAGE = 'scheduleShareKey';
 const getShareKey = () => {
-    const key = new URLSearchParams(window.location.search).get('key');
-    return key && key.trim() !== '' ? key.trim() : null;
+    const key = new URLSearchParams(window.location.search).get('key')?.trim();
+    try {
+        if (key) {
+            localStorage.setItem(SHARE_KEY_STORAGE, key);
+            return key;
+        }
+        return localStorage.getItem(SHARE_KEY_STORAGE) || null;
+    } catch {
+        return key || null;
+    }
 };
 
 const ScheduleViewApp = () => {

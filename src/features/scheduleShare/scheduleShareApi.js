@@ -40,5 +40,5 @@ export async function fetchPublicSchedule(key, startStr, endStr) {
 
 /** 共有URLを組み立てる */
 export function buildShareUrl(token) {
-    return `${window.location.origin}/?mode=schedule&key=${encodeURIComponent(token)}`;
+    return `${window.location.origin}/schedule.html?key=${encodeURIComponent(token)}`;
 }
