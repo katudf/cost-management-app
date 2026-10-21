@@ -51,7 +51,7 @@ const StatusBadge = ({ status }) => {
 // 見積有効期限バッジ
 // ------------------------------------------------------------
 // valid_until が今日より前なら「期限切れ」、7日以内なら「期限間近」を表示。
-// 承認済み・返却済みの見積は期限管理の対象外として非表示にする。
+// 承認済み・返却済み・受注の見積は期限管理の対象外として非表示にする。
 // ============================================================
 const EXPIRY_SOON_THRESHOLD_DAYS = 7;
 
@@ -69,7 +69,7 @@ const getExpiryInfo = (validUntil) => {
 };
 
 const ExpiryBadge = ({ validUntil, status }) => {
-  if (status === ESTIMATE_STATUS.APPROVED || status === ESTIMATE_STATUS.RETURNED) return null;
+  if ([ESTIMATE_STATUS.APPROVED, ESTIMATE_STATUS.RETURNED, ESTIMATE_STATUS.ORDERED].includes(status)) return null;
   const info = getExpiryInfo(validUntil);
   if (!info) return null;
 
