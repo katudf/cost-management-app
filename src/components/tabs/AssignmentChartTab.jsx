@@ -596,6 +596,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
             {/* カラー選択ポップアップ */}
             <EditColorPopup
                 editColorPopup={editColorPopup}
+                currentColor={barProjects.find(p => p.id === editColorPopup?.projectId)?.color}
                 onClose={() => setEditColorPopup(null)}
                 onSelectColor={updateProjectColor}
             />
