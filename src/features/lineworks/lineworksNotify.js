@@ -1,4 +1,5 @@
 import { supabase } from '../../lib/supabase';
+import { fetchSystemSettings, updateSystemSettings } from '../../hooks/useSystemSettings';
 
 /**
  * LINE WORKS Bot 通知を送信する。
@@ -30,24 +31,13 @@ export async function sendLineWorksNotification(message, workerIds) {
 
 /** LINE WORKS 通知の有効/無効を取得する。 */
 export async function fetchLineWorksEnabled() {
-    const { data, error } = await supabase
-        .from('system_settings')
-        .select('lineworks_enabled')
-        .eq('id', 1)
-        .maybeSingle();
-
-    if (error) throw error;
+    const data = await fetchSystemSettings('lineworks_enabled');
     return data?.lineworks_enabled ?? false;
 }
 
 /** LINE WORKS 通知の有効/無効を保存する。system_settings は id=1 の固定行。 */
 export async function saveLineWorksEnabled(enabled) {
-    const { error } = await supabase
-        .from('system_settings')
-        .update({ lineworks_enabled: enabled, updated_at: new Date().toISOString() })
-        .eq('id', 1);
-
-    if (error) throw error;
+    await updateSystemSettings({ lineworks_enabled: enabled });
 }
 
 /** 作業員の LINE WORKS ユーザーID一覧を取得する（在籍中のみ）。 */
