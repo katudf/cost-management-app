@@ -20,7 +20,7 @@ const CustomerSettings = () => {
     }, [refetch, showToast]);
 
     const handleSave = async () => {
-        if (!form.name.trim()) {
+        if (!(form.name ?? '').trim()) {
             showToast('顧客名は必須です', 'error');
             return;
         }
@@ -28,10 +28,10 @@ const CustomerSettings = () => {
         setIsSaving(true);
         try {
             const payload = {
-                name: form.name.trim(),
-                address: form.address.trim(),
-                contactPerson: form.contactPerson.trim(),
-                phone: form.phone.trim()
+                name: (form.name ?? '').trim(),
+                address: (form.address ?? '').trim(),
+                contactPerson: (form.contactPerson ?? '').trim(),
+                phone: (form.phone ?? '').trim()
             };
 
             if (form.id) {
@@ -232,10 +232,17 @@ const CustomerSettings = () => {
                                         <td className="p-4 text-center">
                                             <div className="flex items-center justify-center gap-2">
                                                 <button
-                                                    onClick={() => setForm({ ...customer })}
+                                                    onClick={() => setForm({
+                                                        id: customer.id,
+                                                        name: customer.name ?? '',
+                                                        address: customer.address ?? '',
+                                                        contactPerson: customer.contactPerson ?? '',
+                                                        phone: customer.phone ?? ''
+                                                    })}
                                                     disabled={isSaving}
                                                     className="bg-white border border-slate-200 text-blue-600 hover:text-blue-700 hover:border-blue-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50"
                                                     title="編集"
+                                                    aria-label="編集"
                                                 >
                                                     <Edit3 size={16} />
                                                 </button>
@@ -244,6 +251,7 @@ const CustomerSettings = () => {
                                                     disabled={isSaving}
                                                     className="bg-white border border-slate-200 text-red-500 hover:text-red-600 hover:border-red-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50"
                                                     title="削除"
+                                                    aria-label="削除"
                                                 >
                                                     <Trash2 size={16} />
                                                 </button>
