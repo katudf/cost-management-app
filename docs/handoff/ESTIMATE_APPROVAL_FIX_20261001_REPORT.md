@@ -146,3 +146,13 @@ BEGIN/COMMIT内で対象DDLと `supabase_migrations.schema_migrations` への履
 
 本番データへの動作テスト・フロントエンドのデプロイ・コミットは実行していない。
 適用後の検証は定義とデータハッシュの読み取りのみ。隔離環境の120件の実操作テストとは区別する。
+
+## 6. フロントエンド本番デプロイ
+
+2026-10-01、コミット `c0753804cbd459f1d2335f91f8e172b600f34634` をmainへpushし、既存Vercel連携でProductionへ公開した。GitHub deployment `6775991406` とVercelコミットステータスはsuccess。
+
+公開URL: https://cost-management-abg1sxd1j-katudfs-projects.vercel.app
+
+ステージ済み内容を独立コピーして276件のユニットテストと本番ビルドが成功。別作業のLINE WORKS変更、一時画像、未追跡の指示ファイルはコミットから除外。隔離環境でのDB120件・ブラウザ9件は前述のとおり。
+
+デプロイ固有URLはVercel認証画面へリダイレクトするため、匿名HTTPではアプリ配信内容の確認はできなかった。公開完了は対象SHAのProduction deployment成功で確認。本番データへの操作テストは行っていない。
