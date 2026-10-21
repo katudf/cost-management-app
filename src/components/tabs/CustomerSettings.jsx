@@ -60,7 +60,13 @@ const CustomerSettings = () => {
             refetch();
         } catch (error) {
             console.error('顧客情報削除エラー:', error);
-            showToast('削除に失敗しました', 'error');
+            if (error?.code === '23503') {
+                // 外部キー制約違反: 他テーブルから参照されている顧客は削除できない
+                const target = error.details?.includes('"Projects"') ? '工事案件' : '他のデータ';
+                showToast(`この顧客は${target}で使用中のため削除できません。先に紐付けを解除してください`, 'error');
+            } else {
+                showToast('削除に失敗しました', 'error');
+            }
         } finally {
             setIsSaving(false);
         }
