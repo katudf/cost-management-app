@@ -32,9 +32,9 @@ const ScheduleViewApp = () => {
     const { isAuthenticated, isLoading: isAuthLoading, isPasswordRecovery } = useAuth();
     const [shareKey] = useState(getShareKey);
 
-    // 表示期間: 2週間
+    // 表示期間: 4週間
     const [startDate, setStartDate] = useState(() => getMonday(new Date()));
-    const totalDays = 14;
+    const totalDays = 28;
 
     const { workers, assignments, barProjects, holidays, isLoading, error } = useScheduleViewData(startDate, totalDays, shareKey);
 
@@ -157,9 +157,9 @@ const ScheduleViewApp = () => {
                     </div>
                     <div className="flex items-center gap-1">
                         <button
-                            onClick={() => movePeriod(-2)}
-                            aria-label="前の2週間"
-                            title="前の2週間"
+                            onClick={() => movePeriod(-4)}
+                            aria-label="前の4週間"
+                            title="前の4週間"
                             className="p-1.5 rounded-md hover:bg-blue-500 transition"
                         >
                             <ChevronLeft size={18} />
@@ -174,9 +174,9 @@ const ScheduleViewApp = () => {
                             {periodLabel}
                         </span>
                         <button
-                            onClick={() => movePeriod(2)}
-                            aria-label="次の2週間"
-                            title="次の2週間"
+                            onClick={() => movePeriod(4)}
+                            aria-label="次の4週間"
+                            title="次の4週間"
                             className="p-1.5 rounded-md hover:bg-blue-500 transition"
                         >
                             <ChevronRight size={18} />

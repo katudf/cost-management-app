@@ -10,7 +10,7 @@ import { fetchCompanyHolidays } from './useCompanyHolidays';
  * shareKey を渡すとログイン不要の共有RPC（get_public_schedule）経由で取得する。
  * error: null | 'invalid_key' | 'fetch_failed'
  */
-export function useScheduleViewData(startDate, totalDays = 14, shareKey = null) {
+export function useScheduleViewData(startDate, totalDays = 28, shareKey = null) {
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState(null);
     const [workers, setWorkers] = useState([]);
