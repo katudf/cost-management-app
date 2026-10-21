@@ -6,7 +6,7 @@ import { useCustomerSettingsData } from '../../hooks/useCustomerSettingsData';
 
 const CustomerSettings = () => {
     const { showToast } = useToast();
-    const { customers, staffList, isLoading, refetch, createCustomer, updateCustomer, deleteCustomer } = useCustomerSettingsData();
+    const { customers, staffList, isLoading, refetch, createCustomer, updateCustomer, deleteCustomer, fetchLinkedRecords } = useCustomerSettingsData();
     const [isSaving, setIsSaving] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [form, setForm] = useState({ id: null, name: '', address: '', contactPerson: '', phone: '' });
@@ -61,9 +61,22 @@ const CustomerSettings = () => {
         } catch (error) {
             console.error('顧客情報削除エラー:', error);
             if (error?.code === '23503') {
-                // 外部キー制約違反: 他テーブルから参照されている顧客は削除できない
-                const target = error.details?.includes('"Projects"') ? '工事案件' : '他のデータ';
-                showToast(`この顧客は${target}で使用中のため削除できません。先に紐付けを解除してください`, 'error');
+                // 外部キー制約違反: 工事案件・見積から参照されている顧客は削除できない
+                const formatLinked = (label, { names, total }) => {
+                    if (names.length === 0) return null;
+                    const rest = total > names.length ? ` 他${total - names.length}件` : '';
+                    return `${label}（${names.map(n => `「${n}」`).join('、')}${rest}）`;
+                };
+                let linkedText = '';
+                try {
+                    const { projects, estimates } = await fetchLinkedRecords(id, 3);
+                    linkedText = [formatLinked('工事案件', projects), formatLinked('見積', estimates)]
+                        .filter(Boolean)
+                        .join('・');
+                } catch (fetchError) {
+                    console.error('紐付けデータ取得エラー:', fetchError);
+                }
+                showToast(`この顧客は${linkedText || '他のデータ'}で使用中のため削除できません。先に紐付けを解除してください`, 'error');
             } else {
                 showToast('削除に失敗しました', 'error');
             }

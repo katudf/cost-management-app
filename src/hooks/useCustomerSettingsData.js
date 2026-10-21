@@ -38,5 +38,36 @@ export function useCustomerSettingsData() {
         if (error) throw error;
     }, []);
 
-    return { customers, staffList, isLoading, refetch, createCustomer, updateCustomer, deleteCustomer };
+    // 顧客に紐付く工事案件・見積を取得（それぞれ先頭 limit 件の名称と総件数）
+    // ゴミ箱（ソフト削除）の見積も外部キーで参照しているため含める
+    const fetchLinkedRecords = useCallback(async (customerId, limit = 3) => {
+        const [projectsRes, estimatesRes] = await Promise.all([
+            supabase
+                .from('Projects')
+                .select('name', { count: 'exact' })
+                .eq('customerId', customerId)
+                .order('created_at', { ascending: false })
+                .limit(limit),
+            supabase
+                .from('estimates')
+                .select('title, deleted_at', { count: 'exact' })
+                .eq('customer_id', customerId)
+                .order('created_at', { ascending: false })
+                .limit(limit),
+        ]);
+        if (projectsRes.error) throw projectsRes.error;
+        if (estimatesRes.error) throw estimatesRes.error;
+        return {
+            projects: {
+                names: (projectsRes.data || []).map(p => p.name || '（名称未設定）'),
+                total: projectsRes.count ?? 0,
+            },
+            estimates: {
+                names: (estimatesRes.data || []).map(e => `${e.title || '（件名未設定）'}${e.deleted_at ? '［ゴミ箱］' : ''}`),
+                total: estimatesRes.count ?? 0,
+            },
+        };
+    }, []);
+
+    return { customers, staffList, isLoading, refetch, createCustomer, updateCustomer, deleteCustomer, fetchLinkedRecords };
 }
