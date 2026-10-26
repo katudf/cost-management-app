@@ -52,7 +52,7 @@ serve(async (req) => {
       .maybeSingle()
 
     if (callerStaffError) throw callerStaffError
-    if (!callerStaff || callerStaff.role !== 'admin') {
+    if (!callerStaff || !['admin', 'system_admin'].includes(callerStaff.role)) {
       return json({ error: "この操作には管理者権限が必要です。" }, 403)
     }
 

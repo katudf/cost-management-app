@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo, useId } from 'react';
 import { ChevronDown, ChevronUp, ClipboardList, Search, Plus, X, Check } from 'lucide-react';
+import { isDisplayableStaff } from '../../utils/constants';
 
 // ============================================================
 // 備考テンプレート一覧 ここにテンプレート文を追加
@@ -422,7 +423,7 @@ const EstimateHeader = ({
                   disabled={disabled}
                 >
                   <option value="">-- 選択 --</option>
-                  {officeStaff.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                  {officeStaff.filter(w => isDisplayableStaff(w) || String(w.id) === String(header.staff_id)).map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
                 </select>
               </div>
 

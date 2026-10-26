@@ -42,7 +42,7 @@ import {
   fetchOfficeStaff,
   fetchSystemSettings,
 } from '../supabaseEstimates';
-import { ITEM_TYPE, ESTIMATE_STATUS, ESTIMATE_STATUS_LABEL } from '../utils/constants';
+import { ITEM_TYPE, ESTIMATE_STATUS, ESTIMATE_STATUS_LABEL, isAdminRole } from '../utils/constants';
 import {
   saveEstimateDraft,
   loadEstimateDraft,
@@ -509,7 +509,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
   const handleLose = (reason) => persistStatus({ status: ESTIMATE_STATUS.LOST, lost_reason: reason });
 
   // 担当者(staff_id)未設定の見積書は作成者チェック対象外とし、誰でも編集可能とする
-  const isCreator = currentStaff?.role === 'admin' || !header.staff_id || String(header.staff_id) === String(currentStaff?.id);
+  const isCreator = isAdminRole(currentStaff?.role) || !header.staff_id || String(header.staff_id) === String(currentStaff?.id);
   const creatorStaff = officeStaff.find(s => String(s.id) === String(header.staff_id)) || null;
 
   // ============================================================

@@ -4,11 +4,12 @@
 
 import React, { useState } from 'react';
 import { Send } from 'lucide-react';
+import { isDisplayableStaff } from '../../utils/constants';
 
 const EstimateSubmitModal = ({ officeStaff, onConfirm, onCancel, saving = false }) => {
   const [staffId, setStaffId] = useState('');
   const canConfirm = !!staffId;
-  const approvers = officeStaff.filter(s => s.is_approver);
+  const approvers = officeStaff.filter(s => s.is_approver && isDisplayableStaff(s));
 
   const handleConfirm = () => {
     if (saving || !canConfirm) return;

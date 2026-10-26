@@ -3,6 +3,7 @@ import { Search, Plus, Edit3, Trash2, Save, X, User, MapPin, Phone, UserCheck, L
 import { useToast } from '../../components/Toast';
 import ConfirmModal from '../ConfirmModal';
 import { useCustomerSettingsData } from '../../hooks/useCustomerSettingsData';
+import { isDisplayableStaff } from '../../utils/constants';
 
 const CustomerSettings = () => {
     const { showToast } = useToast();
@@ -144,7 +145,7 @@ const CustomerSettings = () => {
                                     className="w-full pl-9 pr-4 py-2.5 rounded-lg border-2 border-slate-200 font-bold text-slate-700 outline-none focus:border-blue-500 transition bg-white appearance-none"
                                 >
                                     <option value="">(未設定)</option>
-                                    {staffList.map(s => (
+                                    {staffList.filter(s => isDisplayableStaff(s) || s.name === form.contactPerson).map(s => (
                                         <option key={s.id} value={s.name}>{s.name}</option>
                                     ))}
                                 </select>

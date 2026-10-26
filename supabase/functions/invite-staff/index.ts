@@ -54,7 +54,7 @@ serve(async (req) => {
       .maybeSingle()
 
     if (callerStaffError) throw callerStaffError
-    if (!callerStaff || callerStaff.role !== 'admin') {
+    if (!callerStaff || !['admin', 'system_admin'].includes(callerStaff.role)) {
       return new Response(
         JSON.stringify({ error: "この操作には管理者権限が必要です。" }),
         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }

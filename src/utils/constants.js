@@ -71,22 +71,29 @@ export const ESTIMATE_STATUS_LABEL = {
 // === 担当者ロール（office_staff.role、DBのCHECK制約と一致させること） ===
 export const STAFF_ROLE = {
     ADMIN: 'admin',
+    SYSTEM_ADMIN: 'system_admin',
     OFFICE: 'office',
     WORKER: 'worker',
     VIEWER: 'viewer',
 };
 export const STAFF_ROLE_LABEL = {
-    [STAFF_ROLE.ADMIN]:  '管理者',
+    [STAFF_ROLE.ADMIN]:  '業務管理者',
+    [STAFF_ROLE.SYSTEM_ADMIN]: 'システム管理者',
     [STAFF_ROLE.OFFICE]: '事務・営業',
     [STAFF_ROLE.WORKER]: '作業員',
     [STAFF_ROLE.VIEWER]: '閲覧者',
 };
+// 権限区分の選択肢。SYSTEM_ADMIN はシステムアカウント専用のため含めない。
 export const STAFF_ROLE_LIST = [
     STAFF_ROLE.ADMIN,
     STAFF_ROLE.OFFICE,
     STAFF_ROLE.WORKER,
     STAFF_ROLE.VIEWER,
 ];
+// 管理者権限の判定（業務管理者・システム管理者の両方）。DBの is_admin() と一致させること。
+export const isAdminRole = (role) => role === STAFF_ROLE.ADMIN || role === STAFF_ROLE.SYSTEM_ADMIN;
+// システム管理者アカウントは画面上の一覧・選択肢に表示しない（権限には影響しない）。
+export const isDisplayableStaff = (staff) => staff?.role !== STAFF_ROLE.SYSTEM_ADMIN;
 
 // === 見積アイテム種別 ===
 export const ITEM_TYPE = {

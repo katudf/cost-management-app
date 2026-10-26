@@ -11,7 +11,7 @@ export function useCustomerSettingsData() {
         try {
             const [{ data: cData, error: cErr }, { data: sData, error: sErr }] = await Promise.all([
                 supabase.from('Customers').select('*').order('name', { ascending: true }),
-                supabase.from('office_staff').select('id, name').order('name', { ascending: true }),
+                supabase.from('office_staff').select('id, name, role').order('name', { ascending: true }),
             ]);
 
             if (cErr) throw cErr;

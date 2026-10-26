@@ -2,14 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { Search, Plus, Edit3, Trash2, Save, X, User, Shield, UserCheck, Loader2, Mail, Send, CheckCircle2 } from 'lucide-react';
 import { useToast } from '../../components/Toast';
 import ConfirmModal from '../ConfirmModal';
-import { STAFF_ROLE, STAFF_ROLE_LABEL, STAFF_ROLE_LIST } from '../../utils/constants';
+import { STAFF_ROLE, STAFF_ROLE_LABEL, STAFF_ROLE_LIST, isDisplayableStaff, isAdminRole } from '../../utils/constants';
 import { useStaffSettingsData } from '../../hooks/useStaffSettingsData';
 import { useAuth } from '../../hooks/useAuth';
 
 const StaffSettings = () => {
     const { showToast } = useToast();
     const { currentStaff } = useAuth();
-    const isAdmin = currentStaff?.role === STAFF_ROLE.ADMIN;
+    const isAdmin = isAdminRole(currentStaff?.role);
     const { staffList, isLoading, refetch, createStaff, updateStaff, deleteStaff, inviteStaff } = useStaffSettingsData();
     const [isSaving, setIsSaving] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -91,7 +91,7 @@ const StaffSettings = () => {
         }
     };
 
-    const filteredStaff = staffList.filter(s =>
+    const filteredStaff = staffList.filter(isDisplayableStaff).filter(s =>
         s.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (STAFF_ROLE_LABEL[s.role] || s.role || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
         (s.email || '').toLowerCase().includes(searchQuery.toLowerCase())

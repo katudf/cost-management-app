@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Save, Unlock, ChevronDown, ChevronUp, Lock, UserCheck, Send, Trophy, XCircle } from 'lucide-react';
-import { ESTIMATE_STATUS, ESTIMATE_STATUS_LABEL } from '../../utils/constants';
+import { ESTIMATE_STATUS, ESTIMATE_STATUS_LABEL, isAdminRole } from '../../utils/constants';
 import { formatCurrency } from '../../supabaseEstimates';
 import EstimateApprovalModal from './EstimateApprovalModal';
 import EstimateLostReasonModal from './EstimateLostReasonModal';
@@ -66,7 +66,7 @@ const EstimateSidebar = ({
     && !!header.approver_staff_id
     && currentStaff?.id === header.approver_staff_id;
   // 担当者(staff_id)未設定の見積書は誰でも編集可能。設定済みなら本人のみ「下書きに戻す」が可能。
-  const isCreator = currentStaff?.role === 'admin' || !header.staff_id || String(header.staff_id) === String(currentStaff?.id);
+  const isCreator = isAdminRole(currentStaff?.role) || !header.staff_id || String(header.staff_id) === String(currentStaff?.id);
 
   const handleBadgeClick = (value) => {
     if (saving) return;

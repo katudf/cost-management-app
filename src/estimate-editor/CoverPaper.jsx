@@ -12,6 +12,7 @@
 import React from 'react';
 import { getApproverStampName } from '../utils/estimateApprovalStamp';
 import CustomerCombobox from './CustomerCombobox';
+import { isDisplayableStaff } from '../utils/constants';
 import {
   pt, PAPER_WIDTH, PAPER_HEIGHT, COLORS, page, cover, table,
   fmt, fmtDate, calcFontSize, fitSingleLineFontSize,
@@ -364,7 +365,7 @@ const CoverPaper = ({
                     style={fieldStyle}
                   >
                     <option value="">-- 選択 --</option>
-                    {officeStaff.map(s => (
+                    {officeStaff.filter(s => isDisplayableStaff(s) || String(s.id) === String(header.staff_id)).map(s => (
                       <option key={s.id} value={s.id}>{s.name}</option>
                     ))}
                   </select>
