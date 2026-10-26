@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
+import { PASSWORD_CHANGE_KIND } from '../utils/constants';
 
 const AuthContext = createContext(null);
 
@@ -13,6 +14,8 @@ export const AuthProvider = ({ children }) => {
     // そのたびに再取得して isLoading を立てると各画面がローディング表示に切り替わり、
     // 入力中のフォームがアンマウントされて内容が消えてしまう。ユーザーが変わったときだけ取得する。
     const staffUserIdRef = useRef(null);
+    // 招待リンクからの初回パスワード設定中か。初回設定は変更履歴に記録しない。
+    const isInviteFlowRef = useRef(false);
 
     const fetchCurrentStaff = useCallback(async (authUserId) => {
         if (!authUserId) {
@@ -51,6 +54,7 @@ export const AuthProvider = ({ children }) => {
         const params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
         const isInviteLink = params.get('type') === 'invite';
         if (isInviteLink) {
+            isInviteFlowRef.current = true;
             setIsPasswordRecovery(true);
         }
 
@@ -63,6 +67,7 @@ export const AuthProvider = ({ children }) => {
 
         const { data: listener } = supabase.auth.onAuthStateChange((event, newSession) => {
             if (event === 'PASSWORD_RECOVERY') {
+                isInviteFlowRef.current = false;
                 setIsPasswordRecovery(true);
             }
             if (event === 'SIGNED_IN' && isInviteLink) {
@@ -95,7 +100,23 @@ export const AuthProvider = ({ children }) => {
     const updatePassword = useCallback(async (newPassword) => {
         const { error } = await supabase.auth.updateUser({ password: newPassword });
         if (error) throw error;
+        // システム管理者向けの変更履歴に記録する（日時・端末はサーバー側で取得）。
+        // 記録に失敗してもパスワード変更自体は成功しているため throw せず、
+        // logged: false を返して画面側で知らせる（招待からの初回設定は記録しないので null）。
+        let logged = null;
+        if (!isInviteFlowRef.current) {
+            try {
+                const { error: logError } = await supabase.rpc('log_password_change', { p_kind: PASSWORD_CHANGE_KIND.RECOVERY });
+                if (logError) throw logError;
+                logged = true;
+            } catch (logError) {
+                console.error('パスワード変更履歴の記録に失敗しました:', logError);
+                logged = false;
+            }
+        }
+        isInviteFlowRef.current = false;
         setIsPasswordRecovery(false);
+        return { logged };
     }, []);
 
     const cancelPasswordRecovery = useCallback(() => {

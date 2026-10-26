@@ -94,6 +94,17 @@ export const STAFF_ROLE_LIST = [
 export const isAdminRole = (role) => role === STAFF_ROLE.ADMIN || role === STAFF_ROLE.SYSTEM_ADMIN;
 // システム管理者アカウントは画面上の一覧・選択肢に表示しない（権限には影響しない）。
 export const isDisplayableStaff = (staff) => staff?.role !== STAFF_ROLE.SYSTEM_ADMIN;
+// システム管理者のみ（パスワード変更履歴の閲覧など）。DBの RLS ポリシーと一致させること。
+export const isSystemAdminRole = (role) => role === STAFF_ROLE.SYSTEM_ADMIN;
+
+// === パスワード変更履歴の種別（password_change_logs.kind）===
+// DB の CHECK 制約・log_password_change の検証と一致させること。
+export const PASSWORD_CHANGE_KIND = {
+    RECOVERY: 'recovery',
+};
+export const PASSWORD_CHANGE_KIND_LABEL = {
+    [PASSWORD_CHANGE_KIND.RECOVERY]: '再設定',
+};
 
 // === 見積アイテム種別 ===
 export const ITEM_TYPE = {

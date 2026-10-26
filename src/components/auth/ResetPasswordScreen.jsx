@@ -9,6 +9,7 @@ const ResetPasswordScreen = () => {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
     const [isDone, setIsDone] = useState(false);
+    const [logFailed, setLogFailed] = useState(false);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -25,7 +26,8 @@ const ResetPasswordScreen = () => {
 
         setIsSubmitting(true);
         try {
-            await updatePassword(newPassword);
+            const { logged } = await updatePassword(newPassword);
+            setLogFailed(logged === false);
             setIsDone(true);
         } catch (error) {
             console.error('パスワード更新エラー:', error);
@@ -57,6 +59,12 @@ const ResetPasswordScreen = () => {
                             <CheckCircle2 size={16} className="shrink-0 mt-0.5" />
                             <span>パスワードを更新しました。改めてログインしてください。</span>
                         </div>
+                        {logFailed && (
+                            <div className="flex items-start gap-2 text-amber-700 text-sm bg-amber-50 border border-amber-200 rounded-lg p-3">
+                                <AlertCircle size={16} className="shrink-0 mt-0.5" />
+                                <span>パスワードは更新されましたが、変更履歴の記録に失敗しました。必要に応じてシステム管理者へお知らせください。</span>
+                            </div>
+                        )}
                         <button
                             type="button"
                             onClick={handleBackToLogin}

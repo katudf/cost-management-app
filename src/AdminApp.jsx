@@ -6,13 +6,14 @@ import { useDashboardStats } from './hooks/useDashboardStats';
 
 import { useToast } from './components/Toast';
 import { useAuth } from './hooks/useAuth';
+import { usePasswordChangeLogUnread } from './hooks/usePasswordChangeLogs';
 import LoginScreen from './components/auth/LoginScreen';
 import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
 import HomeLanding from './components/HomeLanding';
 import logoUrl from './img/kimura-logo.svg';
 import { Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, GripVertical, LogOut, Bell, Database } from 'lucide-react';
 import { buildWeekDays, buildWeekPrefix, fetchWeeklyReportData } from './hooks/useWeeklyReportData';
-import { DEFAULT_MASTER_DATA, PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR, ITEM_TYPE, DASHBOARD_VIEW_MODE, DASHBOARD_VIEW_MODE_LIST, ESTIMATE_STATUS } from './utils/constants';
+import { DEFAULT_MASTER_DATA, PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR, ITEM_TYPE, DASHBOARD_VIEW_MODE, DASHBOARD_VIEW_MODE_LIST, ESTIMATE_STATUS, isSystemAdminRole } from './utils/constants';
 import { calculateAge } from './utils/dateUtils';
 import { exportToExcel, generateWorkerReportExcel, generateMultipleWorkersReportExcel } from './utils/excelExportUtils';
 import { generateWorkerReportPDF, generateMultipleWorkersReportPDF } from './utils/pdfExportUtils';
@@ -64,6 +65,10 @@ const App = () => {
     const pendingRequestCount = estimatesForBadge.filter(
         e => e.status === ESTIMATE_STATUS.PENDING && e.staff_id === currentStaff?.id
     ).length;
+
+    // パスワード変更履歴の未読件数（システム管理者のみ。設定タブのバッジ用）
+    const { unreadCount: unreadPasswordLogCount, refreshUnread: refreshPasswordLogUnread } =
+        usePasswordChangeLogUnread(isSystemAdminRole(currentStaff?.role));
 
 
     const [activeProjectId, setActiveProjectId] = useState(null);
@@ -461,6 +466,11 @@ const App = () => {
                                                 {pendingApprovalCount + pendingRequestCount}
                                             </span>
                                         )}
+                                        {key === 'settings' && unreadPasswordLogCount > 0 && (
+                                            <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold leading-none">
+                                                {unreadPasswordLogCount}
+                                            </span>
+                                        )}
                                     </button>
                                 ))}
                             </nav>
@@ -824,6 +834,7 @@ const App = () => {
                             setIsLoading={setIsLoading}
                             workers={workers}
                             fetchAllData={fetchAllData}
+                            onPasswordLogsViewed={refreshPasswordLogUnread}
                         />
                     )}
 

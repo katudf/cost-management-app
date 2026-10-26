@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Save, CheckCircle2, Award, Activity, UserCheck, Building2, MessageSquare, Share2 } from 'lucide-react';
+import { Settings, Save, CheckCircle2, Award, Activity, UserCheck, Building2, MessageSquare, Share2, KeyRound } from 'lucide-react';
 import { useSystemSettings } from '../../hooks/useSystemSettings';
 import { useToast } from '../../components/Toast';
 import { getDailyApiUsage } from '../../utils/aiOptimizeUtils';
@@ -10,6 +10,9 @@ import CertificationManager from './settings/CertificationManager';
 import CompanyInfoSettings from './settings/CompanyInfoSettings';
 import LineWorksSettings from './settings/LineWorksSettings';
 import ScheduleShareSettings from './settings/ScheduleShareSettings';
+import PasswordChangeLogs from './settings/PasswordChangeLogs';
+import { useAuth } from '../../hooks/useAuth';
+import { isSystemAdminRole } from '../../utils/constants';
 
 const SystemSettingsTab = ({ 
     hourlyWage, 
@@ -19,9 +22,12 @@ const SystemSettingsTab = ({
     isLoading, 
     setIsLoading, 
     workers = [], 
-    fetchAllData 
+    fetchAllData,
+    onPasswordLogsViewed
 }) => {
     const { showToast } = useToast();
+    const { currentStaff } = useAuth();
+    const isSystemAdmin = isSystemAdminRole(currentStaff?.role);
     const {
         localWage, setLocalWage,
         validDays, setValidDays,
@@ -30,7 +36,7 @@ const SystemSettingsTab = ({
     } = useSystemSettings({ hourlyWage, onHourlyWageSaved: setHourlyWage });
     const [showSuccess, setShowSuccess] = useState(false);
     const [apiUsage, setApiUsage] = useState(null);
-    const [activeSubTab, setActiveSubTab] = useState('general'); // 'general', 'calendar', 'certs', 'customers', 'company', 'lineworks', 'scheduleShare'
+    const [activeSubTab, setActiveSubTab] = useState('general'); // 'general', 'calendar', 'certs', 'customers', 'company', 'lineworks', 'scheduleShare', 'passwordLogs'
 
     useEffect(() => {
         setApiUsage(getDailyApiUsage());
@@ -102,6 +108,14 @@ const SystemSettingsTab = ({
                 >
                     <Share2 size={18} /> 配置表共有
                 </button>
+                {isSystemAdmin && (
+                    <button
+                        onClick={() => setActiveSubTab('passwordLogs')}
+                        className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all ${activeSubTab === 'passwordLogs' ? 'bg-blue-600 text-white shadow-md shadow-blue-200' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}
+                    >
+                        <KeyRound size={18} /> パスワード変更履歴
+                    </button>
+                )}
             </div>
 
             {activeSubTab === 'general' && (
@@ -292,6 +306,10 @@ const SystemSettingsTab = ({
 
             {activeSubTab === 'scheduleShare' && (
                 <ScheduleShareSettings />
+            )}
+
+            {activeSubTab === 'passwordLogs' && isSystemAdmin && (
+                <PasswordChangeLogs onViewed={onPasswordLogsViewed} />
             )}
         </div>
     );
