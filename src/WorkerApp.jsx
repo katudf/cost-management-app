@@ -598,7 +598,17 @@ const WorkerApp = () => {
         setHasUnsavedChanges(true);
         setTasks(prev => prev.map(t => {
             if (t.id !== taskId) return t;
-            return { ...t, time_slots: t.time_slots.map(s => s.slot_id === slotId ? { ...s, [field]: value } : s) };
+            return {
+                ...t, time_slots: t.time_slots.map(s => {
+                    if (s.slot_id !== slotId) return s;
+                    const next = { ...s, [field]: value };
+                    // 時刻を変えたら翌日フラグを読み込み時と同じ規則で付け直す（チェックボックスで上書き可）
+                    if (field === 'start_time' || field === 'end_time') {
+                        next.is_overnight = next.start_time > next.end_time && next.end_time !== '';
+                    }
+                    return next;
+                })
+            };
         }));
     };
 
