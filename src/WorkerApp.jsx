@@ -43,6 +43,18 @@ import { fetchCompanyHolidays } from './hooks/useCompanyHolidays';
 import { generateMultipleWorkersReportPDF } from './utils/pdfExportUtils';
 import { buildWeekDays, buildWeekPrefix, fetchWorkerReportData } from './hooks/useWeeklyReportData';
 
+// 同じ日に別現場で記録した作業時間の合計。netWorkHours / hours は残業を含むため、残業は足さない。
+const sumOtherProjectsHours = (records, projectId, date, breakDurations) => records
+    .filter(r => String(r.project_id) !== String(projectId))
+    .reduce((s, r) => {
+        if (r.start_time && r.end_time) {
+            const startTime = formatTimeDisplay(r.start_time);
+            const endTime = formatTimeDisplay(r.end_time);
+            return s + calculateWorkHours(startTime, endTime, date, startTime > endTime && endTime !== '', breakDurations).netWorkHours;
+        }
+        return s + (Number(r.hours) || 0);
+    }, 0);
+
 const WorkerApp = () => {
     const { showToast } = useToast();
     const { confirm, prompt } = useConfirm();
@@ -75,6 +87,10 @@ const WorkerApp = () => {
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
     const [isOnline, setIsOnline] = useState(navigator.onLine);
     const [isSyncingQueue, setIsSyncingQueue] = useState(false);
+    // 下書き復元の世代番号。読み込み開始後に復元された場合は、その読み込み結果で入力内容を上書きしない。
+    const restoreSeqRef = useRef(0);
+    // 復元で現場・日付が切り替わった場合、切替後の読み込みで復元内容を上書きしないための目印。
+    const pendingRestoreRef = useRef(null);
 
     const [selectedDate, setSelectedDate] = useState(() => toDateStr(new Date()));
 
@@ -174,17 +190,28 @@ const WorkerApp = () => {
     // 休憩設定は現場をまたいで共有するため、作業員・日付単位で取得する。
     useEffect(() => {
         let active = true;
-        setIsLoadingBreakSettings(true);
-        setDailyBreakSettings(null);
         setIsBreakSettingsExpanded(false);
         if (!loggedInWorker || !selectedDate) {
+            setDailyBreakSettings(null);
             setIsLoadingBreakSettings(false);
             return () => { active = false; };
         }
+        // 下書き復元で日付が切り替わった直後は、復元した休憩設定を保持する
+        const pending = pendingRestoreRef.current;
+        if (pending && !pending.breakApplied && pending.date === selectedDate) {
+            pending.breakApplied = true;
+            if (pending.loadApplied) pendingRestoreRef.current = null;
+            setIsLoadingBreakSettings(false);
+            return () => { active = false; };
+        }
+        setIsLoadingBreakSettings(true);
+        setDailyBreakSettings(null);
+        const startSeq = restoreSeqRef.current;
         fetchWithCache(`worker-break-settings-${loggedInWorker.name}-${selectedDate}`,
             () => fetchWorkerDailyBreakSettingsResult(loggedInWorker.name, selectedDate)
         ).then(({ data }) => {
             if (!active) return;
+            if (restoreSeqRef.current !== startSeq) return;
             const standard = getSeasonConfig(selectedDate).breaks.map(brk => brk.e - brk.s);
             const saved = Array.isArray(data?.break_durations) ? data.break_durations : standard;
             setDailyBreakSettings({ workerName: loggedInWorker.name, date: selectedDate, durations: saved });
@@ -202,6 +229,18 @@ const WorkerApp = () => {
     // Load tasks when project is selected
     useEffect(() => {
         if (!selectedProjectId || !loggedInWorker) { setTasks([]); return; }
+
+        // 切替後に古い応答が届いても反映しないためのフラグ
+        let active = true;
+        const startSeq = restoreSeqRef.current;
+        // 下書き復元で現場・日付が切り替わった直後の読み込みでは、復元した入力内容を上書きしない
+        let keepRestoredInputs = false;
+        const pending = pendingRestoreRef.current;
+        if (pending && !pending.loadApplied && pending.projectId === String(selectedProjectId) && pending.date === selectedDate) {
+            pending.loadApplied = true;
+            if (pending.breakApplied) pendingRestoreRef.current = null;
+            keepRestoredInputs = true;
+        }
 
         const loadProjectDetails = async () => {
             setIsLoading(true);
@@ -229,6 +268,8 @@ const WorkerApp = () => {
                         tData = insertedData;
                     }
                 }
+
+                if (!active) return;
 
                 const { data: rData } = await fetchWithCache(`task-records-${selectedProjectId}-${loggedInWorker.name}-${targetDate}`,
                     () => fetchTaskRecordsResult(selectedProjectId, loggedInWorker.name, targetDate)
@@ -262,25 +303,32 @@ const WorkerApp = () => {
                     };
                 });
 
-                setTasks(applyTaskOrder(mappedTasks, selectedProjectId));
-                setSubcontractors(sData || []);
-                setDeletedSubcontractorIds([]);
-                setHasUnsavedChanges(false);
+                if (!active) return;
+                // 読み込み中に下書きが復元された場合も、復元内容を優先する
+                if (!keepRestoredInputs && restoreSeqRef.current === startSeq) {
+                    setTasks(applyTaskOrder(mappedTasks, selectedProjectId));
+                    setSubcontractors(sData || []);
+                    setDeletedSubcontractorIds([]);
+                    setHasUnsavedChanges(false);
+                }
 
                 // 既存の残業理由を読み込む（その現場・その日・この作業員）
                 try {
                     const reason = await fetchApprovalReason(selectedProjectId, loggedInWorker.name, selectedDate);
-                    setOvertimeReason(reason);
-                } catch (e) { setOvertimeReason(''); }
+                    if (active) setOvertimeReason(reason);
+                } catch (e) { if (active) setOvertimeReason(''); }
+                if (!active) return;
 
                 if (project && project.foreman_worker_id === loggedInWorker.id) {
                     const { data: allRecords } = await fetchWithCache(`all-task-records-${selectedProjectId}`,
                         () => fetchAllProjectRecordsResult(selectedProjectId)
                     );
+                    if (!active) return;
                     setAllProjectRecords(allRecords || []);
                     const { data: allSubData } = await fetchWithCache(`all-subcontractor-records-${selectedProjectId}`,
                         () => fetchAllSubcontractorRecordsResult(selectedProjectId)
                     );
+                    if (!active) return;
                     setAllSubcontractorRecords(allSubData || []);
                 } else {
                     setAllProjectRecords([]);
@@ -289,10 +337,11 @@ const WorkerApp = () => {
             } catch (error) {
                 console.error('Error loading project details:', error);
             } finally {
-                setIsLoading(false);
+                if (active) setIsLoading(false);
             }
         };
         loadProjectDetails();
+        return () => { active = false; };
     }, [selectedProjectId, loggedInWorker, selectedDate]);
 
     // 職長が担当する全現場の承認待ち残業を読み込む
@@ -825,6 +874,17 @@ const WorkerApp = () => {
             variant: 'primary',
         });
         if (!ok) return;
+        // 読み込み中の応答や、現場・日付の切替に伴う再読み込みで復元内容が上書きされないようにする
+        restoreSeqRef.current += 1;
+        const sameDate = draft.selectedDate === selectedDate;
+        const sameProject = String(draft.selectedProjectId) === String(selectedProjectId);
+        pendingRestoreRef.current = (sameDate && sameProject) ? null : {
+            projectId: String(draft.selectedProjectId),
+            date: draft.selectedDate,
+            loadApplied: sameDate && sameProject,
+            breakApplied: sameDate,
+        };
+        setIsLoadingBreakSettings(false);
         setSelectedProjectId(draft.selectedProjectId);
         setSelectedDate(draft.selectedDate);
         setTasks(applyTaskOrder(draft.tasks || [], draft.selectedProjectId));
@@ -963,7 +1023,9 @@ const WorkerApp = () => {
             const deleteIds = [];          // 削除する TaskRecords の id
             const updateOps = [];          // { id, data } 更新対象
             const insertPayloads = [];     // 新規 insert する行
-            const insertSlotRefs = [];     // insertPayloads と並列：返り id を書き戻すスロット参照
+            const insertSlotKeys = [];     // insertPayloads と並列：返り id を書き戻すスロットのキー
+            const clearedSlotKeys = new Set(); // 空にされ、既存レコードを削除するスロットのキー
+            const slotKey = (taskId, slotId) => `${taskId}:${slotId}`;
 
             for (let i = 0; i < tasks.length; i++) {
                 const t = tasks[i];
@@ -980,7 +1042,7 @@ const WorkerApp = () => {
                         // 空スロットで既存レコードがある場合は削除
                         if (slot.record_id) {
                             deleteIds.push(slot.record_id);
-                            slot.record_id = null;
+                            clearedSlotKeys.add(slotKey(t.id, slot.slot_id));
                         }
                         continue;
                     }
@@ -1004,7 +1066,7 @@ const WorkerApp = () => {
                             date: targetDate,
                             worker_name: loggedInWorker.name,
                         });
-                        insertSlotRefs.push(slot);
+                        insertSlotKeys.push(slotKey(t.id, slot.slot_id));
                     }
                 }
             }
@@ -1048,10 +1110,7 @@ const WorkerApp = () => {
                 }
             }
 
-            // 削除 → 更新 → 追加 → 協力業者 を1つの保存トランザクションとして実行
-            await saveWorkerDailyBreakSettings(loggedInWorker.name, targetDate, effectiveBreakDurations);
-            setDailyBreakSettings({ workerName: loggedInWorker.name, date: targetDate, durations: effectiveBreakDurations });
-
+            // 削除 → 更新 → 追加 → 協力業者 をまとめて保存する（休憩設定は別保存で、日報の保存成功後に行う）
             const insertedRecords = await saveDailyReport({
                 deleteIds,
                 updateOps,
@@ -1064,10 +1123,34 @@ const WorkerApp = () => {
                 subcontractorInsertPayloads: subInsertPayloads,
             });
 
-            // 返り順は入力順と一致するため id を書き戻す
+            // 返り順は入力順と一致するため id を書き戻す（state は直接書き換えず、新しいオブジェクトで更新する）
+            const insertedIdByKey = new Map();
             insertedRecords.forEach((row, k) => {
-                if (insertSlotRefs[k]) insertSlotRefs[k].record_id = row.id;
+                if (insertSlotKeys[k]) insertedIdByKey.set(insertSlotKeys[k], row.id);
             });
+            const savedTaskIds = new Set(tasks.map(t => t.id));
+            setTasks(prev => prev.map(t => {
+                if (!savedTaskIds.has(t.id)) return t;
+                return {
+                    ...t,
+                    deleted_record_ids: [],
+                    time_slots: t.time_slots.map(s => {
+                        const key = slotKey(t.id, s.slot_id);
+                        if (insertedIdByKey.has(key)) return { ...s, record_id: insertedIdByKey.get(key) };
+                        if (clearedSlotKeys.has(key)) return { ...s, record_id: null };
+                        return s;
+                    }),
+                };
+            }));
+
+            // 休憩設定は日報とは別テーブルのため、日報の保存後に保存する。失敗しても日報の保存は成功扱い。
+            try {
+                await saveWorkerDailyBreakSettings(loggedInWorker.name, targetDate, effectiveBreakDurations);
+                setDailyBreakSettings({ workerName: loggedInWorker.name, date: targetDate, durations: effectiveBreakDurations });
+            } catch (e) {
+                console.error('Break settings save error:', e);
+                showToast('日報は保存しましたが、休憩設定の保存に失敗しました。もう一度送信してください。', 'warning');
+            }
 
             // 残業承認の同期（その日・その現場・この作業員の残業合計で起票/更新/削除）
             try {
@@ -1114,8 +1197,10 @@ const WorkerApp = () => {
             }
 
             // リフレッシュ（保存は成功済み。失敗しても保存自体は成功扱いにする）
+            let latestDailyRecords = dailyRecordsForBreakRecalc;
             try {
-                setWorkerDailyAllRecords(await fetchWorkerDailyRecords(loggedInWorker.name, targetDate));
+                latestDailyRecords = await fetchWorkerDailyRecords(loggedInWorker.name, targetDate);
+                setWorkerDailyAllRecords(latestDailyRecords);
             } catch (e) {
                 console.error('Refresh after submit failed:', e);
                 showToast('保存しましたが、一覧の更新に失敗しました。再読み込みしてください。', 'warning');
@@ -1129,7 +1214,10 @@ const WorkerApp = () => {
                 const labels = ['10時', '昼', '15時'];
                 return `${labels[index]}${duration}分`;
             }).join('・');
-            setSaveMessage(`日報を送信しました｜本日合計 ${totalDailyHours.toFixed(1)}h｜休憩 ${breakSummary}`);
+            // 描画時の totalDailyHours は送信開始時点の値なので、保存した内容と最新の他現場実績から計算し直す
+            const savedDailyHours = tasksWithCalculation.reduce((sum, tc) => sum + (tc.total_hours || 0), 0)
+                + sumOtherProjectsHours(latestDailyRecords, selectedProjectId, targetDate, effectiveBreakDurations);
+            setSaveMessage(`日報を送信しました｜本日合計 ${savedDailyHours.toFixed(1)}h｜休憩 ${breakSummary}`);
             setTimeout(() => setSaveMessage(''), 5000);
         } catch (error) {
             console.error('Submit error:', error);
@@ -1140,6 +1228,7 @@ const WorkerApp = () => {
                     tasks,
                     subcontractors,
                     deletedSubcontractorIds,
+                    breakDurations: effectiveBreakDurations,
                 });
                 setDraftQueue(prev => upsertIntoQueue(prev, entry));
                 if (saved) {
@@ -1224,17 +1313,7 @@ const WorkerApp = () => {
     const totalInputOvertimeHours = tasksWithCalculation.reduce((s, t) => s + (t.total_overtime || 0), 0);
     const currentSiteNinku = calculateNinku(totalInputHours, selectedDate);
 
-    const otherProjectsHours = workerDailyAllRecords
-        .filter(r => String(r.project_id) !== String(selectedProjectId))
-        .reduce((s, r) => {
-            if (r.start_time && r.end_time) {
-                const startTime = formatTimeDisplay(r.start_time);
-                const endTime = formatTimeDisplay(r.end_time);
-                const calculated = calculateWorkHours(startTime, endTime, selectedDate, startTime > endTime && endTime !== '', effectiveBreakDurations);
-                return s + calculated.netWorkHours + calculated.overtimeHours;
-            }
-            return s + (Number(r.hours) || 0) + (Number(r.overtime_hours) || 0);
-        }, 0);
+    const otherProjectsHours = sumOtherProjectsHours(workerDailyAllRecords, selectedProjectId, selectedDate, effectiveBreakDurations);
     const totalDailyHours = totalInputHours + otherProjectsHours;
 
 
