@@ -20,6 +20,7 @@ import {
 } from './hooks/useDailyReport';
 import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2, PlusCircle, Clock, X, Wifi, WifiOff, FileText, CalendarDays, CopyPlus, GripVertical, ChevronDown } from 'lucide-react';
 import WorkerAssignmentView from './components/worker/WorkerAssignmentView';
+import QuarterTimeSelect from './components/worker/QuarterTimeSelect';
 import { useAuth } from './hooks/useAuth';
 import LoginScreen from './components/auth/LoginScreen';
 import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
@@ -1753,16 +1754,14 @@ const WorkerApp = () => {
                                                 <div className="flex items-center gap-2">
                                                     <div className="flex-1">
                                                         {slotIdx === 0 && <label className="block text-[10px] font-bold text-slate-400 mb-1">開始</label>}
-                                                        <input type="time" step="900" value={slot.start_time || ''}
-                                                            onChange={(e) => updateSlotField(t.id, slot.slot_id, 'start_time', e.target.value)}
-                                                            className="w-full h-12 text-center text-lg font-bold text-blue-600 bg-blue-50 border-2 border-blue-100 rounded-xl outline-none focus:border-blue-400 transition" />
+                                                        <QuarterTimeSelect value={slot.start_time} label="開始時刻"
+                                                            onChange={(v) => updateSlotField(t.id, slot.slot_id, 'start_time', v)} />
                                                     </div>
                                                     <span className={`text-slate-400 font-black text-lg ${slotIdx === 0 ? 'mt-5' : ''}`}>〜</span>
                                                     <div className="flex-1">
                                                         {slotIdx === 0 && <label className="block text-[10px] font-bold text-slate-400 mb-1">終了</label>}
-                                                        <input type="time" step="900" value={slot.end_time || ''}
-                                                            onChange={(e) => updateSlotField(t.id, slot.slot_id, 'end_time', e.target.value)}
-                                                            className="w-full h-12 text-center text-lg font-bold text-blue-600 bg-blue-50 border-2 border-blue-100 rounded-xl outline-none focus:border-blue-400 transition" />
+                                                        <QuarterTimeSelect value={slot.end_time} label="終了時刻"
+                                                            onChange={(v) => updateSlotField(t.id, slot.slot_id, 'end_time', v)} />
                                                     </div>
                                                     <div className={`flex flex-col justify-center ${slotIdx === 0 ? 'mt-5' : ''}`}>
                                                         <label className="flex items-center gap-1 bg-white border-2 border-slate-200 px-2 h-12 rounded-xl cursor-pointer hover:bg-slate-50 transition">
