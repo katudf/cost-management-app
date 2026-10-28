@@ -22,6 +22,7 @@ const EMPTY_OBJECT = {};
 // Excel出力で指定できる最大日数
 const MAX_EXPORT_DAYS = 366;
 const DAY_MS = 1000 * 60 * 60 * 24;
+const WEEK_BORDER = '2px solid #64748B';
 
 const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTab, setActiveProjectId, setProjects, customers }) => {
     const { showToast } = useToast();
@@ -53,7 +54,6 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         activeWorkers,
         customerMap,
         dateColumns,
-        weekGroups,
         todayStr,
         projectMap,
         allProjects,
@@ -95,7 +95,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
     });
 
     // 日付ヘッダーのスタイルを列ごとに事前計算（セルごとの再計算を排除）
-    const dayHeaderInfo = useMemo(() => dateColumns.map(col => {
+    const dayHeaderInfo = useMemo(() => dateColumns.map((col, i) => {
         const registered = holidayMap[col.dateStr];
         const isToday = col.dateStr === todayStr;
         let bg = null;
@@ -105,7 +105,9 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         } else if (col.dow === 6) {
             bg = '#DBEAFE'; color = '#2563EB';
         }
-        return { bg, color, isToday };
+        // 週の区切り線
+        const isWeekStart = i > 0 && dateColumns[i - 1].weekIdx !== col.weekIdx;
+        return { bg, color, isToday, isWeekStart };
     }), [dateColumns, holidayMap, todayStr]);
 
     const handleNameMouseLeave = useCallback(() => setHoverProjectStats(null), [setHoverProjectStats]);
@@ -285,21 +287,10 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                         <tr>
                             <th
                                 className="sticky left-0 z-20 bg-slate-700 text-white text-xs font-bold p-2 border border-slate-600"
-                                rowSpan={3}
+                                rowSpan={2}
                             >
                                 現場名
                             </th>
-                            {weekGroups.map((wg, wi) => (
-                                <th
-                                    key={wi}
-                                    colSpan={wg.days.length}
-                                    className="bg-slate-700 text-white text-[10px] font-bold p-1 border border-slate-600 text-center"
-                                >
-                                    {wg.label}〜
-                                </th>
-                            ))}
-                        </tr>
-                        <tr>
                             {dateColumns.map((col, i) => {
                                 const info = dayHeaderInfo[i];
                                 return (
@@ -308,10 +299,11 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                         className="text-[10px] font-bold p-1 border border-slate-300 text-center"
                                         style={{
                                             backgroundColor: info.isToday ? '#2563EB' : (info.bg || '#F8FAFC'),
-                                            color: info.isToday ? 'white' : undefined
+                                            color: info.isToday ? 'white' : undefined,
+                                            ...(info.isWeekStart ? { borderLeft: WEEK_BORDER } : {})
                                         }}
                                     >
-                                        <div style={{ color: info.isToday ? 'white' : (info.color || undefined) }}>{col.day}</div>
+                                        <div className="whitespace-nowrap" style={{ color: info.isToday ? 'white' : (info.color || undefined) }}>{col.label}</div>
                                         <div style={{ color: info.isToday ? '#BFDBFE' : (info.color || '#64748B') }}>
                                             {col.dowLabel}
                                         </div>
@@ -328,7 +320,10 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                     <th
                                         key={i}
                                         className="p-0.5 border border-slate-300 text-center align-middle"
-                                        style={{ backgroundColor: info.isToday ? '#DBEAFE' : (info.bg || '#F8FAFC') }}
+                                        style={{
+                                            backgroundColor: info.isToday ? '#DBEAFE' : (info.bg || '#F8FAFC'),
+                                            ...(info.isWeekStart ? { borderLeft: WEEK_BORDER } : {})
+                                        }}
                                     >
                                         {weather ? (
                                             <img
@@ -395,13 +390,14 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                 return (
                                     <td
                                         key={i}
-                                        className="text-[10px] font-bold p-1 border border-slate-600 text-center"
+                                        className="text-[10px] font-bold p-1 border border-slate-600 text-center whitespace-nowrap"
                                         style={{
                                             backgroundColor: info.isToday ? '#2563EB' : (info.bg || '#334155'),
-                                            color: info.isToday ? 'white' : (info.color || 'white')
+                                            color: info.isToday ? 'white' : (info.color || 'white'),
+                                            ...(info.isWeekStart ? { borderLeft: WEEK_BORDER } : {})
                                         }}
                                     >
-                                        {col.day}
+                                        {col.label}
                                     </td>
                                 );
                             })}
@@ -452,7 +448,8 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                         className={`border p-0 text-center align-middle cursor-pointer transition-colors relative ${isEditingEvent ? 'border-2 border-slate-500' : 'border-slate-300 hover:bg-slate-200/50'}`}
                                         style={{
                                             backgroundColor: isEditingEvent ? '#E2E8F0' : bgColor,
-                                            height: '24px'
+                                            height: '24px',
+                                            ...(dayHeaderInfo[i].isWeekStart && !isEditingEvent ? { borderLeft: WEEK_BORDER } : {})
                                         }}
                                         title={holidayObj?.description || undefined}
                                     >

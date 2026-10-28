@@ -29,7 +29,7 @@ export const exportAssignmentChartToExcel = (
     // 行2: ===案件バーチャート ヘッダー===
     const barHeader = ['現場名'];
     dateColumns.forEach(col => {
-        barHeader.push(`${col.month}/${col.day}(${col.dowLabel})`);
+        barHeader.push(`${col.label}(${col.dowLabel})`);
     });
     sheetData.push(barHeader);
 

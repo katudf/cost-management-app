@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import { toDateStr, addDays, getMonday, buildDateColumns, buildWeekGroups } from '../utils/dateUtils';
+import { toDateStr, addDays, getMonday, buildDateColumns } from '../utils/dateUtils';
 import { DEFAULT_COLORS, PROJECT_STATUS } from '../utils/constants';
 import { fetchCompanyHolidays, deleteCompanyHoliday, upsertCompanyHoliday } from './useCompanyHolidays';
 import { isActualHoliday, HOLIDAY_DESCRIPTION } from '../utils/holidayUtils';
@@ -171,8 +171,6 @@ export function useAssignmentState({
     // 日付配列
     const dateColumns = useMemo(() => buildDateColumns(startDate, totalDays), [startDate, totalDays]);
 
-    // 週グループ
-    const weekGroups = useMemo(() => buildWeekGroups(dateColumns), [dateColumns]);
 
     // ===== データ取得 =====
     // 期間に依存しないマスタ系データ（案件バー・会社休日・休工期間）
@@ -1239,7 +1237,6 @@ export function useAssignmentState({
         activeWorkers,
         customerMap,
         dateColumns,
-        weekGroups,
         todayStr,
         projectMap,
         allProjects,

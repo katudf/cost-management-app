@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useToast } from '../components/Toast';
 import { fetchWithCache } from '../utils/offlineCache';
 import { fetchCompanyHolidaysResult } from './useCompanyHolidays';
-import { toDateStr, addDays, getMonday, buildDateColumns, buildWeekGroups } from '../utils/dateUtils';
+import { toDateStr, addDays, getMonday, buildDateColumns } from '../utils/dateUtils';
 import { DEFAULT_COLORS } from '../utils/constants';
 
 // 作業員向け配置表（閲覧専用）の表示期間: 表示開始週の月曜から4週間（初期表示は今週）
@@ -73,7 +73,6 @@ export function useWorkerAssignments({ workers, projects, loggedInWorker }) {
     }, [startStr, endStr, todayStr, isDefaultPeriod, showToast]);
 
     const dateColumns = useMemo(() => buildDateColumns(startDate, TOTAL_DAYS), [startDate]);
-    const weekGroups = useMemo(() => buildWeekGroups(dateColumns), [dateColumns]);
 
     const holidayMap = useMemo(() => {
         const map = {};
@@ -139,7 +138,6 @@ export function useWorkerAssignments({ workers, projects, loggedInWorker }) {
         movePeriod,
         goToToday,
         dateColumns,
-        weekGroups,
         holidayMap,
         projectMap,
         assignmentLookup,

@@ -36,7 +36,6 @@ const WorkerAssignmentView = ({ workers, projects, loggedInWorker, onClose }) =>
         movePeriod,
         goToToday,
         dateColumns,
-        weekGroups,
         holidayMap,
         projectMap,
         assignmentLookup,
@@ -57,6 +56,9 @@ const WorkerAssignmentView = ({ workers, projects, loggedInWorker, onClose }) =>
 
     // 会社行事（会議・自由記入）は休日扱いにしない（管理者版と同じ判定）
     const isHolidayColumn = (col) => isNonWorkingDay(col.dow, holidayMap[col.dateStr]);
+
+    // 週の変わり目に太い左ボーダー（管理者版と同じ）
+    const weekBorder = (i) => (i > 0 && dateColumns[i - 1].weekIdx !== dateColumns[i].weekIdx ? { borderLeft: '2px solid #64748B' } : {});
 
     // セルの表示アイテムを組み立てる（過去日は日報実績を優先、管理者版と同じルール）
     const buildCellItems = (workerId, col) => {
@@ -92,7 +94,7 @@ const WorkerAssignmentView = ({ workers, projects, loggedInWorker, onClose }) =>
         if (items.length === 0) return;
         setDetail({
             workerName: worker.name,
-            dateLabel: `${col.month}/${col.day}（${col.dowLabel}）`,
+            dateLabel: `${col.label}（${col.dowLabel}）`,
             items,
         });
     };
@@ -112,7 +114,7 @@ const WorkerAssignmentView = ({ workers, projects, loggedInWorker, onClose }) =>
                     <span className="font-bold text-lg">配置表</span>
                     {dateColumns.length > 0 && (
                         <span className="text-[11px] text-blue-100">
-                            {dateColumns[0].month}/{dateColumns[0].day} 〜 {dateColumns[dateColumns.length - 1].month}/{dateColumns[dateColumns.length - 1].day}（閲覧のみ）
+                            {dateColumns[0].label} 〜 {dateColumns[dateColumns.length - 1].label}（閲覧のみ）
                         </span>
                     )}
                 </div>
@@ -175,23 +177,10 @@ const WorkerAssignmentView = ({ workers, projects, loggedInWorker, onClose }) =>
                             <tr>
                                 <th
                                     className="sticky left-0 top-0 z-30 bg-slate-700 text-white text-xs font-bold p-2 border border-slate-600"
-                                    rowSpan={2}
                                 >
                                     作業員
                                 </th>
-                                {weekGroups.map((wg, wi) => (
-                                    <th
-                                        key={wi}
-                                        colSpan={wg.days.length}
-                                        className="sticky top-0 z-20 bg-slate-700 text-white text-[10px] font-bold p-1 border border-slate-600 text-center"
-                                        style={{ height: 24 }}
-                                    >
-                                        {wg.label}〜
-                                    </th>
-                                ))}
-                            </tr>
-                            <tr>
-                                {dateColumns.map((col) => {
+                                {dateColumns.map((col, i) => {
                                     const holiday = isHolidayColumn(col);
                                     const isToday = col.dateStr === todayStr;
                                     let bg = '#F8FAFC';
@@ -201,14 +190,15 @@ const WorkerAssignmentView = ({ workers, projects, loggedInWorker, onClose }) =>
                                     return (
                                         <th
                                             key={col.dateStr}
-                                            className="sticky z-20 text-[10px] font-bold p-1 border border-slate-200 text-center"
+                                            className="sticky z-20 text-[10px] font-bold p-1 border border-slate-200 text-center whitespace-nowrap"
                                             style={{
-                                                top: 24,
+                                                top: 0,
                                                 backgroundColor: isToday ? '#2563EB' : bg,
                                                 color: isToday ? 'white' : color,
+                                                ...weekBorder(i),
                                             }}
                                         >
-                                            <div>{col.day}</div>
+                                            <div>{col.label}</div>
                                             <div style={{ color: isToday ? '#BFDBFE' : (color || '#64748B') }}>{col.dowLabel}</div>
                                         </th>
                                     );
@@ -222,14 +212,14 @@ const WorkerAssignmentView = ({ workers, projects, loggedInWorker, onClose }) =>
                                 >
                                     行事/休日
                                 </td>
-                                {dateColumns.map((col) => {
+                                {dateColumns.map((col, i) => {
                                     const holidayObj = holidayMap[col.dateStr];
                                     const bgColor = getHolidayStyle(holidayObj)?.bgColor ?? 'transparent';
                                     return (
                                         <td
                                             key={col.dateStr}
                                             className="border border-slate-200 p-0.5 text-center text-[9px] font-bold text-slate-700 truncate"
-                                            style={{ backgroundColor: bgColor, overflow: 'hidden' }}
+                                            style={{ backgroundColor: bgColor, overflow: 'hidden', ...weekBorder(i) }}
                                             title={holidayObj?.description || ''}
                                         >
                                             {holidayObj?.description || ''}
@@ -249,7 +239,7 @@ const WorkerAssignmentView = ({ workers, projects, loggedInWorker, onClose }) =>
                                         >
                                             {worker.name}
                                         </td>
-                                        {dateColumns.map((col) => {
+                                        {dateColumns.map((col, i) => {
                                             const items = buildCellItems(worker.id, col);
                                             const isToday = col.dateStr === todayStr;
                                             const { isWeekend } = col;
@@ -263,7 +253,7 @@ const WorkerAssignmentView = ({ workers, projects, loggedInWorker, onClose }) =>
                                                 <td
                                                     key={col.dateStr}
                                                     className="border border-slate-200 p-0 align-middle"
-                                                    style={{ backgroundColor: cellBg, overflow: 'hidden', height: '1px' }}
+                                                    style={{ backgroundColor: cellBg, overflow: 'hidden', height: '1px', ...weekBorder(i) }}
                                                     onClick={() => handleCellTap(worker, col, items)}
                                                 >
                                                     {items.length > 0 ? (

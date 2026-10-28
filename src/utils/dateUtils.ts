@@ -73,6 +73,7 @@ export interface DateColumn {
     dowLabel: string;
     isWeekend: boolean;
     weekIdx: number;
+    label: string; // 表示用 M/D
 }
 
 export interface WeekGroup {
@@ -94,7 +95,8 @@ export const buildDateColumns = (startDate: Date | string | number, totalDays: n
             dow,
             dowLabel: getDayOfWeek(d),
             isWeekend: dow === 0 || dow === 6,
-            weekIdx: Math.floor(i / 7)
+            weekIdx: Math.floor(i / 7),
+            label: `${d.getMonth() + 1}/${d.getDate()}`
         });
     }
     return cols;
@@ -105,7 +107,7 @@ export const buildWeekGroups = (dateColumns: DateColumn[]): WeekGroup[] => {
     const groups: WeekGroup[] = [];
     for (let i = 0; i < dateColumns.length; i += 7) {
         const days = dateColumns.slice(i, i + 7);
-        groups.push({ label: `${days[0].month}/${days[0].day}`, days });
+        groups.push({ label: days[0].label, days });
     }
     return groups;
 };

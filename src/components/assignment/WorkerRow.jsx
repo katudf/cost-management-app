@@ -49,6 +49,7 @@ const WorkerRow = ({
                 const actualProjectIds = isPastDate ? (taskRecordLookup[lookupKey] || []) : [];
                 const isHolidayOrWeekend = isNonWorkingDay(col.dow, holidayMap[col.dateStr]);
                 const isToday = col.dateStr === todayStr;
+                const isWeekStart = i > 0 && dateColumns[i - 1].weekIdx !== col.weekIdx;
                 const isEditing = rowEditCell && (
                     rowEditCell.dragDates
                         ? rowEditCell.dragDates.includes(col.dateStr)
@@ -94,7 +95,8 @@ const WorkerRow = ({
                             }`}
                         style={{
                             backgroundColor: isDragSelected ? '#DBEAFE' : isEditing ? '#EFF6FF' : isHolidayOrWeekend ? '#FEE2E24D' : isToday ? '#FEFCE8' : undefined,
-                            overflow: 'hidden', maxWidth: 0, width: '48px', height: '1px'
+                            overflow: 'hidden', maxWidth: 0, width: '48px', height: '1px',
+                            ...(isWeekStart && !isDragSelected && !isEditing ? { borderLeft: '2px solid #64748B' } : {})
                         }}
                         onMouseDown={(e) => onCellMouseDown(e, worker.id, col.dateStr)}
                         onMouseEnter={() => onCellMouseEnter(worker.id, col.dateStr)}

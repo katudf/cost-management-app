@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Calendar, ChevronLeft, ChevronRight, Loader2, LinkIcon } from 'lucide-react';
-import { toDateStr, addDays, getMonday, buildDateColumns, buildWeekGroups } from './utils/dateUtils';
+import { toDateStr, addDays, getMonday, buildDateColumns } from './utils/dateUtils';
 import { DEFAULT_COLORS, SCHEDULE_TYPES, PROJECT_STATUS } from './utils/constants';
 import { useAuth } from './hooks/useAuth';
 import { useScheduleViewData } from './hooks/useScheduleViewData';
@@ -47,7 +47,9 @@ const ScheduleViewApp = () => {
             isOff: isNonWorkingDay(col.dow, holidayMap[col.dateStr]),
         }));
     }, [startDate, totalDays, holidays]);
-    const weekGroups = useMemo(() => buildWeekGroups(dateColumns), [dateColumns]);
+
+    // 週の変わり目に太い左ボーダー（管理者版と同じ）
+    const weekBorder = (i) => (i > 0 && dateColumns[i - 1].weekIdx !== dateColumns[i].weekIdx ? { borderLeft: '2px solid #64748B' } : {});
 
     // ルックアップ
     const assignmentLookup = useMemo(() => {
@@ -206,33 +208,22 @@ const ScheduleViewApp = () => {
                         <tr>
                             <th
                                 className="sticky left-0 z-20 bg-slate-700 text-white text-[10px] font-bold p-1 border border-slate-600"
-                                rowSpan={2}
                             >
                             </th>
-                            {weekGroups.map((wg, wi) => (
-                                <th
-                                    key={wi}
-                                    colSpan={wg.days.length}
-                                    className="bg-slate-700 text-white text-[10px] font-bold p-1 border border-slate-600 text-center"
-                                >
-                                    {wg.label}〜
-                                </th>
-                            ))}
-                        </tr>
-                        <tr>
                             {dateColumns.map((col, i) => {
                                 const style = getDayBg(col);
                                 const today = isToday(col.dateStr);
                                 return (
                                     <th
                                         key={i}
-                                        className={`text-[10px] font-bold p-0.5 border border-slate-300 text-center ${today ? 'ring-2 ring-blue-500 ring-inset' : ''}`}
+                                        className={`text-[10px] font-bold p-0.5 border border-slate-300 text-center whitespace-nowrap ${today ? 'ring-2 ring-blue-500 ring-inset' : ''}`}
                                         style={{
                                             backgroundColor: today ? '#BFDBFE' : style.bg || '#F8FAFC',
-                                            color: style.color
+                                            color: style.color,
+                                            ...weekBorder(i)
                                         }}
                                     >
-                                        <div className="leading-none">{col.day}</div>
+                                        <div className="leading-none">{col.label}</div>
                                         <div className="leading-none text-[9px]">{col.dowLabel}</div>
                                     </th>
                                 );
@@ -271,7 +262,7 @@ const ScheduleViewApp = () => {
                                             <td
                                                 key={i}
                                                 className="relative p-0 border border-slate-200"
-                                                style={{ backgroundColor: bg }}
+                                                style={{ backgroundColor: bg, ...weekBorder(i) }}
                                             >
                                                 <div className="h-5"></div>
                                                 {inBar && i === labelAt && (
@@ -312,7 +303,8 @@ const ScheduleViewApp = () => {
                                             className={`border border-slate-200 p-0 text-center align-middle ${today ? 'ring-1 ring-blue-400 ring-inset' : ''}`}
                                             style={{
                                                 backgroundColor: col.isOff ? '#FEE2E24D' : today ? '#EFF6FF' : undefined,
-                                                overflow: 'hidden', maxWidth: 0, width: '44px'
+                                                overflow: 'hidden', maxWidth: 0, width: '44px',
+                                                ...weekBorder(i)
                                             }}
                                         >
                                             {cellAssigns.length > 0 ? (

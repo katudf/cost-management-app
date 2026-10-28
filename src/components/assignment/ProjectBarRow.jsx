@@ -87,6 +87,7 @@ const ProjectBarRow = ({
                 const registeredHoliday = holidayMap[col.dateStr];
                 const isHolidayOrWeekend = isNonWorkingDay(col.dow, registeredHoliday);
                 const isToday = col.dateStr === todayStr;
+                const isWeekStart = i > 0 && dateColumns[i - 1].weekIdx !== col.weekIdx;
                 const suspensionMatch = isInBar
                     ? suspensions.find(s => col.dateStr >= s.start_date && col.dateStr <= s.end_date)
                     : null;
@@ -118,7 +119,8 @@ const ProjectBarRow = ({
                                 : isHolidayOrWeekend ? '#FEE2E24D' : isToday ? '#FEFCE8' : 'white',
                             ...(isSuspended && !cellComment ? {
                                 background: `repeating-linear-gradient(45deg, ${proj.color}40, ${proj.color}40 4px, ${proj.color}18 4px, ${proj.color}18 8px)`,
-                            } : {})
+                            } : {}),
+                            ...(isWeekStart ? { borderLeft: '2px solid #64748B' } : {})
                         }}
                         title={cellTitle}
                         onContextMenu={onCellComment ? (e) => {
