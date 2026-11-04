@@ -1,10 +1,18 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { PROJECT_STATUS } from '../utils/constants';
+import { importProjectCore, rollbackImport } from '../utils/projectExcelImport';
 import { useConfirm } from '../components/ConfirmProvider';
+import {
+    getNextEstimateSeq, findAvailableBranchNumber, createEstimate, updateEstimate, deleteEstimate,
+    buildSaveItemsPayload, saveEstimateItemsV2, syncEstimateToProject, copyEstimateItemsToProjectTasks,
+} from '../supabaseEstimates';
 
 export function useProjects({ projects, setProjects, activeProjectId, setActiveProjectId, showToast, workers, setActiveTab }) {
     const { confirm } = useConfirm();
+    // fallbackOrder が常に最新の projects を参照するための ref
+    const projectsRef = useRef(projects);
+    projectsRef.current = projects;
 
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [pendingDeleteId, setPendingDeleteId] = useState(null);
@@ -39,6 +47,43 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
             id: newProj.id, order: newProj.order, siteName: '', status: newProj.status || PROJECT_STATUS.ESTIMATE, show_on_home: true, masterData: [], records: [], progressData: {}
         }]);
         setActiveProjectId(newProj.id);
+    };
+
+    // Excelから取り込み: 下書き見積 + 予定ステータスの現場を作成する（中核は utils/projectExcelImport.js）
+    // 戻り値: 作成した Projects.id（失敗時は null）
+    const importProjectFromExcel = async ({ parsed, fileName, customerId, projectName }) => {
+        const deps = {
+            getNextEstimateSeq, findAvailableBranchNumber, createEstimate, updateEstimate, deleteEstimate,
+            buildSaveItemsPayload, saveEstimateItemsV2, syncEstimateToProject, copyEstimateItemsToProjectTasks,
+            fetchProjectOrder: async (id) => {
+                const { data, error } = await supabase.from('Projects').select('order').eq('id', id).single();
+                if (error) throw error;
+                return data?.order ?? null;
+            },
+            fallbackOrder: () => {
+                const list = projectsRef.current;
+                return list.length > 0 ? Math.max(...list.map(p => p.order || 0)) + 1 : 0;
+            },
+            deleteProjectTasks: (id) => supabase.from('ProjectTasks').delete().eq('projectId', id),
+            deleteProject: (id) => supabase.from('Projects').delete().eq('id', id),
+        };
+        try {
+            const { projectId, project } = await importProjectCore(deps, { parsed, fileName, customerId, projectName });
+            setProjects(prev => [...prev, project]);
+            setActiveProjectId(projectId);
+            showToast(`「${project.siteName}」を取り込みました（下書き見積を作成）`, 'success');
+            return projectId;
+        } catch (e) {
+            console.error('Excel取り込みエラー:', e);
+            const rollbackErrors = await rollbackImport(deps, e.createdIds || {});
+            if (rollbackErrors.length > 0) {
+                console.error('Excel取り込みロールバック失敗:', rollbackErrors);
+                showToast('取り込みに失敗し、一部のデータを元に戻せませんでした（' + rollbackErrors.join(' / ') + '）。管理者に確認してください', 'error');
+                return null;
+            }
+            showToast('取り込みに失敗しました: ' + (e.message || e), 'error');
+            return null;
+        }
     };
 
     const removeProject = (id) => {
@@ -407,6 +452,7 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
         activeProject,
         updateLayer,
         addNewProject,
+        importProjectFromExcel,
         removeProject,
         handleSiteNameBlur,
         handleForemanChange,

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useSupabaseData } from './hooks/useSupabaseData';
 import { useProjects } from './hooks/useProjects';
 import { useWorkers } from './hooks/useWorkers';
@@ -11,7 +11,7 @@ import LoginScreen from './components/auth/LoginScreen';
 import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
 import HomeLanding from './components/HomeLanding';
 import logoUrl from './img/kimura-logo.svg';
-import { Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, GripVertical, LogOut, Bell, Database } from 'lucide-react';
+import { Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, GripVertical, LogOut, Bell, Database, Upload } from 'lucide-react';
 import { buildWeekDays, buildWeekPrefix, fetchWeeklyReportData } from './hooks/useWeeklyReportData';
 import { DEFAULT_MASTER_DATA, PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR, ITEM_TYPE, DASHBOARD_VIEW_MODE, DASHBOARD_VIEW_MODE_LIST, ESTIMATE_STATUS, isSystemAdminRole } from './utils/constants';
 import { calculateAge } from './utils/dateUtils';
@@ -34,6 +34,16 @@ import AssignmentChartTab from './components/tabs/AssignmentChartTab';
 import EstimateList from './EstimateList';
 import EstimateEditor from './estimate-editor/EstimateEditor';
 import { fetchEstimates, createCustomer } from './supabaseEstimates';
+import { parseExcelForEstimate } from './utils/excelImportUtils';
+import ProjectExcelImportModal from './components/ProjectExcelImportModal';
+import CustomerResolveModal from './components/estimate/CustomerResolveModal';
+
+const ImportExcelButton = ({ onClick, className, iconSize = 18 }) => (
+    <button onClick={onClick} aria-label="エクセルから取り込み" title="エクセルから取り込み" className={className}>
+        <Upload size={iconSize} />
+        エクセルから取り込み
+    </button>
+);
 
 const App = () => {
     const { showToast } = useToast();
@@ -266,6 +276,77 @@ const App = () => {
             return null;
         }
     }, [setCustomers, showToast]);
+
+    // ---- Excelから現場を取り込み（見積=下書き / 現場=予定） ----
+    const importFileRef = useRef(null);
+    const [pendingImport, setPendingImport] = useState(null); // { parsed, fileName, customerId, customerLabel }
+    const [pendingCustomerResolve, setPendingCustomerResolve] = useState(null); // { parsed, fileName }
+    const [importBusy, setImportBusy] = useState(false);
+
+    const handleProjectExcelFile = useCallback(async (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (!file) return;
+        try {
+            const parsed = await parseExcelForEstimate(file);
+            if (!parsed.items || parsed.items.length === 0) {
+                showToast('取り込めるデータが見つかりませんでした', 'error');
+                return;
+            }
+            if (!parsed.customerName) {
+                // 顧客名が無い場合は既存顧客を選ぶモーダルへ（customer_id は NOT NULL）
+                setPendingCustomerResolve({ parsed, fileName: file.name });
+                return;
+            }
+            const matched = customers.find(c => c.name === parsed.customerName);
+            if (matched) {
+                setPendingImport({ parsed, fileName: file.name, customerId: matched.id, customerLabel: matched.name });
+            } else {
+                setPendingCustomerResolve({ parsed, fileName: file.name });
+            }
+        } catch (err) {
+            showToast('Excelの読み込みに失敗しました: ' + err.message, 'error');
+        }
+    }, [showToast, customers]);
+
+    const handleImportRegisterCustomer = useCallback(async () => {
+        if (!pendingCustomerResolve) return;
+        const { parsed, fileName } = pendingCustomerResolve;
+        if (!parsed.customerName) return;
+        const created = await handleCreateCustomer(parsed.customerName);
+        if (!created) {
+            showToast('顧客の登録に失敗しました', 'error');
+            return;
+        }
+        setPendingCustomerResolve(null);
+        setPendingImport({ parsed, fileName, customerId: created.id, customerLabel: created.name });
+    }, [pendingCustomerResolve, handleCreateCustomer, showToast]);
+
+    const handleImportLinkCustomer = useCallback((selectedId) => {
+        if (!pendingCustomerResolve) return;
+        const { parsed, fileName } = pendingCustomerResolve;
+        const target = customers.find(c => String(c.id) === String(selectedId));
+        setPendingCustomerResolve(null);
+        setPendingImport({ parsed, fileName, customerId: target?.id ?? null, customerLabel: target?.name || '' });
+    }, [pendingCustomerResolve, customers]);
+
+    const existingSiteNames = useMemo(() => projects.map(p => p.siteName), [projects]);
+
+    const handleConfirmImport = useCallback(async (projectName) => {
+        if (!pendingImport) return;
+        setImportBusy(true);
+        try {
+            const id = await projectOps.importProjectFromExcel({
+                parsed: pendingImport.parsed,
+                fileName: pendingImport.fileName,
+                customerId: pendingImport.customerId,
+                projectName,
+            });
+            if (id) setPendingImport(null);
+        } finally {
+            setImportBusy(false);
+        }
+    }, [pendingImport, projectOps]);
 
     const groupedProjects = useMemo(() => {
         const groups = { [PROJECT_STATUS.ESTIMATE]: [], [PROJECT_STATUS.SCHEDULED]: [], [PROJECT_STATUS.IN_PROGRESS]: [], [PROJECT_STATUS.COMPLETED]: [] };
@@ -568,6 +649,10 @@ const App = () => {
                                             <PlusCircle size={18} />
                                             新しい現場を追加
                                         </button>
+                                        <ImportExcelButton
+                                            onClick={() => importFileRef.current?.click()}
+                                            className="px-3 py-2 bg-white text-slate-600 flex items-center gap-2 hover:text-blue-600 hover:border-blue-200 rounded-lg transition shadow-sm border border-slate-200 text-sm font-bold whitespace-nowrap shrink-0"
+                                        />
                                         <div className="relative group flex-1 md:w-64">
                                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 group-focus-within:text-blue-500 transition-colors" />
                                             <input
@@ -590,6 +675,7 @@ const App = () => {
                                     <button onClick={projectOps.addNewProject} className="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold shadow-md hover:bg-blue-700 transition flex items-center gap-2 mx-auto">
                                         <PlusCircle size={20} /> 新しい現場を作成
                                     </button>
+                                    <ImportExcelButton onClick={() => importFileRef.current?.click()} iconSize={20} className="mt-3 bg-white text-slate-600 border border-slate-300 px-6 py-3 rounded-lg font-bold shadow-sm hover:text-blue-600 hover:border-blue-200 transition flex items-center gap-2 mx-auto" />
                                 </div>
                             ) : dashboardStats.displayProjects.length === 0 ? (
                                 <div className="text-center py-10 bg-white rounded-xl border border-dashed border-slate-300 text-slate-400 font-bold">該当する条件の現場がありません。</div>
@@ -883,6 +969,39 @@ const App = () => {
                         )
                     )}
                 </main>
+
+                <input
+                    type="file"
+                    accept=".xlsx,.xls"
+                    ref={importFileRef}
+                    onChange={handleProjectExcelFile}
+                    className="hidden"
+                />
+
+                {/* Excel取込: 顧客の紐付け */}
+                {pendingCustomerResolve && (
+                    <CustomerResolveModal
+                        customerName={pendingCustomerResolve.parsed.customerName}
+                        customers={customers}
+                        onRegisterNew={handleImportRegisterCustomer}
+                        onLinkExisting={(id) => handleImportLinkCustomer(id)}
+                        onCancel={() => setPendingCustomerResolve(null)}
+                    />
+                )}
+
+                {/* Excel取込: 内容確認 */}
+                {pendingImport && (
+                    <ProjectExcelImportModal
+                        parsed={pendingImport.parsed}
+                        fileName={pendingImport.fileName}
+                        customerLabel={pendingImport.customerLabel}
+                        customerId={pendingImport.customerId}
+                        existingSiteNames={existingSiteNames}
+                        busy={importBusy}
+                        onConfirm={handleConfirmImport}
+                        onCancel={() => { if (!importBusy) setPendingImport(null); }}
+                    />
+                )}
 
                 {/* 作業員別日報出力モーダル */}
                 <ExportReportModal

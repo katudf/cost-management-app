@@ -7,11 +7,11 @@ import React, { useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 
 const CustomerResolveModal = ({ customerName, customers, onRegisterNew, onLinkExisting, onCancel }) => {
-  const [mode, setMode] = useState('new'); // 'new' | 'existing'
+  const [mode, setMode] = useState(customerName ? 'new' : 'existing'); // 'new' | 'existing'
   const [selectedId, setSelectedId] = useState('');
 
   const handleConfirm = () => {
-    if (mode === 'new') {
+    if (mode === 'new' && customerName) {
       onRegisterNew();
     } else if (selectedId) {
       onLinkExisting(selectedId);
@@ -26,17 +26,24 @@ const CustomerResolveModal = ({ customerName, customers, onRegisterNew, onLinkEx
           <div>
             <h3 className="font-bold text-slate-800 text-lg">顧客が見つかりません</h3>
             <p className="text-slate-500 text-sm mt-1">
-              取込データの顧客名 <span className="font-bold text-slate-700">「{customerName}」</span> は
-              顧客マスタに一致するものがありません。どちらかを選択してください。
+              {customerName ? (
+                <>
+                  取込データの顧客名 <span className="font-bold text-slate-700">「{customerName}」</span> は
+                  顧客マスタに一致するものがありません。どちらかを選択してください。
+                </>
+              ) : (
+                '取込データに顧客名がありません。既存顧客を選択してください。'
+              )}
             </p>
           </div>
         </div>
 
         <div className="space-y-2 mb-5">
-          <label className="flex items-start gap-2 border border-slate-200 rounded-lg p-3 cursor-pointer hover:bg-slate-50 has-[:checked]:border-blue-400 has-[:checked]:bg-blue-50">
+          <label className={`flex items-start gap-2 border border-slate-200 rounded-lg p-3 cursor-pointer hover:bg-slate-50 has-[:checked]:border-blue-400 has-[:checked]:bg-blue-50 ${customerName ? '' : 'opacity-50 pointer-events-none'}`}>
             <input
               type="radio"
               name="customer-resolve-mode"
+              disabled={!customerName}
               checked={mode === 'new'}
               onChange={() => setMode('new')}
               className="mt-1"
@@ -81,7 +88,7 @@ const CustomerResolveModal = ({ customerName, customers, onRegisterNew, onLinkEx
           </button>
           <button
             onClick={handleConfirm}
-            disabled={mode === 'existing' && !selectedId}
+            disabled={mode === 'existing' ? !selectedId : !customerName}
             className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold transition"
           >
             この内容で続行

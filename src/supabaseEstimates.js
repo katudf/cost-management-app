@@ -400,7 +400,7 @@ export const projectExists = async (projectId) => {
 // 失敗時は例外を投げる（呼び出し側で showToast 通知する想定）。
 // 戻り値: 連携先となった Projects.id
 // ============================================================
-export const syncEstimateToProject = async ({ projectId, title, customerId }) => {
+export const syncEstimateToProject = async ({ projectId, title, customerId, status = PROJECT_STATUS.ESTIMATE }) => {
   if (projectId) {
     const { data: existing, error: selectError } = await supabase
       .from('Projects')
@@ -409,7 +409,8 @@ export const syncEstimateToProject = async ({ projectId, title, customerId }) =>
       .limit(1);
 
     if (selectError) throw selectError;
-    if (existing && existing.length > 0) return projectId; // 既に連携済み → 作成不要
+    // 既に連携済み → 作成不要（status は新規作成時のみ反映。既存案件のステータスは更新しない）
+    if (existing && existing.length > 0) return projectId;
   }
 
   const { data: maxOrder, error: orderError } = await supabase
@@ -426,7 +427,7 @@ export const syncEstimateToProject = async ({ projectId, title, customerId }) =>
     .insert([{
       name: title,
       customerId,
-      status: PROJECT_STATUS.ESTIMATE,
+      status,
       order: nextOrder,
     }])
     .select('id')
