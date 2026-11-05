@@ -80,6 +80,10 @@ CREATE POLICY "office_staff_select" ON public.office_staff
 DROP POLICY IF EXISTS "inventory images insert authenticated" ON storage.objects;
 DROP POLICY IF EXISTS "inventory images update authenticated" ON storage.objects;
 DROP POLICY IF EXISTS "inventory images delete authenticated" ON storage.objects;
+-- 再実行しても失敗しないよう、このマイグレーションで作るポリシーも先に消しておく
+DROP POLICY IF EXISTS "inventory images insert staff" ON storage.objects;
+DROP POLICY IF EXISTS "inventory images update staff" ON storage.objects;
+DROP POLICY IF EXISTS "inventory images delete staff" ON storage.objects;
 
 CREATE POLICY "inventory images insert staff" ON storage.objects
   FOR INSERT TO authenticated
