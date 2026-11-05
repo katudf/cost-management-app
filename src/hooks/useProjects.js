@@ -99,13 +99,8 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
         if (!pendingDeleteId) return;
         const id = pendingDeleteId;
 
-        await supabase.from('Assignments').delete().eq('projectId', id);
-        await supabase.from('SubcontractorRecords').delete().eq('project_id', id);
-        await supabase.from('TaskRecords').delete().eq('project_id', id);
-        await supabase.from('ProjectTasks').delete().eq('projectId', id);
-        await supabase.from('estimates').update({ project_id: null }).eq('project_id', id);
-
-        const { error } = await supabase.from('Projects').delete().eq('id', id);
+        // 配置・日報・工種などの削除と見積の紐付け解除を1トランザクションで行う（途中で失敗しても何も消えない）
+        const { error } = await supabase.rpc('delete_project', { p_project_id: id });
         if (error) {
             console.error(error);
             showToast("削除に失敗しました: " + error.message, 'error');

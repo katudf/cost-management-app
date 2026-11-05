@@ -440,7 +440,13 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
             await updateEstimate(estimateId, { project_id: linkedProjectId });
             setHeader(prev => ({ ...prev, project_id: linkedProjectId }));
           }
-          await copyEstimateItemsToProjectTasks(linkedProjectId, items);
+          // 工種へは「実際の作業明細」だけを渡す。リンク解決済みの値を使い、
+          // 別シート合計・カテゴリ合計を参照するリンク行（総括表の行）は除く。
+          // 生の items のままだと、総括表のリンク行と子シートの明細が二重に工種化され、
+          // リンク行の金額も未解決（0円や古い値）のまま入ってしまう。
+          const { resolvedItems: resolvedForTasks } = computeEstimateCalc(sheets, items);
+          const workItems = resolvedForTasks.filter(it => !it.linked_sheet_id && !it.linked_category_item_id);
+          await copyEstimateItemsToProjectTasks(linkedProjectId, workItems);
         } catch (syncErr) {
           console.error('工事マスタへの連携に失敗しました:', syncErr);
           showToast(
@@ -460,7 +466,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
       operationInFlight.current = false;
       setSaving(false);
     }
-  }, [estimateId, onStatusChanged, header.project_id, header.title, header.customer_id, originalStatus, showToast, items]);
+  }, [estimateId, onStatusChanged, header.project_id, header.title, header.customer_id, originalStatus, showToast, items, sheets]);
 
   // 承認・差し戻し（SECURITY DEFINER RPC経由。証跡カラムはDB側で記録される）
   const handleApprove = useCallback(async () => {

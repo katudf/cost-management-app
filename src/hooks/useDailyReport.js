@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { fetchAllPages } from '../lib/fetchAllPages';
 
 /**
  * 作業員アプリ（WorkerApp）の日報データアクセスを一箇所に集約するモジュール。
@@ -67,7 +68,10 @@ export const fetchSubcontractorRecordsResult = (projectId, date) =>
 
 /** 指定現場の全日報レコード（職長の進捗確認用）。 */
 export const fetchAllProjectRecordsResult = (projectId) =>
-    supabase.from('TaskRecords').select('*').eq('project_id', projectId);
+    // 長期の現場では取得上限（1000件）を超えるため、ページを分けて全件取得する
+    fetchAllPages(() => supabase.from('TaskRecords').select('*')
+        .eq('project_id', projectId)
+        .order('id', { ascending: true }));
 
 /** 指定現場の全協力業者レコード（職長の進捗確認用）。 */
 export const fetchAllSubcontractorRecordsResult = (projectId) =>
@@ -132,18 +136,17 @@ export async function saveWorkerDailyBreakSettings(workerName, date, breakDurati
  * 工種を1件追加する。
  * @returns {Promise<object>} 追加された行
  */
-export async function insertProjectTask({ projectId, name, order }) {
-    const { data, error } = await supabase.from('ProjectTasks').insert([{
-        projectId,
-        name,
-        target_hours: 0,
-        estimated_amount: 0,
-        order,
-        progress_percentage: 0,
-    }]).select();
+export async function insertProjectTask({ projectId, name, order, workerId }) {
+    // worker ロールは ProjectTasks に直接書けないため、職長かどうかを DB 側で確認する RPC を使う
+    const { data, error } = await supabase.rpc('add_project_task', {
+        p_project_id: Number(projectId),
+        p_name: name,
+        p_order: order,
+        p_worker_id: workerId ?? null,
+    });
     if (error) throw error;
-    if (!data || data.length === 0) throw new Error('作業項目の追加結果が取得できませんでした。');
-    return data[0];
+    if (!data) throw new Error('作業項目の追加結果が取得できませんでした。');
+    return data;
 }
 
 /**
@@ -151,17 +154,15 @@ export async function insertProjectTask({ projectId, name, order }) {
  * 表示の補助であり必須ではないため、失敗しても throw せず null を返す。
  * @returns {Promise<object[]|null>} 追加された行の配列。失敗時は null。
  */
-export async function insertDefaultProjectTask({ projectId, name }) {
-    const { data, error } = await supabase.from('ProjectTasks').insert([{
-        projectId: Number(projectId),
-        name,
-        target_hours: 0,
-        estimated_amount: 0,
-        order: 1,
-        progress_percentage: 0,
-    }]).select();
-    if (error || !data || data.length === 0) return null;
-    return data;
+export async function insertDefaultProjectTask({ projectId, name, workerId }) {
+    const { data, error } = await supabase.rpc('add_project_task', {
+        p_project_id: Number(projectId),
+        p_name: name,
+        p_order: 1,
+        p_worker_id: workerId ?? null,
+    });
+    if (error || !data) return null;
+    return [data];
 }
 
 /** 指定作業員・指定日・指定現場の日報レコードをすべて削除する。 */
@@ -174,66 +175,27 @@ export async function deleteProjectDayRecords({ projectId, workerName, date }) {
 }
 
 /**
- * 日報の保存トランザクション。
+ * 日報の保存（DB 関数 save_daily_report で 1 トランザクション）。
  *
- * 削除 → 更新（並列） → 追加 → 協力業者の削除/更新/追加 の順で実行する。
- * 途中で失敗した場合は throw し、呼び出し側がオフライン下書きへの退避を判断する。
- * この一体性を保つため、個々のクエリ単位ではなくまとめて1関数として公開している。
+ * 日報の削除・更新・追加、職長の進捗・協力業者、残業／作業手当の承認申請の同期を
+ * すべて 1 回で行う。途中で失敗した場合は何も保存されないため、そのまま再送してよい。
+ * 応答だけが届かなかった場合の再送でも、時刻付きの日報は同じ時間枠の行が更新されるだけで
+ * 二重登録にはならない（TaskRecords の一意索引 task_records_worker_slot_key）。
  *
- * @returns {Promise<object[]>} 追加された TaskRecords の行（返り順は入力順と一致する）
+ * 作業員名・作業員 ID は画面で選んだ作業員（共有アカウントのため申告値）。
+ * DB 側は「その作業員の日報だけ」を削除・更新し、進捗・協力業者は職長のみ受け付ける。
+ *
+ * @param {object} payload save_daily_report の p_payload（キーは DB 関数のコメント参照）
+ * @returns {Promise<{ insertedIds: number[], remapped: { old_id: number, new_id: number }[] }>}
+ *   insertedIds は payload.inserts と同じ順。remapped は「更新対象が消えていたので追加し直した」行。
  */
-export async function saveDailyReport({
-    deleteIds = [],
-    updateOps = [],
-    insertPayloads = [],
-    progressUpdates = [],
-    deletedSubcontractorIds = [],
-    subcontractorUpdates = [],
-    subcontractorInsertPayloads = [],
-}) {
-    // 削除はまとめて1回
-    if (deleteIds.length > 0) {
-        const { error } = await supabase.from('TaskRecords').delete().in('id', deleteIds);
-        if (error) throw error;
-    }
-
-    // 更新・進捗更新は並列実行
-    const parallelOps = updateOps.map(u => supabase.from('TaskRecords').update(u.data).eq('id', u.id));
-    progressUpdates.forEach(t => {
-        parallelOps.push(supabase.from('ProjectTasks').update({ progress_percentage: t.progress_percentage }).eq('id', t.id));
-    });
-    if (parallelOps.length > 0) {
-        const results = await Promise.all(parallelOps);
-        const failed = results.find(r => r.error);
-        if (failed) throw failed.error;
-    }
-
-    // 新規 insert はまとめて1回（返り順は入力順と一致するため呼び出し側で id を書き戻せる）
-    let insertedRecords = [];
-    if (insertPayloads.length > 0) {
-        const { data, error } = await supabase.from('TaskRecords').insert(insertPayloads).select();
-        if (error) throw error;
-        insertedRecords = data || [];
-    }
-
-    // 協力業者
-    if (deletedSubcontractorIds.length > 0) {
-        const { error } = await supabase.from('SubcontractorRecords').delete().in('id', deletedSubcontractorIds);
-        if (error) throw error;
-    }
-    const subOps = subcontractorUpdates.map(s =>
-        supabase.from('SubcontractorRecords')
-            .update({ company_name: s.company_name, worker_count: s.worker_count })
-            .eq('id', s.id)
-    );
-    if (subcontractorInsertPayloads.length > 0) {
-        subOps.push(supabase.from('SubcontractorRecords').insert(subcontractorInsertPayloads));
-    }
-    if (subOps.length > 0) {
-        const subResults = await Promise.all(subOps);
-        const subFailed = subResults.find(r => r.error);
-        if (subFailed) throw subFailed.error;
-    }
-
-    return insertedRecords;
+export async function saveDailyReport(payload) {
+    const { data, error } = await supabase.rpc('save_daily_report', { p_payload: payload });
+    if (error) throw error;
+    return {
+        insertedIds: data?.inserted_ids || [],
+        remapped: data?.remapped || [],
+        // 承認申請の同期だけ失敗した（日報は保存済み）
+        approvalSyncFailed: data?.approval_sync_failed === true,
+    };
 }

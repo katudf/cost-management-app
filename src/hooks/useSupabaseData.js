@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { fetchAllPages } from '../lib/fetchAllPages';
 import { PROJECT_STATUS } from '../utils/constants';
 import { fetchSystemSettings, DEFAULT_HOURLY_WAGE } from './useSystemSettings';
 
@@ -68,11 +69,13 @@ export function useSupabaseData(showToast) {
                 if (tError) throw tError;
                 tData = tasks || [];
 
-                const { data: records, error: rError } = await supabase
+                // 日報は件数が増え続けるため、取得上限（1000件）で切れないようページを分けて全件取得する
+                const { data: records, error: rError } = await fetchAllPages(() => supabase
                     .from('TaskRecords')
                     .select('*')
                     .in('project_id', activeProjectIds)
-                    .order('date', { ascending: false });
+                    .order('date', { ascending: false })
+                    .order('id', { ascending: true }));
                 if (rError) throw rError;
                 rData = records || [];
 
@@ -206,11 +209,12 @@ export function useSupabaseData(showToast) {
             if (tError) throw tError;
 
             // 対象プロジェクトの TaskRecords
-            const { data: rData, error: rError } = await supabase
+            const { data: rData, error: rError } = await fetchAllPages(() => supabase
                 .from('TaskRecords')
                 .select('*')
                 .eq('project_id', projectId)
-                .order('date', { ascending: false });
+                .order('date', { ascending: false })
+                .order('id', { ascending: true }));
             if (rError) throw rError;
 
             // 対象プロジェクトの SubcontractorRecords

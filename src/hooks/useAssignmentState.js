@@ -568,7 +568,8 @@ export function useAssignmentState({
         const deletedRecords = toDelete.map(a => ({ ...a }));
         setAssignments(prev => prev.filter(a => !idsToDelete.includes(a.id)));
         try {
-            await supabase.from('Assignments').delete().in('id', idsToDelete);
+            const { error } = await supabase.from('Assignments').delete().in('id', idsToDelete);
+            if (error) throw error;
             showToast(`${toDelete.length}件の配置を削除しました`, 'success');
             pushUndo({
                 label: '配置の削除',
@@ -576,6 +577,8 @@ export function useAssignmentState({
             });
         } catch (err) {
             console.error('一括削除エラー', err);
+            // DBには残っているので画面も元に戻す
+            setAssignments(prev => [...prev, ...deletedRecords]);
             showToast('削除に失敗しました', 'error');
         }
         setEditCell(null);
@@ -611,7 +614,8 @@ export function useAssignmentState({
             const deletedRecords = toDelete.map(a => ({ ...a }));
             setAssignments(prev => prev.filter(a => !idsToDelete.includes(a.id)));
             try {
-                await supabase.from('Assignments').delete().in('id', idsToDelete);
+                const { error } = await supabase.from('Assignments').delete().in('id', idsToDelete);
+                if (error) throw error;
                 showToast(`${copiedData.length}件をカットしました`, 'success');
                 pushUndo({
                     label: '配置のカット',
@@ -619,6 +623,10 @@ export function useAssignmentState({
                 });
             } catch (err) {
                 console.error('カットエラー', err);
+                // 元の配置はDBに残っているため、画面を戻し、貼り付けで重複しないようクリップボードも空にする
+                setAssignments(prev => [...prev, ...deletedRecords]);
+                setClipboard(null);
+                showToast('カットに失敗しました', 'error');
             }
         }
     }, [editCell, assignmentLookup, showToast, pushUndo, restoreAssignments]);
@@ -933,9 +941,20 @@ export function useAssignmentState({
             const promises = updatedItems.map(item =>
                 supabase.from('Assignments').update({ assignment_order: item.assignment_order }).eq('id', item.id)
             );
-            await Promise.all(promises);
+            const results = await Promise.all(promises);
+            const failed = results.find(r => r.error);
+            if (failed) throw failed.error;
         } catch (e) {
             console.error('順番変更エラー:', e);
+            // 画面の並びをDB側（変更前）に戻す
+            setAssignments(prev => {
+                const next = [...prev];
+                items.forEach(original => {
+                    const idx = next.findIndex(a => a.id === original.id);
+                    if (idx !== -1) next[idx] = original;
+                });
+                return next;
+            });
             showToast('順番の変更に失敗しました。', 'error');
         }
     }, [editCell, assignmentLookup, showToast]);
@@ -967,7 +986,9 @@ export function useAssignmentState({
                     const promises = newProjectsData.map(p =>
                         supabase.from('Projects').update({ display_order: p.display_order }).eq('id', p.id)
                     );
-                    await Promise.all(promises);
+                    const results = await Promise.all(promises);
+                    const failed = results.find(r => r.error);
+                    if (failed) throw failed.error;
 
                     setBarProjects(current => {
                         return current.map(p => {

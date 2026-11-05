@@ -6,84 +6,10 @@ import { supabase } from './supabase';
  *
  * 承認単位: 日次 × 作業員(worker_name) × 現場(project_id) で1件。
  * 申請起票: 日報保存時、残業合計 > 0 で pending を自動起票（既存があれば更新）。
+ *           起票・更新・削除は DB 関数 save_daily_report が日報と同じトランザクションで行う。
  * 承認: 職長が自現場の pending を承認（自己承認可）。
  * 再承認: 承認後に残業合計が変わったら pending に戻す（approved_hours で差分検知）。
  */
-
-/**
- * 日報保存後に呼び出し、残業申請を同期する。
- * @param {Object} params
- * @param {number|string} params.projectId
- * @param {string} params.workerName
- * @param {string} params.date            - 'YYYY-MM-DD'
- * @param {number} params.overtimeTotal   - その日・その現場・その作業員の残業合計(h)
- * @param {string} [params.reason]         - 残業理由（任意）
- */
-export async function syncOvertimeApproval({ projectId, workerName, date, overtimeTotal, reason }) {
-    const pid = Number(projectId);
-
-    // 残業がゼロになった場合は申請レコードを削除（承認済みでも消す＝残業実態が無いため）
-    if (!overtimeTotal || overtimeTotal <= 0) {
-        const { error } = await supabase
-            .from('OvertimeApprovals')
-            .delete()
-            .eq('project_id', pid)
-            .eq('worker_name', workerName)
-            .eq('date', date);
-        if (error) throw error;
-        return;
-    }
-
-    // 既存レコードを確認
-    const { data: existing, error: fetchError } = await supabase
-        .from('OvertimeApprovals')
-        .select('*')
-        .eq('project_id', pid)
-        .eq('worker_name', workerName)
-        .eq('date', date)
-        .maybeSingle();
-    if (fetchError) throw fetchError;
-
-    const reasonVal = reason != null ? reason : (existing?.reason ?? null);
-
-    if (!existing) {
-        // 新規申請
-        const { error } = await supabase.from('OvertimeApprovals').insert({
-            project_id: pid,
-            worker_name: workerName,
-            date,
-            status: 'pending',
-            requested_hours: overtimeTotal,
-            reason: reasonVal,
-        });
-        if (error) throw error;
-        return;
-    }
-
-    // 承認済みで残業合計が変わった → pending に戻す（再承認要求）
-    const approvedHoursChanged =
-        existing.status === 'approved' &&
-        Number(existing.approved_hours) !== Number(overtimeTotal);
-
-    const updatePayload = {
-        requested_hours: overtimeTotal,
-        reason: reasonVal,
-        updated_at: new Date().toISOString(),
-    };
-
-    if (approvedHoursChanged) {
-        updatePayload.status = 'pending';
-        updatePayload.approved_by = null;
-        updatePayload.approved_at = null;
-        updatePayload.approved_hours = null;
-    }
-
-    const { error } = await supabase
-        .from('OvertimeApprovals')
-        .update(updatePayload)
-        .eq('id', existing.id);
-    if (error) throw error;
-}
 
 /**
  * 職長が担当する現場の承認待ち残業を取得する。
@@ -103,29 +29,18 @@ export async function fetchPendingApprovals(projectIds) {
 }
 
 /**
- * 残業申請を承認する。
- * @param {number} id            - OvertimeApprovals.id
- * @param {string} approverName  - 承認者（職長）名
+ * 残業申請を承認する（DB 関数 approve_overtime）。
+ * worker ロールは承認テーブルに直接書けないため、職長かどうかを DB 側で確認する RPC を使う。
+ * @param {number} id                 - OvertimeApprovals.id
+ * @param {string} approverName       - 承認者（職長）名
+ * @param {number} [approverWorkerId] - 承認者の作業員 ID（職長判定用）
  */
-export async function approveOvertime(id, approverName) {
-    // requested_hours を承認時点の approved_hours として確定する
-    const { data: row, error: fetchError } = await supabase
-        .from('OvertimeApprovals')
-        .select('requested_hours')
-        .eq('id', id)
-        .single();
-    if (fetchError) throw fetchError;
-
-    const { error } = await supabase
-        .from('OvertimeApprovals')
-        .update({
-            status: 'approved',
-            approved_by: approverName,
-            approved_at: new Date().toISOString(),
-            approved_hours: row.requested_hours,
-            updated_at: new Date().toISOString(),
-        })
-        .eq('id', id);
+export async function approveOvertime(id, approverName, approverWorkerId) {
+    const { error } = await supabase.rpc('approve_overtime', {
+        p_id: id,
+        p_approver_name: approverName,
+        p_approver_worker_id: approverWorkerId ?? null,
+    });
     if (error) throw error;
 }
 

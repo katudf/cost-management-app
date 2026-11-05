@@ -20,6 +20,12 @@
 export interface DraftLike {
     selectedProjectId: string | number;
     selectedDate: string;
+    /**
+     * 下書きを書いた作業員名。作業員は共有アカウントで名前を選んでログインするため、
+     * 1台の端末を複数人で使うと他人の下書きを復元・送信できてしまう。これで持ち主を区別する。
+     * 2026-11 より前に保存された下書きには無い。
+     */
+    workerName?: string;
     /** 入力中の自動保存で積まれたものだけ true */
     isAutoSaved?: boolean;
     [key: string]: unknown;
@@ -41,19 +47,31 @@ export interface DraftLike {
  */
 export const draftKey = (
     projectId: string | number | null | undefined,
-    date: string | null | undefined
-): string => `${String(projectId)}__${String(date)}`;
+    date: string | null | undefined,
+    workerName?: string | null
+): string => `${String(projectId)}__${String(date)}${workerName ? `__${workerName}` : ''}`;
 
 /** 下書き1件からキューの同一性キーを作る。 */
 export const draftKeyOf = (draft: DraftLike): string =>
-    draftKey(draft?.selectedProjectId, draft?.selectedDate);
+    draftKey(draft?.selectedProjectId, draft?.selectedDate, draft?.workerName);
 
-/** 下書きが指定の 現場+日付 のものか。 */
+/** 下書きが指定の 作業員+現場+日付 のものか。 */
 export const isSameDraftTarget = (
     draft: DraftLike,
     projectId: string | number | null | undefined,
-    date: string | null | undefined
-): boolean => draftKeyOf(draft) === draftKey(projectId, date);
+    date: string | null | undefined,
+    workerName?: string | null
+): boolean => draftKeyOf(draft) === draftKey(projectId, date, workerName);
+
+/**
+ * 指定の作業員が書いた下書きだけに絞る。
+ * 作業員名を持たない古い下書きは、誰のものか判別できないため誰にも見せない
+ * （他人の日報として復元・送信される事故を防ぐ）。
+ */
+export const selectWorkerDrafts = <T extends DraftLike>(
+    queue: T[],
+    workerName: string | null | undefined
+): T[] => (workerName ? (queue || []).filter(d => d.workerName === workerName) : []);
 
 /**
  * キューに下書きを追加、または同一 現場+日付 のものを上書きする純粋関数。
@@ -69,13 +87,14 @@ export const upsertIntoQueue = <T extends DraftLike>(queue: T[], entry: T): T[] 
     return next;
 };
 
-/** キューから指定の 現場+日付 の下書きを取り除く純粋関数。元の配列は破壊しない。 */
+/** キューから指定の 作業員+現場+日付 の下書きを取り除く純粋関数。元の配列は破壊しない。 */
 export const removeFromQueue = <T extends DraftLike>(
     queue: T[],
     projectId: string | number | null | undefined,
-    date: string | null | undefined
+    date: string | null | undefined,
+    workerName?: string | null
 ): T[] => {
-    const key = draftKey(projectId, date);
+    const key = draftKey(projectId, date, workerName);
     return (queue || []).filter(d => draftKeyOf(d) !== key);
 };
 
@@ -90,8 +109,9 @@ export const removeFromQueue = <T extends DraftLike>(
 export const selectNotifiableDrafts = <T extends DraftLike>(
     queue: T[],
     selectedProjectId: string | number | null | undefined,
-    selectedDate: string | null | undefined
+    selectedDate: string | null | undefined,
+    workerName?: string | null
 ): T[] => {
-    const currentKey = draftKey(selectedProjectId, selectedDate);
+    const currentKey = draftKey(selectedProjectId, selectedDate, workerName);
     return (queue || []).filter(d => !d.isAutoSaved || draftKeyOf(d) !== currentKey);
 };

@@ -28,10 +28,11 @@ import { useToast } from './components/Toast';
 import { useConfirm } from './components/ConfirmProvider';
 import { calculateWorkHours, calculateNinku, getSeasonConfig, formatTimeDisplay } from './utils/workTimeUtils';
 import { PROJECT_STATUS, WORKER_TYPE } from './utils/constants';
-import { syncOvertimeApproval, fetchPendingApprovals, approveOvertime, fetchApprovalReason } from './lib/overtimeApprovals';
-import { syncWorkAllowanceApproval, fetchPendingWorkAllowanceApprovals, approveWorkAllowance } from './lib/workAllowanceApprovals';
+import { fetchPendingApprovals, approveOvertime, fetchApprovalReason } from './lib/overtimeApprovals';
+import { fetchPendingWorkAllowanceApprovals, approveWorkAllowance } from './lib/workAllowanceApprovals';
 import { fetchWithCache, getDraftQueue, upsertDraft, removeDraft } from './utils/offlineCache';
-import { draftKeyOf, upsertIntoQueue, selectNotifiableDrafts } from './utils/draftQueueUtils';
+import { newClientUuid, isNetworkSaveError, describeSaveError } from './utils/dailyReportSave';
+import { draftKeyOf, upsertIntoQueue, selectNotifiableDrafts, selectWorkerDrafts } from './utils/draftQueueUtils';
 import { fetchSystemSettings, DEFAULT_HOURLY_WAGE } from './hooks/useSystemSettings';
 import { summarizeTaskCosts } from './utils/projectUtils';
 import { calculateTimeOverlapWarnings } from './utils/timeOverlapUtils';
@@ -63,6 +64,9 @@ const WorkerApp = () => {
     // 配置表（閲覧専用）用: 管理画面の配置表と同じく「配置表に表示」チェックで判定する（属性は問わない）
     const [assignmentWorkers, setAssignmentWorkers] = useState([]);
     const [loggedInWorker, setLoggedInWorker] = useState(null);
+    // online イベントなど、初回だけ登録するハンドラから現在の作業員名を参照するため
+    const loggedInWorkerNameRef = useRef(null);
+    useEffect(() => { loggedInWorkerNameRef.current = loggedInWorker?.name || null; }, [loggedInWorker]);
     const [isLoading, setIsLoading] = useState(true);
 
     const [projects, setProjects] = useState([]);
@@ -158,7 +162,8 @@ const WorkerApp = () => {
 
         const handleOnline = () => {
             setIsOnline(true);
-            const queued = getDraftQueue();
+            // 他の作業員の下書きは数えない（共有端末で他人の下書きを知らせない）
+            const queued = selectWorkerDrafts(getDraftQueue(), loggedInWorkerNameRef.current);
             if (queued.length > 0) {
                 showToast(`通信が回復しました。未送信のデータが${queued.length}件あります。内容を確認して送信してください。`, 'warning');
             }
@@ -263,6 +268,7 @@ const WorkerApp = () => {
                     const insertedData = await insertDefaultProjectTask({
                         projectId: selectedProjectId,
                         name: defaultTaskName,
+                        workerId: loggedInWorker.id,
                     });
                     if (insertedData) {
                         tData = insertedData;
@@ -365,7 +371,7 @@ const WorkerApp = () => {
     const handleApproveOvertime = async (id) => {
         setApprovingId(id);
         try {
-            await approveOvertime(id, loggedInWorker.name);
+            await approveOvertime(id, loggedInWorker.name, loggedInWorker.id);
             await loadPendingApprovals();
             showToast('残業を承認しました。', 'success');
         } catch (e) {
@@ -397,7 +403,7 @@ const WorkerApp = () => {
     const handleApproveWorkAllowance = async (id) => {
         setApprovingAllowanceId(id);
         try {
-            await approveWorkAllowance(id, loggedInWorker.name);
+            await approveWorkAllowance(id, loggedInWorker.name, loggedInWorker.id);
             await loadPendingAllowanceApprovals();
             showToast('作業手当を承認しました。', 'success');
         } catch (e) {
@@ -756,7 +762,8 @@ const WorkerApp = () => {
         }
     };
 
-    const addSubcontractor = () => { setHasUnsavedChanges(true); setSubcontractors(prev => [...prev, { id: 'temp-' + Date.now(), company_name: '', worker_count: 1 }]); };
+    // 仮 id に UUID を使い、保存時にそのまま DB の id にする（応答が届かず再送しても二重登録にならない）
+    const addSubcontractor = () => { setHasUnsavedChanges(true); setSubcontractors(prev => [...prev, { id: 'temp-' + newClientUuid(), company_name: '', worker_count: 1 }]); };
     const updateSubcontractor = (id, field, value) => { setHasUnsavedChanges(true); setSubcontractors(prev => prev.map(s => s.id === id ? { ...s, [field]: value } : s)); };
     const removeSubcontractor = (id) => {
         setHasUnsavedChanges(true);
@@ -789,6 +796,7 @@ const WorkerApp = () => {
                 projectId: selectedProjectId,
                 name: taskName.trim(),
                 order: newTaskOrder,
+                workerId: loggedInWorker.id,
             });
             setTasks(prev => [...prev, {
                 id: ins.id, name: ins.name, target_hours: ins.target_hours, progress_percentage: ins.progress_percentage, order: ins.order,
@@ -806,6 +814,7 @@ const WorkerApp = () => {
         if (hasUnsavedChanges && selectedProjectId && tasks.length > 0) {
             const timer = setTimeout(() => {
                 const { entry } = upsertDraft({
+                    workerName: loggedInWorker?.name,
                     selectedProjectId,
                     selectedDate,
                     tasks,
@@ -821,7 +830,7 @@ const WorkerApp = () => {
             }, 1000);
             return () => clearTimeout(timer);
         }
-    }, [tasks, subcontractors, deletedSubcontractorIds, dailyBreakSettings, hasUnsavedChanges, selectedProjectId, selectedDate]);
+    }, [tasks, subcontractors, deletedSubcontractorIds, dailyBreakSettings, hasUnsavedChanges, selectedProjectId, selectedDate, loggedInWorker]);
 
     // ========== 時間自動計算 (各タスク×各スロット) ==========
     const defaultBreakDurations = getSeasonConfig(selectedDate).breaks.map(brk => brk.e - brk.s);
@@ -861,12 +870,17 @@ const WorkerApp = () => {
     // ユーザーが今まさに見ている内容そのものなので通知不要。
     // 通信エラーで保存された下書き、または他の現場/日付の未送信下書きのみを通知対象とする。
     const notifiableDraftQueue = useMemo(
-        () => selectNotifiableDrafts(draftQueue, selectedProjectId, selectedDate),
-        [draftQueue, selectedProjectId, selectedDate]
+        () => selectNotifiableDrafts(
+            selectWorkerDrafts(draftQueue, loggedInWorker?.name),
+            selectedProjectId, selectedDate, loggedInWorker?.name
+        ),
+        [draftQueue, selectedProjectId, selectedDate, loggedInWorker]
     );
 
     // ========== ドラフト（オフライン下書き）操作 ==========
     const handleRestoreDraft = async (draft) => {
+        // 念のため、他の作業員の下書きは復元しない（一覧には本人の分しか出さない）
+        if (!loggedInWorker || draft.workerName !== loggedInWorker.name) return;
         const ok = await confirm({
             title: '下書きの復元',
             message: '下書きを復元しますか？（現在の入力内容は上書きされます）',
@@ -908,7 +922,7 @@ const WorkerApp = () => {
             confirmText: '破棄する',
         });
         if (!ok) return;
-        const { queue, saved } = removeDraft(draft.selectedProjectId, draft.selectedDate);
+        const { queue, saved } = removeDraft(draft.selectedProjectId, draft.selectedDate, draft.workerName);
         setDraftQueue(queue);
         if (!saved) {
             showToast('下書きの破棄を保存できませんでした。次回起動時に復活する可能性があります。', 'error');
@@ -1024,6 +1038,7 @@ const WorkerApp = () => {
             const updateOps = [];          // { id, data } 更新対象
             const insertPayloads = [];     // 新規 insert する行
             const insertSlotKeys = [];     // insertPayloads と並列：返り id を書き戻すスロットのキー
+            const updateSlotKeys = new Map(); // 更新対象の record_id → スロットのキー（追加し直しの id 書き戻し用）
             const clearedSlotKeys = new Set(); // 空にされ、既存レコードを削除するスロットのキー
             const slotKey = (taskId, slotId) => `${taskId}:${slotId}`;
 
@@ -1057,15 +1072,15 @@ const WorkerApp = () => {
                     };
 
                     if (slot.record_id) {
-                        updateOps.push({ id: slot.record_id, data: recordData });
-                    } else {
-                        insertPayloads.push({
-                            ...recordData,
-                            project_id: selectedProjectId,
-                            project_task_id: t.id,
-                            date: targetDate,
-                            worker_name: loggedInWorker.name,
+                        // 管理者の削除などで元の行が消えていたら、送信内容で追加し直す（作業員の送信を正とする）
+                        updateOps.push({
+                            id: slot.record_id,
+                            data: recordData,
+                            fallback_insert: { ...recordData, project_task_id: t.id },
                         });
+                        updateSlotKeys.set(slot.record_id, slotKey(t.id, slot.slot_id));
+                    } else {
+                        insertPayloads.push({ ...recordData, project_task_id: t.id });
                         insertSlotKeys.push(slotKey(t.id, slot.slot_id));
                     }
                 }
@@ -1103,31 +1118,61 @@ const WorkerApp = () => {
                 for (const s of subcontractors) {
                     if (!s.company_name) continue;
                     if (String(s.id).startsWith('temp-')) {
-                        subInsertPayloads.push({ project_id: selectedProjectId, date: targetDate, company_name: s.company_name, worker_count: s.worker_count, unit_price: 0, worker_name: loggedInWorker.name });
+                        subInsertPayloads.push({
+                            client_id: String(s.id).slice('temp-'.length),
+                            company_name: s.company_name,
+                            worker_count: s.worker_count,
+                        });
                     } else {
                         subcontractorUpdates.push({ id: s.id, company_name: s.company_name, worker_count: s.worker_count });
                     }
                 }
             }
 
-            // 削除 → 更新 → 追加 → 協力業者 をまとめて保存する（休憩設定は別保存で、日報の保存成功後に行う）
-            const insertedRecords = await saveDailyReport({
-                deleteIds,
-                updateOps,
-                insertPayloads,
-                progressUpdates: isForeman
+            // 残業承認の同期対象（この現場は理由つき、休憩再計算で残業が変わる他現場は理由を維持）
+            const overtimeTotal = tasksWithCalculation.reduce(
+                (sum, tc) => sum + (Number(tc.total_overtime) || 0), 0
+            );
+            const overtimeSyncs = [
+                { project_id: Number(selectedProjectId), total: overtimeTotal, reason: overtimeReason ?? null },
+                ...[...otherProjectOvertimeTotals].map(([projectId, total]) => ({ project_id: Number(projectId), total })),
+            ];
+
+            // 日報・進捗・協力業者・承認申請を1トランザクションで保存する（途中で失敗しても何も保存されない）
+            const { insertedIds, remapped, approvalSyncFailed } = await saveDailyReport({
+                worker_name: loggedInWorker.name,
+                worker_id: loggedInWorker.id,
+                project_id: Number(selectedProjectId),
+                date: targetDate,
+                delete_ids: deleteIds,
+                updates: updateOps,
+                inserts: insertPayloads,
+                progress: isForeman
                     ? tasks.map(t => ({ id: t.id, progress_percentage: t.progress_percentage }))
                     : [],
-                deletedSubcontractorIds: isForeman ? deletedSubcontractorIds : [],
-                subcontractorUpdates,
-                subcontractorInsertPayloads: subInsertPayloads,
+                deleted_subcontractor_ids: isForeman ? deletedSubcontractorIds : [],
+                subcontractor_updates: subcontractorUpdates,
+                subcontractor_inserts: subInsertPayloads,
+                overtime: overtimeSyncs,
+                allowance_task_names: tasks.filter(t => t.work_allowance).map(t => t.name),
             });
 
-            // 返り順は入力順と一致するため id を書き戻す（state は直接書き換えず、新しいオブジェクトで更新する）
+            // 返り順は inserts と一致するため id を書き戻す（state は直接書き換えず、新しいオブジェクトで更新する）
             const insertedIdByKey = new Map();
-            insertedRecords.forEach((row, k) => {
-                if (insertSlotKeys[k]) insertedIdByKey.set(insertSlotKeys[k], row.id);
+            insertedIds.forEach((id, k) => {
+                if (insertSlotKeys[k]) insertedIdByKey.set(insertSlotKeys[k], id);
             });
+            // 元の行が消えていて追加し直した分も、新しい id に差し替える
+            remapped.forEach(({ old_id, new_id }) => {
+                const key = updateSlotKeys.get(old_id);
+                if (key) insertedIdByKey.set(key, new_id);
+            });
+            if (remapped.length > 0) {
+                showToast('管理者側で削除されていた日報があったため、送信内容で登録し直しました。', 'warning');
+            }
+            if (approvalSyncFailed) {
+                showToast('日報は保存しましたが、残業・作業手当の承認申請を更新できませんでした。もう一度送信してください。', 'warning');
+            }
             const savedTaskIds = new Set(tasks.map(t => t.id));
             setTasks(prev => prev.map(t => {
                 if (!savedTaskIds.has(t.id)) return t;
@@ -1143,6 +1188,18 @@ const WorkerApp = () => {
                 };
             }));
 
+            // 協力業者は DB 側で id が振られるため取り直す（仮 id のままだと次の送信で二重に追加される）
+            if (isForeman) {
+                try {
+                    const { data: freshSubs, error: subsError } = await fetchSubcontractorRecordsResult(selectedProjectId, targetDate);
+                    if (subsError) throw subsError;
+                    setSubcontractors(freshSubs || []);
+                    setDeletedSubcontractorIds([]);
+                } catch (e) {
+                    console.error('Refresh subcontractors failed:', e);
+                }
+            }
+
             // 休憩設定は日報とは別テーブルのため、日報の保存後に保存する。失敗しても日報の保存は成功扱い。
             try {
                 await saveWorkerDailyBreakSettings(loggedInWorker.name, targetDate, effectiveBreakDurations);
@@ -1150,50 +1207,6 @@ const WorkerApp = () => {
             } catch (e) {
                 console.error('Break settings save error:', e);
                 showToast('日報は保存しましたが、休憩設定の保存に失敗しました。もう一度送信してください。', 'warning');
-            }
-
-            // 残業承認の同期（その日・その現場・この作業員の残業合計で起票/更新/削除）
-            try {
-                const overtimeTotal = tasksWithCalculation.reduce(
-                    (sum, tc) => sum + (Number(tc.total_overtime) || 0), 0
-                );
-                await syncOvertimeApproval({
-                    projectId: selectedProjectId,
-                    workerName: loggedInWorker.name,
-                    date: targetDate,
-                    overtimeTotal,
-                    reason: overtimeReason,
-                });
-            } catch (e) {
-                console.error('Overtime approval sync error:', e);
-                /* 残業承認の同期失敗は日報保存自体は成功扱いとし、致命的にはしない */
-            }
-
-            for (const [projectId, overtimeTotal] of otherProjectOvertimeTotals) {
-                try {
-                    await syncOvertimeApproval({
-                        projectId,
-                        workerName: loggedInWorker.name,
-                        date: targetDate,
-                        overtimeTotal,
-                    });
-                } catch (e) {
-                    console.error('Other project overtime approval sync error:', e);
-                }
-            }
-
-            // 作業手当承認の同期（その日・その現場・この作業員で手当対象にチェックされた工種名で起票/更新/削除）
-            try {
-                const allowanceTaskNames = tasks.filter(t => t.work_allowance).map(t => t.name);
-                await syncWorkAllowanceApproval({
-                    projectId: selectedProjectId,
-                    workerName: loggedInWorker.name,
-                    date: targetDate,
-                    taskNames: allowanceTaskNames,
-                });
-            } catch (e) {
-                console.error('Work allowance approval sync error:', e);
-                /* 作業手当承認の同期失敗は日報保存自体は成功扱いとし、致命的にはしない */
             }
 
             // リフレッシュ（保存は成功済み。失敗しても保存自体は成功扱いにする）
@@ -1207,7 +1220,7 @@ const WorkerApp = () => {
             }
 
             // 送信は成功しているので、下書きの掃除に失敗しても送信自体はエラーにしない。
-            setDraftQueue(removeDraft(selectedProjectId, selectedDate).queue);
+            setDraftQueue(removeDraft(selectedProjectId, selectedDate, loggedInWorker.name).queue);
             setHasUnsavedChanges(false);
 
             const breakSummary = effectiveBreakDurations.map((duration, index) => {
@@ -1221,8 +1234,9 @@ const WorkerApp = () => {
             setTimeout(() => setSaveMessage(''), 5000);
         } catch (error) {
             console.error('Submit error:', error);
-            if (!navigator.onLine || error.message?.includes('fetch') || error.message?.includes('Network')) {
+            if (isNetworkSaveError(error, navigator.onLine)) {
                 const { entry, saved } = upsertDraft({
+                    workerName: loggedInWorker.name,
                     selectedProjectId,
                     selectedDate,
                     tasks,
@@ -1238,7 +1252,7 @@ const WorkerApp = () => {
                     showToast('通信エラーが発生し、下書きの保存にも失敗しました。この画面を閉じずに電波の良いところで再送信してください。', 'error');
                 }
             } else {
-                showToast('保存に失敗しました。電波の良いところで再度お試しください。', 'error');
+                showToast(describeSaveError(error), 'error');
             }
         } finally {
             setIsSaving(false);

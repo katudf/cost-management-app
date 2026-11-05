@@ -131,8 +131,8 @@ export function upsertDraft(draft) {
  * @returns {{queue: object[], saved: boolean}} `saved` が false なら削除が
  *   localStorage に反映されていない（次回起動時に復活する）。
  */
-export function removeDraft(projectId, date) {
-    const queue = removeFromQueue(getDraftQueue(), projectId, date);
+export function removeDraft(projectId, date, workerName) {
+    const queue = removeFromQueue(getDraftQueue(), projectId, date, workerName);
     const saved = saveDraftQueue(queue);
     return { queue, saved };
 }

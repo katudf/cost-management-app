@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Edit3, Plus, Trash2, Filter, Grid, List as ListIcon, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Edit3, Plus, Trash2, Filter, Grid, List as ListIcon, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmProvider';
 import { WORKER_TYPE } from '../../utils/constants';
@@ -159,7 +159,16 @@ const InputTab = ({
                     </div>
                 )}
             </div>
-            
+
+            {/* 作業員画面の送信は開始・終了時刻から時間を計算し直すため、ここでの時間数の修正は上書きされる（作業員の送信を正とする運用） */}
+            <div className="flex items-start gap-2 mb-4 p-3 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 text-xs">
+                <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                <span>
+                    ここで入力・修正した時間数は、作業員が作業日報画面から同じ日を送信すると、開始・終了時刻から計算し直した値で上書きされます。
+                    時刻のない日報は作業員の画面では空欄に見え、その日を送信すると削除されます。作業員の送信内容が正となります。
+                </span>
+            </div>
+
             {viewMode === 'list' ? (
                 <>
                     <div className="flex flex-col md:flex-row gap-4 mb-4 bg-slate-100 p-3 rounded-lg border border-slate-200">

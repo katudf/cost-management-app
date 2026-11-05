@@ -6,6 +6,7 @@ import {
     upsertIntoQueue,
     removeFromQueue,
     selectNotifiableDrafts,
+    selectWorkerDrafts,
     type DraftLike,
 } from './draftQueueUtils';
 
@@ -199,5 +200,40 @@ describe('selectNotifiableDrafts', () => {
             d(2, '2026-01-01', { isAutoSaved: true }),   // 別現場 → 残す
         ];
         expect(selectNotifiableDrafts(queue, 1, '2026-01-01')).toHaveLength(3);
+    });
+});
+
+describe('作業員ごとの下書き', () => {
+    it('作業員名が違えば同じ現場・日付でも別の下書きになる', () => {
+        const a = d(1, '2026-01-01', { workerName: '山田' });
+        const b = d(1, '2026-01-01', { workerName: '佐藤' });
+        expect(draftKeyOf(a)).not.toBe(draftKeyOf(b));
+        expect(upsertIntoQueue([a], b)).toHaveLength(2);
+    });
+
+    it('selectWorkerDrafts は本人の下書きだけを返し、作業員名のない古い下書きは返さない', () => {
+        const queue = [
+            d(1, '2026-01-01', { workerName: '山田' }),
+            d(2, '2026-01-01', { workerName: '佐藤' }),
+            d(3, '2026-01-01'),
+        ];
+        expect(selectWorkerDrafts(queue, '山田').map(x => x.selectedProjectId)).toEqual([1]);
+        expect(selectWorkerDrafts(queue, null)).toEqual([]);
+    });
+
+    it('removeFromQueue は本人の下書きだけを消す', () => {
+        const queue = [
+            d(1, '2026-01-01', { workerName: '山田' }),
+            d(1, '2026-01-01', { workerName: '佐藤' }),
+        ];
+        const next = removeFromQueue(queue, 1, '2026-01-01', '山田');
+        expect(next).toHaveLength(1);
+        expect(next[0].workerName).toBe('佐藤');
+    });
+
+    it('isSameDraftTarget は作業員名まで一致したときだけ true', () => {
+        const a = d(1, '2026-01-01', { workerName: '山田' });
+        expect(isSameDraftTarget(a, 1, '2026-01-01', '山田')).toBe(true);
+        expect(isSameDraftTarget(a, 1, '2026-01-01', '佐藤')).toBe(false);
     });
 });
