@@ -98,7 +98,7 @@ AdminApp
 ├── 配置表 (AssignmentChartTab)
 │   └── ガントチャート形式アサイン管理
 ├── 日報 (DailyReportTab)
-│   └── 作業員提出日報の一覧・承認（残業・作業手当）
+│   └── 作業員提出日報の一覧（残業・作業手当の承認は作業員画面で職長が行う）
 ├── 見積 (EstimateList → EstimateForm)
 │   ├── 見積一覧・検索・複製
 │   ├── 見積書作成（明細・小計・諸経費）
@@ -121,7 +121,8 @@ AdminApp
 - プロジェクト選択（施工中のみ表示）
 - 工種タスク別の作業時間・内容入力
 - 協力業者作業記録の追加
-- 残業・作業手当の申請（承認は AdminApp の日報タブ）
+- 残業・作業手当の申請（早出は申請不要）。承認は作業員画面で現場の職長が行う
+- 承認された残業・作業手当のお知らせ（本人が「確認した」を押すまで画面上部に表示。`lib/approvalNotices.js`）
 - 配置表（工程表）の参照
 - オフラインキャッシュ（`utils/offlineCache.js`）による通信断時の入力保持
 
@@ -203,7 +204,8 @@ Supabase (PostgreSQL)
 | worker_id | int8 (FK → Workers) | |
 | date | date | 作業日 |
 | hours | numeric | 作業時間 |
-| overtime_hours | numeric | 残業時間 |
+| overtime_hours | numeric | 時間外の合計（早出 + 残業） |
+| early_overtime_hours | numeric | 時間外のうち早出（定時開始前）。残業 = overtime_hours − early_overtime_hours |
 | work_content | text | 作業内容メモ |
 | created_at | timestamptz | |
 
@@ -286,7 +288,7 @@ App.jsx  ─ ErrorBoundary → AuthProvider → 各アプリ
 │   ├── InputTab
 │   ├── MasterTab
 │   ├── WorkersTab       → WorkerEditModal / WorkerDetailsModal
-│   ├── DailyReportTab   （残業・作業手当の承認）
+│   ├── DailyReportTab   （作業員提出日報の一覧）
 │   ├── AssignmentChartTab
 │   │   └── assignment/ (ProjectBarRow, WorkerRow, AssignmentPopup,
 │   │                    EditColorPopup, EditHolidayPopup)
@@ -377,6 +379,7 @@ AdminApp.jsx
 |---------|------|
 | `supabaseEstimates.js` | 見積ヘッダー・明細のCRUD、ソフト削除・復元 |
 | `lib/overtimeApprovals.js` | 残業申請の取得・承認 |
+| `lib/approvalNotices.js` | 承認のお知らせ（未確認の取得・確認済みの記録） |
 | `lib/workAllowanceApprovals.js` | 作業手当申請の取得・承認 |
 | `utils/offlineCache.js` | オフライン時の入力データ退避（localStorage） |
 | `utils/estimateDraft.js` | 見積フォームの下書き自動保存 |
@@ -427,7 +430,8 @@ window.addEventListener('beforeunload', (e) => {
 
 - **1人工** = 8時間労働
 - **実人工数** = 合計作業時間 ÷ 8
-- **残業** = 1日8時間超過分
+- **時間外** = 早出（定時開始 08:00 より前）+ 残業（定時終了後。夏季 17:30・冬季 17:00。日をまたいだ分を含む）
+- **早出**は職長の承認不要。**残業**は職長の承認が必要（`OvertimeApprovals` に残業だけの時間で起票）
 - **人件費** = 実人工数 × 1日換算単価（人工単価 × 8）
 
 ### 原価集計（DashboardTab / useDashboardStats）

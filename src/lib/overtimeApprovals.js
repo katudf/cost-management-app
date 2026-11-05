@@ -5,6 +5,7 @@ import { supabase } from './supabase';
  * UIコンポーネントから supabase.from() を直接呼ばず、必ずここを経由する。
  *
  * 承認単位: 日次 × 作業員(worker_name) × 現場(project_id) で1件。
+ * 対象: 残業（定時終了後の時間外）だけ。早出（定時開始前）は承認不要なので申請に含めない。
  * 申請起票: 日報保存時、残業合計 > 0 で pending を自動起票（既存があれば更新）。
  *           起票・更新・削除は DB 関数 save_daily_report が日報と同じトランザクションで行う。
  * 承認: 職長が自現場の pending を承認（自己承認可）。
@@ -45,22 +46,28 @@ export async function approveOvertime(id, approverName, approverWorkerId) {
 }
 
 /**
- * 既存の残業理由を取得する（その現場・その日・その作業員）。編集時の初期表示用。
+ * その現場・その日・その作業員の残業申請を取得する。編集時の理由の初期表示と、
+ * 送信で承認済みの残業が承認待ちに戻ったかの判定に使う。
  * @param {number|string} projectId
  * @param {string} workerName
  * @param {string} date - 'YYYY-MM-DD'
- * @returns {Promise<string>} 理由文字列（無ければ空文字）
+ * @returns {Promise<{ reason: string, status: string|null, approved_hours: number|null }>}
+ *   申請が無ければ { reason: '', status: null, approved_hours: null }
  */
-export async function fetchApprovalReason(projectId, workerName, date) {
+export async function fetchDayOvertimeApproval(projectId, workerName, date) {
     const { data, error } = await supabase
         .from('OvertimeApprovals')
-        .select('reason')
+        .select('reason, status, approved_hours')
         .eq('project_id', Number(projectId))
         .eq('worker_name', workerName)
         .eq('date', date)
         .maybeSingle();
     if (error) throw error;
-    return data?.reason || '';
+    return {
+        reason: data?.reason || '',
+        status: data?.status ?? null,
+        approved_hours: data?.approved_hours == null ? null : Number(data.approved_hours),
+    };
 }
 
 /**

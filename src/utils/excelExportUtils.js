@@ -1,5 +1,6 @@
 import * as xlsx from 'xlsx-js-style';
-import { calculateNinku, formatTimeDisplay } from './workTimeUtils';
+import { calculateNinku, formatTimeDisplay, splitRecordOvertime } from './workTimeUtils';
+import { buildDayOvertimeLines } from './overtimeReportUtils';
 import { getReportDayOffLabel } from './reportDayOffUtils';
 import layoutData from '../layout_react.json';
 import * as fflate from 'fflate';
@@ -91,7 +92,7 @@ export const exportToExcel = (activeProject, summaryData) => {
     // Excel書き込みデータ作成（詳細用）
     const ws2Data = [
         siteNameRow,
-        ["作業項目", "作業内容", "作業員", "開始", "終了", "実働時間", "時間外", "日付"]
+        ["作業項目", "作業内容", "作業員", "開始", "終了", "実働時間", "時間外", "うち早出", "うち残業", "日付"]
     ];
     activeProject.records.forEach(r => {
         const taskName = activeProject.masterData.find(m => m.id === r.taskId)?.task || '不明';
@@ -104,6 +105,8 @@ export const exportToExcel = (activeProject, summaryData) => {
             r.end_time ? formatTimeDisplay(r.end_time) : '',
             r.hours || 0,
             r.overtime_hours || 0,
+            splitRecordOvertime(r).early,
+            splitRecordOvertime(r).late,
             r.date || '',
         ]);
     });
@@ -156,47 +159,63 @@ export const exportToExcel = (activeProject, summaryData) => {
     };
 
     applyStyleToSheet(ws1, 7);
-    applyStyleToSheet(ws2, 8);
+    applyStyleToSheet(ws2, 10);
 
     // 作業員別の集計データ作成（レコードごとの日付で季節別に人工数を算出し合算）
     const workerHours = {};
     activeProject.records.forEach(r => {
         const workerName = r.worker || '未設定';
         if (!workerHours[workerName]) {
-            workerHours[workerName] = { hours: 0, overtime: 0, ninku: 0 };
+            workerHours[workerName] = { hours: 0, overtime: 0, early: 0, late: 0, ninku: 0 };
         }
         workerHours[workerName].hours += Number(r.hours || 0);
-        workerHours[workerName].overtime += Number(r.overtime_hours || 0);
+        const split = splitRecordOvertime(r);
+        workerHours[workerName].overtime += split.total;
+        workerHours[workerName].early += split.early;
+        workerHours[workerName].late += split.late;
         workerHours[workerName].ninku += calculateNinku(Number(r.hours || 0), r.date);
     });
 
     const ws3Data = [
         siteNameRow,
-        ["作業員名", "延べ実労働時間 (h)", "うち時間外 (h)", "延べ人工"]
+        ["作業員名", "延べ実労働時間 (h)", "うち時間外 (h)", "うち早出 (h)", "うち残業 (h)", "延べ人工"]
     ];
 
     let totalWorkerHours = 0;
     let totalWorkerOvertime = 0;
+    let totalWorkerEarly = 0;
+    let totalWorkerLate = 0;
     let totalWorkerNinku = 0;
     const sortedWorkers = Object.keys(workerHours).sort((a, b) => workerHours[b].hours - workerHours[a].hours);
 
     sortedWorkers.forEach(worker => {
-        const { hours, overtime, ninku } = workerHours[worker];
+        const { hours, overtime, early, late, ninku } = workerHours[worker];
         totalWorkerHours += hours;
         totalWorkerOvertime += overtime;
+        totalWorkerEarly += early;
+        totalWorkerLate += late;
         totalWorkerNinku += ninku;
-        ws3Data.push([worker, parseFloat(hours.toFixed(1)), parseFloat(overtime.toFixed(1)), parseFloat(ninku.toFixed(2))]);
+        ws3Data.push([
+            worker,
+            parseFloat(hours.toFixed(1)),
+            parseFloat(overtime.toFixed(1)),
+            parseFloat(early.toFixed(1)),
+            parseFloat(late.toFixed(1)),
+            parseFloat(ninku.toFixed(2)),
+        ]);
     });
 
     ws3Data.push([
         "【合計】",
         parseFloat(totalWorkerHours.toFixed(1)),
         parseFloat(totalWorkerOvertime.toFixed(1)),
+        parseFloat(totalWorkerEarly.toFixed(1)),
+        parseFloat(totalWorkerLate.toFixed(1)),
         parseFloat(totalWorkerNinku.toFixed(2))
     ]);
 
     const ws3 = xlsx.utils.aoa_to_sheet(ws3Data);
-    applyStyleToSheet(ws3, 4);
+    applyStyleToSheet(ws3, 6);
 
     // 列幅の簡易調整
     ws1['!cols'] = [{ wch: 20 }, { wch: 15 }, { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 10 }];
@@ -574,30 +593,12 @@ const createWorkerReportSheet = (workerName, days, recordsData, projects, subcon
     // Row 19: 作業手当（時間外時間の合計 + 手当対象作業の「作業名 実働h」を併記）
     days.forEach((d, i) => {
         const dayRecords = (recordsData || []).filter(r => r.date === d);
-        const dayOt = dayRecords.reduce((sum, r) => sum + Number(r.overtime_hours || 0), 0);
         const allowanceLines = buildWorkAllowanceLines(dayRecords, d, workAllowanceApprovals);
 
-        const lines = [];
-        let approverName = '';
-        if (dayOt > 0) {
-            // その日に残業がある現場のうち、承認されていない現場が1つでもあれば「未承認」
-            const otProjectIds = [...new Set(
-                dayRecords.filter(r => Number(r.overtime_hours || 0) > 0).map(r => String(r.project_id))
-            )];
-            const hasUnapproved = otProjectIds.some(pid =>
-                !(overtimeApprovals || []).some(a =>
-                    String(a.project_id) === pid && a.date === d && a.status === 'approved'
-                )
-            );
-            lines.push(`残業 ${dayOt.toFixed(1)}H${hasUnapproved ? '（未承認）' : ''}`);
-
-            // 承認サイン: その日の承認済み残業の承認者（職長）名を表示する
-            const approvedRow = (overtimeApprovals || []).find(a =>
-                otProjectIds.includes(String(a.project_id)) &&
-                a.date === d && a.status === 'approved' && a.approved_by
-            );
-            if (approvedRow) approverName = approvedRow.approved_by;
-        }
+        // 早出（承認不要）と残業（職長の承認が必要）を分けて出す。承認サインは残業の承認者
+        const overtime = buildDayOvertimeLines(dayRecords, d, overtimeApprovals);
+        const lines = [...overtime.lines];
+        let approverName = overtime.approverName;
         lines.push(...allowanceLines);
 
         // 承認サインが未設定なら、作業手当の承認者名で補完する

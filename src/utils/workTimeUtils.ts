@@ -71,6 +71,8 @@ const SEASON_CONFIGS: { summer: SeasonConfig; winter: SeasonConfig } = {
     },
 };
 
+const round2 = (value: number): number => Math.round(value * 100) / 100;
+
 // ============================================================
 // getSeasonConfig: 日付から夏季/冬季の設定を取得
 // ============================================================
@@ -107,7 +109,12 @@ export interface WorkHoursResult {
     grossMinutes: number;
     breakMinutes: number;
     netWorkHours: number;
+    /** 時間外の合計（早出 + 残業） */
     overtimeHours: number;
+    /** 早出: 定時開始前の時間外。職長の承認は不要 */
+    earlyOvertimeHours: number;
+    /** 残業: 定時終了後の時間外（日をまたいだ分を含む）。職長の承認が必要 */
+    lateOvertimeHours: number;
     regularHours: number;
 }
 
@@ -134,6 +141,8 @@ export const calculateWorkHours = (
             breakMinutes: 0,
             netWorkHours: 0,
             overtimeHours: 0,
+            earlyOvertimeHours: 0,
+            lateOvertimeHours: 0,
             regularHours: 0,
         };
     }
@@ -148,6 +157,8 @@ export const calculateWorkHours = (
             breakMinutes: 0,
             netWorkHours: 0,
             overtimeHours: 0,
+            earlyOvertimeHours: 0,
+            lateOvertimeHours: 0,
             regularHours: 0,
         };
     }
@@ -210,14 +221,41 @@ export const calculateWorkHours = (
     const overtimeMinutes = earlyOvertimeMinutes + lateOvertimeMinutes;
     const overtimeHours = overtimeMinutes / 60;
     const regularHours = Math.max(0, netWorkHours - overtimeHours);
+    // 合計と内訳が丸めでずれないよう、残業は「丸めた合計 − 丸めた早出」で出す
+    const roundedOvertime = round2(overtimeHours);
+    const roundedEarly = round2(earlyOvertimeMinutes / 60);
 
     return {
         grossMinutes,
         breakMinutes,
-        netWorkHours: Math.round(netWorkHours * 100) / 100,
-        overtimeHours: Math.round(overtimeHours * 100) / 100,
-        regularHours: Math.round(regularHours * 100) / 100,
+        netWorkHours: round2(netWorkHours),
+        overtimeHours: roundedOvertime,
+        earlyOvertimeHours: roundedEarly,
+        lateOvertimeHours: round2(roundedOvertime - roundedEarly),
+        regularHours: round2(regularHours),
     };
+};
+
+// ============================================================
+// splitRecordOvertime: 保存済み日報の時間外を 早出 / 残業 に分ける
+// ============================================================
+
+export interface OvertimeSplit {
+    total: number;
+    early: number;
+    late: number;
+}
+
+/**
+ * TaskRecords の行（overtime_hours = 時間外の合計、early_overtime_hours = うち早出）から内訳を出す。
+ * 早出の列が無い・空の行（管理者が時間数だけで入力した行など）は、すべて残業として扱う。
+ */
+export const splitRecordOvertime = (
+    record: { overtime_hours?: number | string | null; early_overtime_hours?: number | string | null } | null | undefined
+): OvertimeSplit => {
+    const total = Math.max(0, Number(record?.overtime_hours) || 0);
+    const early = Math.min(total, Math.max(0, Number(record?.early_overtime_hours) || 0));
+    return { total, early, late: round2(total - early) };
 };
 
 // ============================================================

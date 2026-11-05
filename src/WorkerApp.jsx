@@ -18,7 +18,7 @@ import {
     saveDailyReport,
     saveWorkerDailyBreakSettings,
 } from './hooks/useDailyReport';
-import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, Save, Trash2, PlusCircle, Clock, X, Wifi, WifiOff, FileText, CalendarDays, CopyPlus, GripVertical, ChevronDown } from 'lucide-react';
+import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, BellRing, Save, Trash2, PlusCircle, Clock, X, Wifi, WifiOff, FileText, CalendarDays, CopyPlus, GripVertical, ChevronDown } from 'lucide-react';
 import WorkerAssignmentView from './components/worker/WorkerAssignmentView';
 import QuarterTimeSelect from './components/worker/QuarterTimeSelect';
 import { useAuth } from './hooks/useAuth';
@@ -26,9 +26,10 @@ import LoginScreen from './components/auth/LoginScreen';
 import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
 import { useToast } from './components/Toast';
 import { useConfirm } from './components/ConfirmProvider';
-import { calculateWorkHours, calculateNinku, getSeasonConfig, formatTimeDisplay } from './utils/workTimeUtils';
+import { calculateWorkHours, calculateNinku, getSeasonConfig, formatTimeDisplay, splitRecordOvertime } from './utils/workTimeUtils';
 import { PROJECT_STATUS, WORKER_TYPE } from './utils/constants';
-import { fetchPendingApprovals, approveOvertime, fetchApprovalReason } from './lib/overtimeApprovals';
+import { fetchPendingApprovals, approveOvertime, fetchDayOvertimeApproval } from './lib/overtimeApprovals';
+import { fetchUnacknowledgedApprovals, acknowledgeApprovals } from './lib/approvalNotices';
 import { fetchPendingWorkAllowanceApprovals, approveWorkAllowance } from './lib/workAllowanceApprovals';
 import { fetchWithCache, getDraftQueue, upsertDraft, removeDraft } from './utils/offlineCache';
 import { newClientUuid, isNetworkSaveError, describeSaveError } from './utils/dailyReportSave';
@@ -105,6 +106,11 @@ const WorkerApp = () => {
 
     // 残業理由（その現場・その日の残業に対する任意のメモ）
     const [overtimeReason, setOvertimeReason] = useState('');
+    // 表示中の現場・日付の残業申請の状態（送信で承認済みの残業が承認待ちに戻ったかの判定用）
+    const [dayOvertimeApproval, setDayOvertimeApproval] = useState(null);
+    // 本人がまだ確認していない「承認されました」のお知らせ
+    const [approvalNotices, setApprovalNotices] = useState([]);
+    const [isAcknowledging, setIsAcknowledging] = useState(false);
     // 職長: 承認待ちの残業申請リスト
     const [pendingApprovals, setPendingApprovals] = useState([]);
     const [approvingId, setApprovingId] = useState(null);
@@ -336,13 +342,15 @@ const WorkerApp = () => {
                     setHasUnsavedChanges(false);
                 }
 
-                // 既存の残業理由を読み込む（その現場・その日・この作業員）
+                // 既存の残業申請（理由と承認状態）を読み込む（その現場・その日・この作業員）
                 // 下書きを復元した直後は、下書きの理由を優先する
-                if (!keepRestoredReason) {
-                    try {
-                        const reason = await fetchApprovalReason(selectedProjectId, loggedInWorker.name, selectedDate);
-                        if (active && restoreSeqRef.current === startSeq) setOvertimeReason(reason);
-                    } catch (e) { if (active && restoreSeqRef.current === startSeq) setOvertimeReason(''); }
+                try {
+                    const approval = await fetchDayOvertimeApproval(selectedProjectId, loggedInWorker.name, selectedDate);
+                    if (active) setDayOvertimeApproval(approval);
+                    if (!keepRestoredReason && active && restoreSeqRef.current === startSeq) setOvertimeReason(approval.reason);
+                } catch (e) {
+                    if (active) setDayOvertimeApproval(null);
+                    if (!keepRestoredReason && active && restoreSeqRef.current === startSeq) setOvertimeReason('');
                 }
                 if (!active) return;
 
@@ -371,6 +379,40 @@ const WorkerApp = () => {
         return () => { active = false; };
     }, [selectedProjectId, loggedInWorker, selectedDate]);
 
+    // 本人の「承認されました」のお知らせを読み込む（共有アカウントのため、選んだ作業員の分だけ）
+    const loadApprovalNotices = useCallback(async () => {
+        if (!loggedInWorker?.name) { setApprovalNotices([]); return; }
+        try {
+            const notices = await fetchUnacknowledgedApprovals(loggedInWorker.name);
+            // 読み込み中に作業員が切り替わっていたら反映しない
+            if (loggedInWorkerNameRef.current === loggedInWorker.name) setApprovalNotices(notices);
+        } catch (e) {
+            // お知らせは補助的な表示なので、読めなくても日報の入力は止めない
+            console.error('Failed to load approval notices:', e);
+        }
+    }, [loggedInWorker]);
+
+    useEffect(() => { loadApprovalNotices(); }, [loadApprovalNotices]);
+
+    // お知らせを確認済みにする（表示中のものをまとめて）
+    const handleAcknowledgeNotices = async () => {
+        if (!loggedInWorker || approvalNotices.length === 0) return;
+        setIsAcknowledging(true);
+        try {
+            await acknowledgeApprovals({
+                workerName: loggedInWorker.name,
+                workerId: loggedInWorker.id,
+                notices: approvalNotices,
+            });
+            setApprovalNotices([]);
+        } catch (e) {
+            console.error('Acknowledge approvals error:', e);
+            showToast(describeSaveError(e, { action: '確認', fallback: 'お知らせの確認を記録できませんでした。' }), 'error');
+        } finally {
+            setIsAcknowledging(false);
+        }
+    };
+
     // 職長が担当する全現場の承認待ち残業を読み込む
     const loadPendingApprovals = useCallback(async () => {
         if (!loggedInWorker) { setPendingApprovals([]); return; }
@@ -394,6 +436,7 @@ const WorkerApp = () => {
         try {
             await approveOvertime(id, loggedInWorker.name, loggedInWorker.id);
             await loadPendingApprovals();
+            loadApprovalNotices();
             showToast('残業を承認しました。', 'success');
         } catch (e) {
             console.error('Approve overtime error:', e);
@@ -428,6 +471,7 @@ const WorkerApp = () => {
         try {
             await approveWorkAllowance(id, loggedInWorker.name, loggedInWorker.id);
             await loadPendingAllowanceApprovals();
+            loadApprovalNotices();
             showToast('作業手当を承認しました。', 'success');
         } catch (e) {
             console.error('Approve work allowance error:', e);
@@ -879,13 +923,16 @@ const WorkerApp = () => {
                     const c = calculateWorkHours(slot.start_time, slot.end_time, selectedDate, slot.is_overnight, effectiveBreakDurations);
                     return { ...c, has_input: true };
                 }
-                return { netWorkHours: 0, overtimeHours: 0, regularHours: 0, breakMinutes: 0, grossMinutes: 0, has_input: false };
+                return { netWorkHours: 0, overtimeHours: 0, earlyOvertimeHours: 0, lateOvertimeHours: 0, regularHours: 0, breakMinutes: 0, grossMinutes: 0, has_input: false };
             });
             const total_hours = slotCalcs.reduce((s, c) => s + c.netWorkHours, 0);
             const total_overtime = slotCalcs.reduce((s, c) => s + c.overtimeHours, 0);
+            // 早出は承認不要、残業（終業後）は職長の承認が必要
+            const total_early = slotCalcs.reduce((s, c) => s + c.earlyOvertimeHours, 0);
+            const total_late = slotCalcs.reduce((s, c) => s + c.lateOvertimeHours, 0);
             const total_break = slotCalcs.reduce((s, c) => s + c.breakMinutes, 0);
             const has_any_input = slotCalcs.some(c => c.has_input);
-            return { ...t, slotCalcs, total_hours: Math.round(total_hours * 100) / 100, total_overtime: Math.round(total_overtime * 100) / 100, total_break, has_any_input };
+            return { ...t, slotCalcs, total_hours: Math.round(total_hours * 100) / 100, total_overtime: Math.round(total_overtime * 100) / 100, total_early: Math.round(total_early * 100) / 100, total_late: Math.round(total_late * 100) / 100, total_break, has_any_input };
         });
     }, [tasks, selectedDate, effectiveBreakDurations]);
 
@@ -1124,6 +1171,7 @@ const WorkerApp = () => {
                     const recordData = {
                         hours: sc.netWorkHours || 0,
                         overtime_hours: sc.overtimeHours || 0,
+                        early_overtime_hours: sc.earlyOvertimeHours || 0,
                         start_time: slot.start_time,
                         end_time: slot.end_time,
                         note: j === 0 ? (t.today_note || '') : '',
@@ -1154,18 +1202,22 @@ const WorkerApp = () => {
                 const projectKey = String(record.project_id);
                 if (!otherProjectOvertimeTotals.has(projectKey)) otherProjectOvertimeTotals.set(projectKey, 0);
                 if (!record.start_time || !record.end_time) {
-                    otherProjectOvertimeTotals.set(projectKey, otherProjectOvertimeTotals.get(projectKey) + (Number(record.overtime_hours) || 0));
+                    otherProjectOvertimeTotals.set(projectKey, otherProjectOvertimeTotals.get(projectKey) + splitRecordOvertime(record).late);
                     return;
                 }
                 const startTime = formatTimeDisplay(record.start_time);
                 const endTime = formatTimeDisplay(record.end_time);
                 const isOvernight = startTime > endTime && endTime !== '';
                 const calculated = calculateWorkHours(startTime, endTime, targetDate, isOvernight, effectiveBreakDurations);
-                otherProjectOvertimeTotals.set(projectKey, otherProjectOvertimeTotals.get(projectKey) + calculated.overtimeHours);
+                otherProjectOvertimeTotals.set(projectKey, otherProjectOvertimeTotals.get(projectKey) + calculated.lateOvertimeHours);
                 if (!currentProjectIds.has(record.id) && !deletedRecordIds.has(record.id)) {
                     updateOps.push({
                         id: record.id,
-                        data: { hours: calculated.netWorkHours, overtime_hours: calculated.overtimeHours },
+                        data: {
+                            hours: calculated.netWorkHours,
+                            overtime_hours: calculated.overtimeHours,
+                            early_overtime_hours: calculated.earlyOvertimeHours,
+                        },
                     });
                 }
             });
@@ -1189,12 +1241,14 @@ const WorkerApp = () => {
             }
 
             // 残業承認の同期対象（この現場は理由つき、休憩再計算で残業が変わる他現場は理由を維持）
-            const overtimeTotal = tasksWithCalculation.reduce(
-                (sum, tc) => sum + (Number(tc.total_overtime) || 0), 0
-            );
+            // 承認が要るのは残業（終業後）だけ。早出は承認申請に含めない
+            const round2 = (value) => Math.round(value * 100) / 100;
+            const overtimeTotal = round2(tasksWithCalculation.reduce(
+                (sum, tc) => sum + (Number(tc.total_late) || 0), 0
+            ));
             const overtimeSyncs = [
                 { project_id: Number(selectedProjectId), total: overtimeTotal, reason: overtimeReason ?? null },
-                ...[...otherProjectOvertimeTotals].map(([projectId, total]) => ({ project_id: Number(projectId), total })),
+                ...[...otherProjectOvertimeTotals].map(([projectId, total]) => ({ project_id: Number(projectId), total: round2(total) })),
             ];
 
             // 日報・進捗・協力業者・承認申請を1トランザクションで保存する（途中で失敗しても何も保存されない）
@@ -1234,7 +1288,19 @@ const WorkerApp = () => {
             }
             if (approvalSyncFailed) {
                 showToast('日報は保存しましたが、残業・作業手当の承認申請を更新できませんでした。もう一度送信してください。', 'warning');
+            } else if (
+                dayOvertimeApproval?.status === 'approved'
+                && overtimeTotal > 0
+                && round2(dayOvertimeApproval.approved_hours ?? 0) !== overtimeTotal
+            ) {
+                // DB 関数 _sync_overtime_approval と同じ判定: 承認済みの残業時間が変わると承認待ちに戻る
+                showToast('承認済みの残業時間が変わったため、もう一度職長の承認待ちになりました。', 'warning');
             }
+            // 承認状態とお知らせを取り直す（承認待ちに戻ったお知らせは消える）
+            fetchDayOvertimeApproval(selectedProjectId, loggedInWorker.name, targetDate)
+                .then(setDayOvertimeApproval)
+                .catch(e => console.error('Refresh overtime approval failed:', e));
+            loadApprovalNotices();
             const savedTaskIds = new Set(tasks.map(t => t.id));
             setTasks(prev => prev.map(t => {
                 if (!savedTaskIds.has(t.id)) return t;
@@ -1387,7 +1453,8 @@ const WorkerApp = () => {
     const seasonConfig = getSeasonConfig(selectedDate);
 
     const totalInputHours = tasksWithCalculation.reduce((s, t) => s + (t.total_hours || 0), 0);
-    const totalInputOvertimeHours = tasksWithCalculation.reduce((s, t) => s + (t.total_overtime || 0), 0);
+    // 残業理由の入力欄は、承認が要る残業（終業後）だけを対象にする
+    const totalInputOvertimeHours = tasksWithCalculation.reduce((s, t) => s + (t.total_late || 0), 0);
     const currentSiteNinku = calculateNinku(totalInputHours, selectedDate);
 
     const otherProjectsHours = sumOtherProjectsHours(workerDailyAllRecords, selectedProjectId, selectedDate, effectiveBreakDurations);
@@ -1466,6 +1533,32 @@ const WorkerApp = () => {
             </header>
 
             <main className="p-4 max-w-lg mx-auto">
+                {approvalNotices.length > 0 && (
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 mb-4 shadow-sm" role="status">
+                        <div className="flex items-center gap-2 text-emerald-700 font-bold mb-2 text-sm">
+                            <BellRing size={18} /> 承認されました（{approvalNotices.length}件）
+                        </div>
+                        <ul className="space-y-1.5 mb-3">
+                            {approvalNotices.map(n => {
+                                const projectName = projects.find(p => String(p.id) === String(n.project_id))?.name || '（現場名不明）';
+                                const dateLabel = new Date(n.date + 'T00:00:00').toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric', weekday: 'short' });
+                                const content = n.kind === 'overtime'
+                                    ? `残業 ${n.hours.toFixed(1)}H`
+                                    : `作業手当（${n.task_names.join('・') || '対象作業'}）`;
+                                return (
+                                    <li key={`${n.kind}-${n.id}`} className="bg-white/70 rounded-lg px-2 py-1.5 text-xs text-slate-700">
+                                        <div className="font-bold text-emerald-800">{dateLabel}　{content}</div>
+                                        <div className="text-slate-500">{projectName}{n.approved_by ? `｜承認: ${n.approved_by}` : ''}</div>
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                        <button onClick={handleAcknowledgeNotices} disabled={isAcknowledging}
+                            className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold py-2 rounded-lg text-xs transition shadow-sm">
+                            {isAcknowledging ? '記録中…' : '確認した'}
+                        </button>
+                    </div>
+                )}
                 {notifiableDraftQueue.length > 0 && (
                     <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 mb-4 shadow-sm">
                         <div className="flex items-center gap-2 text-orange-700 font-bold mb-2 text-sm">
@@ -1948,7 +2041,8 @@ const WorkerApp = () => {
                                                 {sc.has_input && (
                                                     <div className="flex items-center gap-1.5 ml-1 flex-wrap">
                                                         <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">実働 {sc.netWorkHours.toFixed(1)}h</span>
-                                                        {sc.overtimeHours > 0 && <span className="text-[10px] font-bold text-orange-600 bg-orange-50 border border-orange-200 px-2 py-0.5 rounded">時間外 {sc.overtimeHours.toFixed(1)}h</span>}
+                                                        {sc.earlyOvertimeHours > 0 && <span className="text-[10px] font-bold text-sky-700 bg-sky-50 border border-sky-200 px-2 py-0.5 rounded">早出 {sc.earlyOvertimeHours.toFixed(1)}h</span>}
+                                                        {sc.lateOvertimeHours > 0 && <span className="text-[10px] font-bold text-orange-600 bg-orange-50 border border-orange-200 px-2 py-0.5 rounded">残業 {sc.lateOvertimeHours.toFixed(1)}h</span>}
                                                         {sc.breakMinutes > 0 && <span className="text-[10px] font-bold text-slate-400 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded">休憩{sc.breakMinutes}分控除</span>}
                                                     </div>
                                                 )}
@@ -1966,7 +2060,14 @@ const WorkerApp = () => {
                                     {t.has_any_input && t.time_slots.length > 1 && (
                                         <div className="flex items-center gap-2 flex-wrap bg-emerald-50 border border-emerald-200 p-2 rounded-lg">
                                             <span className="text-xs font-bold text-emerald-700">合計: {t.total_hours.toFixed(1)}h</span>
-                                            {t.total_overtime > 0 && <span className="text-xs font-bold text-orange-600">（うち時間外 {t.total_overtime.toFixed(1)}h）</span>}
+                                            {t.total_overtime > 0 && (
+                                                <span className="text-xs font-bold text-orange-600">
+                                                    （うち{[
+                                                        t.total_early > 0 ? `早出 ${t.total_early.toFixed(1)}h` : null,
+                                                        t.total_late > 0 ? `残業 ${t.total_late.toFixed(1)}h` : null,
+                                                    ].filter(Boolean).join('・')}）
+                                                </span>
+                                            )}
                                         </div>
                                     )}
 
@@ -2018,6 +2119,7 @@ const WorkerApp = () => {
                                     <h3 className="font-bold text-orange-800 text-sm leading-snug">
                                         残業 {totalInputOvertimeHours.toFixed(1)}H の理由（任意）
                                     </h3>
+                                    <span className="ml-auto text-[10px] font-bold text-orange-600 shrink-0">職長の承認が必要（早出は不要）</span>
                                 </div>
                                 <div className="p-4">
                                     <textarea

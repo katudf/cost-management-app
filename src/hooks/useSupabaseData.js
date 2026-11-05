@@ -144,6 +144,7 @@ export function useSupabaseData(showToast) {
                     worker: r.worker_name || '',
                     hours: r.hours || 0,
                     overtime_hours: r.overtime_hours || 0,
+                    early_overtime_hours: r.early_overtime_hours || 0,
                     note: r.note || ''
                 }));
 
@@ -244,6 +245,7 @@ export function useSupabaseData(showToast) {
                 worker: r.worker_name || '',
                 hours: r.hours || 0,
                 overtime_hours: r.overtime_hours || 0,
+                early_overtime_hours: r.early_overtime_hours || 0,
                 note: r.note || ''
             }));
 

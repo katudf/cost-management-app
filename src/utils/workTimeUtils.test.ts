@@ -4,6 +4,7 @@ import {
   calculateWorkHours,
   calculateNinku,
   formatTimeDisplay,
+  splitRecordOvertime,
 } from './workTimeUtils';
 
 describe('workTimeUtils', () => {
@@ -37,6 +38,8 @@ describe('workTimeUtils', () => {
         breakMinutes: 0,
         netWorkHours: 0,
         overtimeHours: 0,
+        earlyOvertimeHours: 0,
+        lateOvertimeHours: 0,
         regularHours: 0,
       };
       expect(calculateWorkHours(null, '17:00', '2026-05-27')).toEqual(emptyResult);
@@ -49,6 +52,8 @@ describe('workTimeUtils', () => {
         breakMinutes: 0,
         netWorkHours: 0,
         overtimeHours: 0,
+        earlyOvertimeHours: 0,
+        lateOvertimeHours: 0,
         regularHours: 0,
       };
       expect(calculateWorkHours('17:00', '08:00', '2026-05-27')).toEqual(emptyResult);
@@ -97,6 +102,64 @@ describe('workTimeUtils', () => {
       expect(result.breakMinutes).toBe(0);
       // 夜勤は全時間帯が時間外(残業)扱いになる
       expect(result.overtimeHours).toBe(9.0);
+    });
+  });
+
+  describe('calculateWorkHours の早出・残業の内訳', () => {
+    it('定時以降だけなら全部が残業になる', () => {
+      const result = calculateWorkHours('08:00', '19:30', '2026-08-15');
+      expect(result.earlyOvertimeHours).toBe(0);
+      expect(result.lateOvertimeHours).toBe(2);
+    });
+
+    it('定時前だけなら全部が早出になる', () => {
+      const result = calculateWorkHours('07:00', '17:30', '2026-08-15');
+      expect(result.earlyOvertimeHours).toBe(1);
+      expect(result.lateOvertimeHours).toBe(0);
+    });
+
+    it('早出と残業の両方があれば分けて出し、合計は時間外と一致する', () => {
+      // 冬季: 06:30 - 18:15 → 早出 1.5h、残業 1.25h
+      const result = calculateWorkHours('06:30', '18:15', '2026-12-15');
+      expect(result.earlyOvertimeHours).toBe(1.5);
+      expect(result.lateOvertimeHours).toBe(1.25);
+      expect(result.overtimeHours).toBe(2.75);
+    });
+
+    it('日をまたいだ分は残業に入る', () => {
+      const result = calculateWorkHours('20:00', '05:00', '2026-08-15', true);
+      expect(result.earlyOvertimeHours).toBe(0);
+      expect(result.lateOvertimeHours).toBe(9);
+    });
+
+    it('定時前に始まって日をまたぐ場合も、定時前の分だけが早出になる', () => {
+      const result = calculateWorkHours('07:00', '01:00', '2026-08-15', true);
+      expect(result.earlyOvertimeHours).toBe(1);
+      expect(result.lateOvertimeHours).toBe(7.5);
+    });
+
+    it('1分単位の早出でも、内訳の合計が時間外の合計と一致する', () => {
+      const result = calculateWorkHours('07:59', '17:31', '2026-08-15');
+      expect(result.earlyOvertimeHours + result.lateOvertimeHours).toBeCloseTo(result.overtimeHours, 10);
+    });
+  });
+
+  describe('splitRecordOvertime', () => {
+    it('保存済みの行の時間外を早出と残業に分ける', () => {
+      expect(splitRecordOvertime({ overtime_hours: 3, early_overtime_hours: 1 })).toEqual({ total: 3, early: 1, late: 2 });
+    });
+
+    it('早出の値が無い行は全部を残業として扱う', () => {
+      expect(splitRecordOvertime({ overtime_hours: 2 })).toEqual({ total: 2, early: 0, late: 2 });
+      expect(splitRecordOvertime({ overtime_hours: '1.5', early_overtime_hours: null })).toEqual({ total: 1.5, early: 0, late: 1.5 });
+    });
+
+    it('早出が合計を超えていても、合計を上限にする', () => {
+      expect(splitRecordOvertime({ overtime_hours: 1, early_overtime_hours: 2 })).toEqual({ total: 1, early: 1, late: 0 });
+    });
+
+    it('行が無ければすべて 0', () => {
+      expect(splitRecordOvertime(null)).toEqual({ total: 0, early: 0, late: 0 });
     });
   });
 

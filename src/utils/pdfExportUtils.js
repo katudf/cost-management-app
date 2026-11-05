@@ -1,4 +1,5 @@
 import { calculateNinku, formatTimeDisplay } from './workTimeUtils';
+import { buildDayOvertimeLines } from './overtimeReportUtils';
 import { getReportDayOffLabel } from './reportDayOffUtils';
 
 /**
@@ -350,8 +351,6 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
     otRow += `<td class="item-cell item-label-qty sub-item vertical-label">承認サイン</td>`;
     days.forEach(d => {
         const dayRecords = (recordsData || []).filter(r => r.date === d);
-        const dayOt = dayRecords.reduce((sum, r) => sum + Number(r.overtime_hours || 0), 0);
-
         // 手当対象作業を作業項目ごとに集計
         const taskMap = {};
         dayRecords.forEach(r => {
@@ -372,27 +371,10 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
             `${esc(name)} ${hours.toFixed(1)}h${hasUnapprovedAllowance ? '（未承認）' : ''}`
         );
 
-        const lines = [];
-        let approverName = '';
-        if (dayOt > 0) {
-            // その日に残業がある現場のうち、承認されていない現場が1つでもあれば「未承認」
-            const otProjectIds = [...new Set(
-                dayRecords.filter(r => Number(r.overtime_hours || 0) > 0).map(r => String(r.project_id))
-            )];
-            const hasUnapproved = otProjectIds.some(pid =>
-                !(overtimeApprovals || []).some(a =>
-                    String(a.project_id) === pid && a.date === d && a.status === 'approved'
-                )
-            );
-            lines.push(`残業 ${dayOt.toFixed(1)}H${hasUnapproved ? '（未承認）' : ''}`);
-
-            // 承認サイン: その日の承認済み残業の承認者（職長）名を表示する
-            const approvedRow = (overtimeApprovals || []).find(a =>
-                otProjectIds.includes(String(a.project_id)) &&
-                a.date === d && a.status === 'approved' && a.approved_by
-            );
-            if (approvedRow) approverName = approvedRow.approved_by;
-        }
+        // 早出（承認不要）と残業（職長の承認が必要）を分けて出す。承認サインは残業の承認者
+        const overtime = buildDayOvertimeLines(dayRecords, d, overtimeApprovals);
+        const lines = [...overtime.lines];
+        let approverName = overtime.approverName;
         lines.push(...allowanceLines);
 
         // 承認サインが未設定なら、作業手当の承認者名で補完する
