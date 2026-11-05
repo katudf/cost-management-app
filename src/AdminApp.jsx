@@ -11,7 +11,7 @@ import LoginScreen from './components/auth/LoginScreen';
 import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
 import HomeLanding from './components/HomeLanding';
 import logoUrl from './img/kimura-logo.svg';
-import { Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, GripVertical, LogOut, Bell, Database, Upload } from 'lucide-react';
+import { Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, GripVertical, LogOut, Bell, Database, Upload, HelpCircle } from 'lucide-react';
 import { buildWeekDays, buildWeekPrefix, fetchWeeklyReportData } from './hooks/useWeeklyReportData';
 import { DEFAULT_MASTER_DATA, PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR, ITEM_TYPE, DASHBOARD_VIEW_MODE, DASHBOARD_VIEW_MODE_LIST, ESTIMATE_STATUS, isSystemAdminRole } from './utils/constants';
 import { calculateAge } from './utils/dateUtils';
@@ -37,6 +37,7 @@ import { fetchEstimates, createCustomer } from './supabaseEstimates';
 import { parseExcelForEstimate } from './utils/excelImportUtils';
 import ProjectExcelImportModal from './components/ProjectExcelImportModal';
 import CustomerResolveModal from './components/estimate/CustomerResolveModal';
+import HelpPanel from './components/HelpPanel';
 
 const ImportExcelButton = ({ onClick, className, iconSize = 18 }) => (
     <button onClick={onClick} aria-label="エクセルから取り込み" title="エクセルから取り込み" className={className}>
@@ -52,6 +53,8 @@ const App = () => {
     // ログイン直後はトップページ（タイル画面）を表示し、タイル選択で各タブへ入る。
     // ヘッダーのロゴ／システム名クリックでトップページへ戻る。
     const [showHome, setShowHome] = useState(true);
+    const [isHelpOpen, setIsHelpOpen] = useState(false);
+    const closeHelp = useCallback(() => setIsHelpOpen(false), []);
     const [estimateEditId, setEstimateEditId] = useState(undefined);
     // undefined = 一覧表示
     // null      = 新規作成フォーム
@@ -560,6 +563,15 @@ const App = () => {
                                     <span className="text-sm font-bold text-slate-500 whitespace-nowrap">{currentStaff.name} </span>
                                 )}
                                 <button
+                                    onClick={() => setIsHelpOpen(v => !v)}
+                                    aria-label="このタブのヘルプ"
+                                    title="このタブのヘルプ"
+                                    aria-expanded={isHelpOpen}
+                                    className={`p-2 rounded-lg transition shadow-sm border ${isHelpOpen ? 'text-blue-600 bg-blue-50 border-blue-200' : 'text-slate-400 border-transparent hover:text-blue-600 hover:bg-white hover:border-blue-200'}`}
+                                >
+                                    <HelpCircle size={18} />
+                                </button>
+                                <button
                                     onClick={signOut}
                                     aria-label="ログアウト"
                                     title="ログアウト"
@@ -1027,6 +1039,8 @@ const App = () => {
                     }}
                     onSave={workerOps.saveWorker}
                 />
+
+                <HelpPanel isOpen={isHelpOpen} tabKey={activeTab} onClose={closeHelp} />
             </div>
         </div>
     );
