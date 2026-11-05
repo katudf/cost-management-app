@@ -2,22 +2,13 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { toDateStr, addDays, getMonday, buildDateColumns } from '../utils/dateUtils';
 import { DEFAULT_COLORS, PROJECT_STATUS } from '../utils/constants';
+import { buildAssignmentLookup, projectColor, isBarProject } from '../utils/scheduleDisplay';
 import { fetchCompanyHolidays, deleteCompanyHoliday, upsertCompanyHoliday } from './useCompanyHolidays';
 import { isActualHoliday, HOLIDAY_DESCRIPTION } from '../utils/holidayUtils';
 
 // 配置レコード配列から workerId_date → 配置配列（assignment_order順）のルックアップを作る純関数。
-export function buildAssignmentLookup(assignments) {
-    const lookup = {};
-    assignments.forEach(a => {
-        const key = `${a.workerId}_${a.date}`;
-        if (!lookup[key]) lookup[key] = [];
-        lookup[key].push(a);
-    });
-    Object.keys(lookup).forEach(key => {
-        lookup[key].sort((a, b) => (a.assignment_order || 0) - (b.assignment_order || 0));
-    });
-    return lookup;
-}
+// 共有表示・作業員画面と同じ規則にするため utils/scheduleDisplay.js に置き、ここから再公開する。
+export { buildAssignmentLookup };
 
 // targetWorkerIds × targetDates の範囲でassignmentLookupから既存配置を集め、
 // dayOffset/workerOffsetを付与したコピー用データと、元の配置レコード一覧を返す純関数。
@@ -188,12 +179,13 @@ export function useAssignmentState({
             ]);
 
             const pData = pRes.data || [];
-            const excludedNames = ["【会社】有給", "有給", "【有給】"];
+            // DB 側で予定・施工中に絞り、表示順 → 作成日時で並べているので、有給用を除いた順番がバーの並び位置になる
+            // （色の規則は共有表示・作業員画面と共通: utils/scheduleDisplay.js）
             setBarProjects(pData
-                .filter(p => !excludedNames.includes(p.name))
+                .filter(isBarProject)
                 .map((p, idx) => ({
                     ...p,
-                    color: p.bar_color || DEFAULT_COLORS[idx % DEFAULT_COLORS.length]
+                    color: projectColor(p, idx)
                 }))
             );
             setCompanyHolidays(hData);
@@ -449,11 +441,12 @@ export function useAssignmentState({
         const barColorById = {};
         barProjects.forEach(bp => { barColorById[bp.id] = bp.color; });
         const map = {};
-        projects.forEach((p, idx) => {
+        projects.forEach((p) => {
             // 作業員行には工事短縮名を優先表示（未入力時は管理現場名）
+            // バーに出ない案件（完了など）は個別色か灰色（共有表示・作業員画面と同じ規則）
             map[p.id] = {
                 name: p.short_name?.trim() || p.siteName || '無題',
-                color: barColorById[p.id] || DEFAULT_COLORS[idx % DEFAULT_COLORS.length]
+                color: barColorById[p.id] || projectColor(p, undefined)
             };
         });
         return map;

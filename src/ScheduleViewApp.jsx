@@ -1,16 +1,14 @@
 import React, { useState, useMemo } from 'react';
-import { Calendar, ChevronLeft, ChevronRight, Loader2, LinkIcon } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, Loader2, LinkIcon, AlertCircle, RefreshCw } from 'lucide-react';
 import { toDateStr, addDays, getMonday, buildDateColumns } from './utils/dateUtils';
-import { DEFAULT_COLORS, SCHEDULE_TYPES, PROJECT_STATUS } from './utils/constants';
+import { SCHEDULE_TYPES } from './utils/constants';
+import { buildAssignmentLookup, NON_BAR_PROJECT_COLOR } from './utils/scheduleDisplay';
 import { useAuth } from './hooks/useAuth';
 import { useScheduleViewData } from './hooks/useScheduleViewData';
 import { isNonWorkingDay } from './utils/holidayUtils';
 import LoginScreen from './components/auth/LoginScreen';
 import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
 
-
-// メイン配置表と同様、有給用の案件はバーに出さない
-const EXCLUDED_BAR_NAMES = ['【会社】有給', '有給', '【有給】'];
 
 // 共有キー付きURL（/schedule.html?key=xxxx）ならログイン不要で閲覧できる。
 // ホーム画面から起動した際にクエリが落ちていても表示できるよう、最後に開いたキーを保存しておく
@@ -28,15 +26,29 @@ const getShareKey = () => {
     }
 };
 
+// 無効になった共有キーを忘れる（URL の ?key= も外す）。残したままだと、この端末では
+// 「共有URLが無効です」画面から抜けられず、ログインして閲覧する経路にも戻れない。
+const forgetShareKey = () => {
+    try { localStorage.removeItem(SHARE_KEY_STORAGE); } catch { /* 保存できない環境は何もしない */ }
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('key')) {
+        params.delete('key');
+        const qs = params.toString();
+        window.history.replaceState(null, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`);
+    }
+};
+
 const ScheduleViewApp = () => {
     const { isAuthenticated, isLoading: isAuthLoading, isPasswordRecovery } = useAuth();
-    const [shareKey] = useState(getShareKey);
+    const [shareKey, setShareKey] = useState(getShareKey);
 
     // 表示期間: 4週間
     const [startDate, setStartDate] = useState(() => getMonday(new Date()));
     const totalDays = 28;
 
-    const { workers, assignments, barProjects, holidays, isLoading, error } = useScheduleViewData(startDate, totalDays, shareKey);
+    const { workers, assignments, barProjects, holidays, isLoading, error, refetch } = useScheduleViewData(
+        startDate, totalDays, shareKey, Boolean(shareKey) || (!isAuthLoading && isAuthenticated)
+    );
 
     // isOff: 日曜または登録休日（メイン配置表と同じ判定）
     const dateColumns = useMemo(() => {
@@ -51,35 +63,27 @@ const ScheduleViewApp = () => {
     // 週の変わり目に太い左ボーダー（管理者版と同じ）
     const weekBorder = (i) => (i > 0 && dateColumns[i - 1].weekIdx !== dateColumns[i].weekIdx ? { borderLeft: '2px solid #64748B' } : {});
 
-    // ルックアップ
-    const assignmentLookup = useMemo(() => {
-        const lookup = {};
-        assignments.forEach(a => {
-            const key = `${a.workerId}_${a.date}`;
-            if (!lookup[key]) lookup[key] = [];
-            lookup[key].push(a);
-        });
-        return lookup;
-    }, [assignments]);
+    // ルックアップ（1マス内の並び順は管理画面の配置表と同じ規則）
+    const assignmentLookup = useMemo(() => buildAssignmentLookup(assignments), [assignments]);
 
+    // 色は useScheduleViewData で管理画面と同じ規則（utils/scheduleDisplay.js）で付け済み
     const projectMap = useMemo(() => {
         const map = {};
-        barProjects.forEach((p, idx) => {
+        barProjects.forEach((p) => {
             map[p.id] = {
                 // 作業員行には工事短縮名を優先表示（未入力時は工事名）
                 name: p.short_name?.trim() || p.name || '無題',
-                color: p.color || DEFAULT_COLORS[idx % DEFAULT_COLORS.length]
+                color: p.color
             };
         });
         return map;
     }, [barProjects]);
 
-    // 上部バーチャート: メイン配置表と同じく予定・施工中の案件のみ、表示期間に掛かるものを表示
+    // 上部バーチャート: メイン配置表と同じく予定・施工中の案件（bar_index あり）のうち、表示期間に掛かるもの
     const visibleBars = useMemo(() => {
         const viewEnd = addDays(startDate, totalDays - 1);
         return barProjects
-            .filter(p => [PROJECT_STATUS.SCHEDULED, PROJECT_STATUS.IN_PROGRESS].includes(p.status)
-                && !EXCLUDED_BAR_NAMES.includes(p.name))
+            .filter(p => p.bar_index != null && p.startDate && p.endDate)
             .map(p => {
                 const pStart = new Date(p.startDate + 'T00:00:00');
                 const pEnd = new Date(p.endDate + 'T00:00:00');
@@ -119,6 +123,13 @@ const ScheduleViewApp = () => {
                     <p className="text-sm text-slate-500">
                         このURLは停止または再発行されています。管理者に新しいURLを確認してください。
                     </p>
+                    <button
+                        type="button"
+                        onClick={() => { forgetShareKey(); setShareKey(null); }}
+                        className="mt-4 w-full py-2 rounded-lg font-bold text-sm border-2 border-slate-200 text-slate-600 hover:bg-slate-50 transition"
+                    >
+                        ログインして閲覧する
+                    </button>
                 </div>
             </div>
         );
@@ -186,6 +197,20 @@ const ScheduleViewApp = () => {
                     </div>
                 </div>
             </header>
+
+            {error === 'fetch_failed' && (
+                <div role="alert" className="flex items-center gap-2 m-3 p-3 rounded-lg border border-red-200 bg-red-50 text-red-700 text-xs">
+                    <AlertCircle size={16} className="shrink-0" />
+                    <span className="flex-1">配置予定を読み込めませんでした。表示が古いか空の可能性があります。</span>
+                    <button
+                        type="button"
+                        onClick={refetch}
+                        className="flex items-center gap-1 px-2 py-1 rounded-md bg-white border border-red-200 font-bold hover:bg-red-100 transition"
+                    >
+                        <RefreshCw size={12} /> 再読み込み
+                    </button>
+                </div>
+            )}
 
             {isLoading && (
                 <div className="h-1 bg-blue-200 overflow-hidden">
@@ -316,7 +341,7 @@ const ScheduleViewApp = () => {
                                                             : null;
                                                         const twoLine = cellAssigns.length === 1;
                                                         const displayName = a.title || shortenName(pInfo?.name || '', twoLine ? 8 : 4);
-                                                        const bgColor = schedType?.color || pInfo?.color || '#94A3B8';
+                                                        const bgColor = schedType?.color || pInfo?.color || NON_BAR_PROJECT_COLOR;
                                                         return (
                                                             <div
                                                                 key={ai}

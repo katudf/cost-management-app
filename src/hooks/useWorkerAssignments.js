@@ -4,7 +4,7 @@ import { useToast } from '../components/Toast';
 import { fetchWithCache } from '../utils/offlineCache';
 import { fetchCompanyHolidaysResult } from './useCompanyHolidays';
 import { toDateStr, addDays, getMonday, buildDateColumns } from '../utils/dateUtils';
-import { DEFAULT_COLORS } from '../utils/constants';
+import { buildAssignmentLookup, buildBarIndexMap, projectColor } from '../utils/scheduleDisplay';
 
 // 作業員向け配置表（閲覧専用）の表示期間: 表示開始週の月曜から4週間（初期表示は今週）
 const TOTAL_DAYS = 28;
@@ -80,29 +80,20 @@ export function useWorkerAssignments({ workers, projects, loggedInWorker }) {
         return map;
     }, [holidays]);
 
+    // 色・並び順は管理画面の配置表・共有表示と同じ規則（utils/scheduleDisplay.js）
     const projectMap = useMemo(() => {
+        const barIndexById = buildBarIndexMap(projects);
         const map = {};
-        (projects || []).forEach((p, idx) => {
+        (projects || []).forEach((p) => {
             map[p.id] = {
                 name: p.short_name?.trim() || p.name || '無題',
-                color: p.bar_color || DEFAULT_COLORS[idx % DEFAULT_COLORS.length],
+                color: projectColor(p, barIndexById.get(p.id)),
             };
         });
         return map;
     }, [projects]);
 
-    const assignmentLookup = useMemo(() => {
-        const lookup = {};
-        assignments.forEach(a => {
-            const key = `${a.workerId}_${a.date}`;
-            if (!lookup[key]) lookup[key] = [];
-            lookup[key].push(a);
-        });
-        Object.keys(lookup).forEach(key => {
-            lookup[key].sort((a, b) => (a.assignment_order || 0) - (b.assignment_order || 0));
-        });
-        return lookup;
-    }, [assignments]);
+    const assignmentLookup = useMemo(() => buildAssignmentLookup(assignments), [assignments]);
 
     // 日報実績ルックアップ（worker.id + date → 現場IDの配列）
     const taskRecordLookup = useMemo(() => {
