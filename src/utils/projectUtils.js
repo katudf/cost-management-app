@@ -117,23 +117,27 @@ export const calculateProjectsSummary = (projects, hourlyWage) => {
             overallProgress = 100;
         }
 
+        // 完了などで明細（工種・日報）をまだ読み込んでいない現場は、損益を計算できない。
+        // 0 円と出すと「損益ゼロ」と誤解されるため null にし、表示側で「未集計」と出す。
+        const notLoaded = proj._isLoaded === false;
         return {
             ...proj,
             totalActual,
             totalTarget,
             overallProgress,
-            predictedProfitLoss
+            predictedProfitLoss: notLoaded ? null : predictedProfitLoss,
         };
     });
 };
 
 /**
  * predictedProfitLoss（予測損益）の表示用フォーマット。
- * 符号付きの¥表示文字列を返す（例: "+¥12,345" / "-¥6,789"）。
+ * 符号付きの¥表示文字列を返す（例: "+¥12,345" / "-¥6,789"）。未集計（null）は "未集計"。
  * @param {number} value
  * @returns {string}
  */
 export const formatProfitLoss = (value) => {
+    if (value === null || value === undefined) return '未集計';
     const v = Number(value) || 0;
     return `${v >= 0 ? '+' : '-'}¥${Math.abs(Math.round(v)).toLocaleString()}`;
 };

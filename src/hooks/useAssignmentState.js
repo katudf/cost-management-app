@@ -955,51 +955,48 @@ export function useAssignmentState({
     const handleProjectReorder = useCallback(async (draggedId, targetId) => {
         if (draggedId === targetId) return;
 
-        setBarProjects(prev => {
-            const dragIdx = prev.findIndex(p => p.id === draggedId);
-            const targetIdx = prev.findIndex(p => p.id === targetId);
-            if (dragIdx === -1 || targetIdx === -1) return prev;
+        // 並べ替え前の一覧を控えておき、保存に失敗したら画面を元に戻す。
+        // （以前は setState の更新関数の中で保存を始めていた。更新関数は StrictMode で2回呼ばれ得るため、
+        //   保存が二重に走り、失敗しても画面は並べ替え後のままだった）
+        const previous = barProjects;
+        const dragIdx = previous.findIndex(p => p.id === draggedId);
+        const targetIdx = previous.findIndex(p => p.id === targetId);
+        if (dragIdx === -1 || targetIdx === -1) return;
 
-            const next = [...prev];
-            const [draggedItem] = next.splice(dragIdx, 1);
-            next.splice(targetIdx, 0, draggedItem);
+        const next = [...previous];
+        const [draggedItem] = next.splice(dragIdx, 1);
+        next.splice(targetIdx, 0, draggedItem);
+        setBarProjects(next);
 
-            const performAsyncDBUpdate = async () => {
-                try {
-                    const { data: maxData } = await supabase
-                        .from('Projects')
-                        .select('display_order')
-                        .not('display_order', 'is', null)
-                        .order('display_order', { ascending: false })
-                        .limit(1);
+        try {
+            const { data: maxData, error: maxError } = await supabase
+                .from('Projects')
+                .select('display_order')
+                .not('display_order', 'is', null)
+                .order('display_order', { ascending: false })
+                .limit(1);
+            if (maxError) throw maxError;
 
-                    const currentMax = maxData && maxData.length > 0 && maxData[0].display_order ? maxData[0].display_order : 0;
-                    const newProjectsData = next.map((p, idx) => ({ ...p, display_order: currentMax + idx + 1 }));
+            const currentMax = maxData && maxData.length > 0 && maxData[0].display_order ? maxData[0].display_order : 0;
+            const newProjectsData = next.map((p, idx) => ({ ...p, display_order: currentMax + idx + 1 }));
 
-                    const promises = newProjectsData.map(p =>
-                        supabase.from('Projects').update({ display_order: p.display_order }).eq('id', p.id)
-                    );
-                    const results = await Promise.all(promises);
-                    const failed = results.find(r => r.error);
-                    if (failed) throw failed.error;
+            const results = await Promise.all(newProjectsData.map(p =>
+                supabase.from('Projects').update({ display_order: p.display_order }).eq('id', p.id)
+            ));
+            const failed = results.find(r => r.error);
+            if (failed) throw failed.error;
 
-                    setBarProjects(current => {
-                        return current.map(p => {
-                            const found = newProjectsData.find(np => np.id === p.id);
-                            return found ? { ...p, display_order: found.display_order } : p;
-                        });
-                    });
-                } catch (err) {
-                    console.error('案件並び順更新エラー:', err);
-                    showToast('並び順の保存に失敗しました。', 'error');
-                }
-            };
-
-            performAsyncDBUpdate();
-
-            return next;
-        });
-    }, [showToast]);
+            setBarProjects(current => current.map(p => {
+                const found = newProjectsData.find(np => np.id === p.id);
+                return found ? { ...p, display_order: found.display_order } : p;
+            }));
+        } catch (err) {
+            console.error('案件並び順更新エラー:', err);
+            // 一部だけ保存された可能性があるが、画面は並べ替え前に戻す（再読み込みで DB の状態に揃う）
+            setBarProjects(previous);
+            showToast('並び順の保存に失敗しました。', 'error');
+        }
+    }, [barProjects, showToast]);
 
     const updateProjectColor = useCallback(async (projectId, color) => {
         setBarProjects(prev => prev.map(p => p.id === projectId ? { ...p, color } : p));

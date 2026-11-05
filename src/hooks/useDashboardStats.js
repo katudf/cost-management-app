@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { calculateProjectsSummary, calcPredictedProfitLoss, calcSubcontractorCost } from '../utils/projectUtils';
-import { calculateNinku, getSeasonConfig } from '../utils/workTimeUtils';
+import { calculateNinku, calculateNinkuExact, roundNinku, getSeasonConfig } from '../utils/workTimeUtils';
 
 export function useDashboardStats({ projects, activeProject, hourlyWage }) {
     const [searchQuery, setSearchQuery] = useState('');
@@ -39,19 +39,21 @@ export function useDashboardStats({ projects, activeProject, hourlyWage }) {
             const taskRecords = activeProject.records.filter(r => r.taskId === m.id);
             const actual = taskRecords.reduce((sum, r) => sum + Number(r.hours), 0);
             // 人工はレコードごとの日付で季節判定して計算し、合算する（実労働時間の合計を季節共通の定数で割らない）
-            const actualNinku = taskRecords.reduce((sum, r) => sum + calculateNinku(Number(r.hours) || 0, r.date), 0);
+            // 丸める前の値で足し、表示用の値だけ最後に丸める（1件ずつ丸めると合計がずれる）
+            const actualNinkuExact = taskRecords.reduce((sum, r) => sum + calculateNinkuExact(Number(r.hours) || 0, r.date), 0);
+            const actualNinku = roundNinku(actualNinkuExact);
             const progress = activeProject.progressData[m.id] || 0;
             const consumptionRate = m.target > 0 ? (actual / m.target) * 100 : 0;
             const variance = progress - consumptionRate;
 
             const predictedProfitLoss = calcPredictedProfitLoss(m.target, actual, progress, hourlyWage);
 
-            return { ...m, actual, actualNinku, progress, variance, predictedProfitLoss, status: variance < -5 ? 'danger' : variance < 0 ? 'warning' : 'ok' };
+            return { ...m, actual, actualNinku, actualNinkuExact, progress, variance, predictedProfitLoss, status: variance < -5 ? 'danger' : variance < 0 ? 'warning' : 'ok' };
         });
 
         const totalActual = items.reduce((sum, i) => sum + i.actual, 0);
         const totalTarget = items.reduce((sum, i) => sum + i.target, 0);
-        const totalActualNinku = items.reduce((sum, i) => sum + i.actualNinku, 0);
+        const totalActualNinku = roundNinku(items.reduce((sum, i) => sum + i.actualNinkuExact, 0));
         // 目標(target)は見積/計画上の合計時間であり日付を持たないため、季節デフォルト(getSeasonConfig(null))で換算する
         const totalTargetNinku = calculateNinku(totalTarget, null);
         const totalPredictedProfitLoss = items.reduce((sum, i) => sum + i.predictedProfitLoss, 0);

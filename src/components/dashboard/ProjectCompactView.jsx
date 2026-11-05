@@ -39,7 +39,7 @@ const ProjectCompactView = ({ projects, onOpenProject }) => {
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-2">
                         {items.map(proj => {
                             const progress = Math.min(100, Math.max(0, Number(proj.overallProgress) || 0));
-                            const profitLoss = Number(proj.predictedProfitLoss) || 0;
+                            const profitLoss = proj.predictedProfitLoss == null ? null : Number(proj.predictedProfitLoss) || 0;
                             return (
                                 <button
                                     key={proj.id}
@@ -53,7 +53,7 @@ const ProjectCompactView = ({ projects, onOpenProject }) => {
                                     </span>
                                     <span className="mt-auto flex items-center justify-between gap-1 text-[10px] font-bold">
                                         <span className="text-slate-500">{Number(proj.overallProgress) || 0}%</span>
-                                        <span className={profitLoss >= 0 ? 'text-green-600' : 'text-red-600'}>
+                                        <span className={profitLoss == null ? 'text-slate-400' : profitLoss >= 0 ? 'text-green-600' : 'text-red-600'}>
                                             {formatProfitLoss(profitLoss)}
                                         </span>
                                     </span>

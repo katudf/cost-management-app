@@ -413,28 +413,36 @@ export const syncEstimateToProject = async ({ projectId, title, customerId, stat
     if (existing && existing.length > 0) return projectId;
   }
 
-  const { data: maxOrder, error: orderError } = await supabase
-    .from('Projects')
-    .select('order')
-    .order('order', { ascending: false })
-    .limit(1);
+  // order は「最大値 + 1」で採番する。同時に別の画面が現場を作ると一意制約（Projects_order_key）に
+  // かかるため、その場合だけ採番し直して再試行する（見積番号の採番と同じ方式）。
+  let lastError = null;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const { data: maxOrder, error: orderError } = await supabase
+      .from('Projects')
+      .select('order')
+      .order('order', { ascending: false })
+      .limit(1);
 
-  if (orderError) throw orderError;
-  const nextOrder = (maxOrder?.[0]?.order || 0) + 1;
+    if (orderError) throw orderError;
+    const nextOrder = (maxOrder?.[0]?.order || 0) + 1;
 
-  const { data: inserted, error: insertError } = await supabase
-    .from('Projects')
-    .insert([{
-      name: title,
-      customerId,
-      status,
-      order: nextOrder,
-    }])
-    .select('id')
-    .single();
+    const { data: inserted, error: insertError } = await supabase
+      .from('Projects')
+      .insert([{
+        name: title,
+        customerId,
+        status,
+        order: nextOrder,
+      }])
+      .select('id')
+      .single();
 
-  if (insertError) throw insertError;
-  return inserted.id;
+    if (!insertError) return inserted.id;
+    const isOrderConflict = insertError.code === '23505' && String(insertError.message || '').includes('order');
+    if (!isOrderConflict) throw insertError;
+    lastError = insertError;
+  }
+  throw lastError;
 };
 
 // ============================================================

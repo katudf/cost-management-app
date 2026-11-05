@@ -43,6 +43,23 @@ function getCache(key) {
 }
 
 /**
+ * マスタデータのキャッシュをすべて消す。ログアウト時に呼ぶ
+ * （共有端末で、ログアウト後も作業員名簿・現場一覧などが端末に残らないようにする）。
+ */
+export function clearMasterCache() {
+    try {
+        const keys = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith(CACHE_PREFIX)) keys.push(k);
+        }
+        keys.forEach(k => localStorage.removeItem(k));
+    } catch (e) {
+        console.error('offlineCache: failed to clear cache', e);
+    }
+}
+
+/**
  * Supabaseクエリを実行し、成功したらキャッシュを更新、
  * 失敗（またはオフライン）ならキャッシュへフォールバックする。
  * @param {string} key - キャッシュキー
@@ -131,6 +148,18 @@ export function upsertDraft(draft) {
  * @returns {{queue: object[], saved: boolean}} `saved` が false なら削除が
  *   localStorage に反映されていない（次回起動時に復活する）。
  */
+/**
+ * 未送信の下書きをすべて消す。ログアウトを確認したうえで呼ぶ。
+ * 作業員名の無い古い下書き（2026-11 より前の形式）は誰の画面にも出ないため、ここで一緒に片付く。
+ */
+export function clearDraftQueue() {
+    try {
+        localStorage.removeItem(QUEUE_KEY);
+    } catch (e) {
+        console.error('offlineCache: failed to clear draft queue', e);
+    }
+}
+
 export function removeDraft(projectId, date, workerName) {
     const queue = removeFromQueue(getDraftQueue(), projectId, date, workerName);
     const saved = saveDraftQueue(queue);

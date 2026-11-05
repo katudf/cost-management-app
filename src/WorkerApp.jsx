@@ -31,7 +31,7 @@ import { PROJECT_STATUS, WORKER_TYPE } from './utils/constants';
 import { fetchPendingApprovals, approveOvertime, fetchDayOvertimeApproval } from './lib/overtimeApprovals';
 import { fetchUnacknowledgedApprovals, acknowledgeApprovals } from './lib/approvalNotices';
 import { fetchPendingWorkAllowanceApprovals, approveWorkAllowance } from './lib/workAllowanceApprovals';
-import { fetchWithCache, getDraftQueue, upsertDraft, removeDraft } from './utils/offlineCache';
+import { fetchWithCache, getDraftQueue, upsertDraft, removeDraft, clearDraftQueue } from './utils/offlineCache';
 import { newClientUuid, isNetworkSaveError, describeSaveError } from './utils/dailyReportSave';
 import { draftKeyOf, isSameDraftTarget, upsertIntoQueue, selectNotifiableDrafts, selectWorkerDrafts } from './utils/draftQueueUtils';
 import { fetchSystemSettings, DEFAULT_HOURLY_WAGE } from './hooks/useSystemSettings';
@@ -1327,13 +1327,18 @@ const WorkerApp = () => {
 
             // 協力業者は DB 側で id が振られるため取り直す（仮 id のままだと次の送信で二重に追加される）
             if (isForeman) {
+                // 読み込み時と同じキャッシュキーで取り直し、オフライン用のキャッシュも新しい内容にする
+                // （以前はキャッシュを更新しておらず、オフラインで開き直すと送信前の内容が出ていた）
                 try {
-                    const { data: freshSubs, error: subsError } = await fetchSubcontractorRecordsResult(selectedProjectId, targetDate);
-                    if (subsError) throw subsError;
+                    const { data: freshSubs, fromCache } = await fetchWithCache(`subcontractor-records-${selectedProjectId}-${targetDate}`,
+                        () => fetchSubcontractorRecordsResult(selectedProjectId, targetDate)
+                    );
+                    if (fromCache) throw new Error('offline');
                     setSubcontractors(freshSubs || []);
                     setDeletedSubcontractorIds([]);
                 } catch (e) {
                     console.error('Refresh subcontractors failed:', e);
+                    showToast('日報は保存しましたが、協力業者の一覧を取り直せませんでした。画面を開き直してから再度送信してください。', 'warning');
                 }
             }
 
@@ -1416,14 +1421,21 @@ const WorkerApp = () => {
     // ========== 作業員選択画面 ==========
     if (!loggedInWorker) {
         const handleSystemLogout = async () => {
+            // 未送信の下書き（全作業員分）があれば、ログアウトで消えることを伝えて確認する。
+            // 共有端末でログアウト後に他人の下書きが残らないよう、ログアウトするときは消す。
+            const pendingDrafts = getDraftQueue().length;
             const ok = await confirm({
                 title: 'ログアウト',
-                message: 'システムからログアウトしますか？',
+                message: pendingDrafts > 0
+                    ? `この端末に未送信の下書きが${pendingDrafts}件あります。ログアウトすると下書きは削除されます。ログアウトしますか？`
+                    : 'システムからログアウトしますか？',
                 confirmText: 'ログアウト',
                 variant: 'danger',
             });
             if (ok) {
                 await signOut();
+                clearDraftQueue();
+                setDraftQueue([]);
             }
         };
         return (

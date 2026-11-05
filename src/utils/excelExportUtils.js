@@ -1,5 +1,5 @@
 import * as xlsx from 'xlsx-js-style';
-import { calculateNinku, formatTimeDisplay, splitRecordOvertime } from './workTimeUtils';
+import { calculateNinku, calculateNinkuExact, roundNinku, formatTimeDisplay, splitRecordOvertime } from './workTimeUtils';
 import { buildDayOvertimeLines } from './overtimeReportUtils';
 import { getReportDayOffLabel } from './reportDayOffUtils';
 import layoutData from '../layout_react.json';
@@ -174,7 +174,8 @@ export const exportToExcel = (activeProject, summaryData) => {
         workerHours[workerName].overtime += split.total;
         workerHours[workerName].early += split.early;
         workerHours[workerName].late += split.late;
-        workerHours[workerName].ninku += calculateNinku(Number(r.hours || 0), r.date);
+        // 丸める前の値で足し、出力するときに丸める（1件ずつ丸めると合計がずれる）
+        workerHours[workerName].ninku += calculateNinkuExact(Number(r.hours || 0), r.date);
     });
 
     const ws3Data = [
@@ -202,7 +203,7 @@ export const exportToExcel = (activeProject, summaryData) => {
             parseFloat(overtime.toFixed(1)),
             parseFloat(early.toFixed(1)),
             parseFloat(late.toFixed(1)),
-            parseFloat(ninku.toFixed(2)),
+            roundNinku(ninku),
         ]);
     });
 
@@ -212,7 +213,7 @@ export const exportToExcel = (activeProject, summaryData) => {
         parseFloat(totalWorkerOvertime.toFixed(1)),
         parseFloat(totalWorkerEarly.toFixed(1)),
         parseFloat(totalWorkerLate.toFixed(1)),
-        parseFloat(totalWorkerNinku.toFixed(2))
+        roundNinku(totalWorkerNinku)
     ]);
 
     const ws3 = xlsx.utils.aoa_to_sheet(ws3Data);

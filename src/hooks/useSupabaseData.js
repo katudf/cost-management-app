@@ -61,11 +61,13 @@ export function useSupabaseData(showToast) {
             let sData = [];
 
             if (activeProjectIds.length > 0) {
-                const { data: tasks, error: tError } = await supabase
+                // 工種・協力業者も、現場が増えると取得上限（1000件）を超えるため全件取得する
+                const { data: tasks, error: tError } = await fetchAllPages(() => supabase
                     .from('ProjectTasks')
                     .select('*')
                     .in('projectId', activeProjectIds)
-                    .order('order', { ascending: true });
+                    .order('order', { ascending: true })
+                    .order('id', { ascending: true }));
                 if (tError) throw tError;
                 tData = tasks || [];
 
@@ -79,10 +81,11 @@ export function useSupabaseData(showToast) {
                 if (rError) throw rError;
                 rData = records || [];
 
-                const { data: subs, error: sError } = await supabase
+                const { data: subs, error: sError } = await fetchAllPages(() => supabase
                     .from('SubcontractorRecords')
                     .select('*')
-                    .in('project_id', activeProjectIds);
+                    .in('project_id', activeProjectIds)
+                    .order('id', { ascending: true }));
                 if (sError) throw sError;
                 sData = subs || [];
             }

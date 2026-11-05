@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { PASSWORD_CHANGE_KIND } from '../utils/constants';
+import { clearMasterCache } from '../utils/offlineCache';
 
 const AuthContext = createContext(null);
 
@@ -89,6 +90,9 @@ export const AuthProvider = ({ children }) => {
 
     const signOut = useCallback(async () => {
         await supabase.auth.signOut();
+        // 共有端末でログアウト後も名簿・現場一覧が端末に残らないよう、マスタのキャッシュを消す。
+        // 未送信の下書きは消さない（消すかどうかは画面側で確認してから clearDraftQueue を呼ぶ）。
+        clearMasterCache();
     }, []);
 
     const resetPasswordForEmail = useCallback(async (email) => {

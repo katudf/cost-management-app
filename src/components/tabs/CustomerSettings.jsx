@@ -5,7 +5,8 @@ import ConfirmModal from '../ConfirmModal';
 import { useCustomerSettingsData } from '../../hooks/useCustomerSettingsData';
 import { isDisplayableStaff } from '../../utils/constants';
 
-const CustomerSettings = () => {
+// onCustomersChanged: 顧客一覧が変わったら管理者画面全体の顧客一覧（Excel 取り込みの照合などで使う）にも反映する
+const CustomerSettings = ({ onCustomersChanged }) => {
     const { showToast } = useToast();
     const { customers, staffList, isLoading, refetch, createCustomer, updateCustomer, deleteCustomer, fetchLinkedRecords } = useCustomerSettingsData();
     const [isSaving, setIsSaving] = useState(false);
@@ -19,6 +20,10 @@ const CustomerSettings = () => {
             showToast('顧客情報の取得に失敗しました', 'error');
         });
     }, [refetch, showToast]);
+
+    useEffect(() => {
+        if (!isLoading && onCustomersChanged) onCustomersChanged(customers);
+    }, [customers, isLoading, onCustomersChanged]);
 
     const handleSave = async () => {
         if (!(form.name ?? '').trim()) {

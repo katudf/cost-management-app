@@ -1,5 +1,12 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { STAFF_ROLE } from '../utils/constants';
+
+// 招待されたロールが最初に使う画面。管理者画面に入れない作業員・閲覧者を管理者画面に案内しないようにする。
+const INVITE_LANDING_PAGE = {
+    [STAFF_ROLE.WORKER]: 'worker.html',
+    [STAFF_ROLE.VIEWER]: 'schedule.html',
+};
 
 export function useStaffSettingsData() {
     const [staffList, setStaffList] = useState([]);
@@ -48,9 +55,15 @@ export function useStaffSettingsData() {
     }, []);
 
     const inviteStaff = useCallback(async (staffId, email) => {
-        // 招待メールのリンク先を、いま開いている画面（本番URL等）にする。
+        // 招待メールのリンク先を、いま開いている画面（本番URL等）を基準に決める。
         // 未指定だと Supabase の Site URL が使われ、localhost に飛ばされることがある。
-        const redirectTo = `${window.location.origin}${window.location.pathname}`;
+        // 作業員は作業日報、閲覧者は工程表に直接案内する（管理者画面では「権限がありません」になるため）。
+        const role = staffList.find(s => s.id === staffId)?.role;
+        const landingPage = INVITE_LANDING_PAGE[role];
+        const baseDir = window.location.pathname.replace(/[^/]*$/, '');
+        const redirectTo = landingPage
+            ? `${window.location.origin}${baseDir}${landingPage}`
+            : `${window.location.origin}${window.location.pathname}`;
         const { error } = await supabase.functions.invoke('invite-staff', {
             body: { staffId, email, redirectTo },
         });
@@ -59,7 +72,7 @@ export function useStaffSettingsData() {
             const body = await error.context?.json?.().catch(() => null);
             throw new Error(body?.error || error.message);
         }
-    }, []);
+    }, [staffList]);
 
     return { staffList, isLoading, refetch, createStaff, updateStaff, deleteStaff, inviteStaff };
 }

@@ -3,6 +3,8 @@ import {
   getSeasonConfig,
   calculateWorkHours,
   calculateNinku,
+  calculateNinkuExact,
+  roundNinku,
   formatTimeDisplay,
   splitRecordOvertime,
 } from './workTimeUtils';
@@ -169,6 +171,14 @@ describe('workTimeUtils', () => {
       expect(calculateNinku(7.5, '2026-08-15')).toBe(1.0);
       expect(calculateNinku(3.75, '2026-08-15')).toBe(0.5);
       expect(calculateNinku(15.0, '2026-08-15')).toBe(2.0);
+    });
+
+    it('丸める前の値で合算すると、1件ずつ丸めたときのずれが出ない', () => {
+      // 夏季 7.5h の 1/3 = 2.5h。1件ずつ丸めると 0.3 × 3 = 0.9 になる
+      const perRecordRounded = [2.5, 2.5, 2.5].reduce((s, h) => s + calculateNinku(h, '2026-08-15'), 0);
+      expect(perRecordRounded).toBeCloseTo(0.9);
+      const exactSum = [2.5, 2.5, 2.5].reduce((s, h) => s + calculateNinkuExact(h, '2026-08-15'), 0);
+      expect(roundNinku(exactSum)).toBe(1.0);
     });
   });
 

@@ -16,6 +16,7 @@ import { Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarS
 import { buildWeekDays, buildWeekPrefix, fetchWeeklyReportData } from './hooks/useWeeklyReportData';
 import { DEFAULT_MASTER_DATA, PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR, ITEM_TYPE, DASHBOARD_VIEW_MODE, DASHBOARD_VIEW_MODE_LIST, ESTIMATE_STATUS, isSystemAdminRole, canUseAdminApp } from './utils/constants';
 import { calculateAge } from './utils/dateUtils';
+import { formatProfitLoss } from './utils/projectUtils';
 import { exportToExcel, generateWorkerReportExcel, generateMultipleWorkersReportExcel } from './utils/excelExportUtils';
 import { generateWorkerReportPDF, generateMultipleWorkersReportPDF } from './utils/pdfExportUtils';
 import { fetchCompanyHolidays } from './hooks/useCompanyHolidays';
@@ -825,8 +826,8 @@ const App = () => {
                                                                 <div className="mt-auto pt-2 border-t border-slate-100 w-full">
                                                                     <div className="flex justify-between items-end mb-1">
                                                                         <span className="text-xs font-bold text-slate-500">進捗 {proj.overallProgress}%</span>
-                                                                        <span className={`text-xs font-bold ${proj.predictedProfitLoss >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                                                            {proj.predictedProfitLoss >= 0 ? '+' : ''}¥{Math.abs(Math.round(proj.predictedProfitLoss)).toLocaleString()}
+                                                                        <span className={`text-xs font-bold ${proj.predictedProfitLoss == null ? 'text-slate-400' : proj.predictedProfitLoss >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                                            {formatProfitLoss(proj.predictedProfitLoss)}
                                                                         </span>
                                                                     </div>
                                                                     <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
@@ -942,6 +943,7 @@ const App = () => {
                             workers={workers}
                             fetchAllData={fetchAllData}
                             onPasswordLogsViewed={refreshPasswordLogUnread}
+                            onCustomersChanged={setCustomers}
                         />
                     )}
 

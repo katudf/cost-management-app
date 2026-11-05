@@ -1,11 +1,13 @@
 import { useState, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { PROJECT_STATUS } from '../utils/constants';
+import { toDateStr } from '../utils/dateUtils';
 import { importProjectCore, rollbackImport } from '../utils/projectExcelImport';
 import { useConfirm } from '../components/ConfirmProvider';
 import {
     getNextEstimateSeq, findAvailableBranchNumber, createEstimate, updateEstimate, deleteEstimate,
     buildSaveItemsPayload, saveEstimateItemsV2, syncEstimateToProject, copyEstimateItemsToProjectTasks,
+    calcTopSheetTotals,
 } from '../supabaseEstimates';
 
 export function useProjects({ projects, setProjects, activeProjectId, setActiveProjectId, showToast, workers, setActiveTab }) {
@@ -28,6 +30,25 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
             p.id === activeProjectId ? { ...p, ...updater(p) } : p
         ));
     }, [activeProjectId, setProjects]);
+
+    // 指定の現場だけを書き換える（画面を先に書き換えたあと、保存に失敗したら元に戻すのに使う）
+    const patchProject = useCallback((id, patch) => {
+        setProjects(prev => prev.map(p => (p.id === id ? { ...p, ...patch } : p)));
+    }, [setProjects]);
+
+    /**
+     * 画面を先に書き換えた更新の保存結果を確かめる。
+     * 失敗したら rollback で画面を元に戻し、トーストで知らせる（以前は失敗しても画面は成功したように見えた）。
+     * @returns {Promise<boolean>} 保存できたら true
+     */
+    const confirmSaved = useCallback(async (request, label, rollback) => {
+        const { error } = await request;
+        if (!error) return true;
+        console.error(label + 'に失敗しました:', error);
+        if (rollback) rollback();
+        showToast(label + 'に失敗しました: ' + error.message, 'error');
+        return false;
+    }, [showToast]);
 
     const addNewProject = async () => {
         if (projects.some(p => p.siteName === '')) {
@@ -55,6 +76,7 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
         const deps = {
             getNextEstimateSeq, findAvailableBranchNumber, createEstimate, updateEstimate, deleteEstimate,
             buildSaveItemsPayload, saveEstimateItemsV2, syncEstimateToProject, copyEstimateItemsToProjectTasks,
+            calcTopSheetTotals,
             fetchProjectOrder: async (id) => {
                 const { data, error } = await supabase.from('Projects').select('order').eq('id', id).single();
                 if (error) throw error;
@@ -137,20 +159,33 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
 
     const handleForemanChange = async (id, workerIdStr) => {
         const workerId = workerIdStr ? Number(workerIdStr) : null;
-        updateLayer(p => ({ foreman_worker_id: workerId }));
-        await supabase.from('Projects').update({ foreman_worker_id: workerId }).eq('id', id);
+        const before = projectsRef.current.find(p => p.id === id);
+        patchProject(id, { foreman_worker_id: workerId });
+        await confirmSaved(
+            supabase.from('Projects').update({ foreman_worker_id: workerId }).eq('id', id),
+            '職長の変更',
+            () => patchProject(id, { foreman_worker_id: before?.foreman_worker_id ?? null }),
+        );
     };
 
     const handleProjectStatusChange = async (id, newStatus) => {
-        updateLayer(p => ({ status: newStatus }));
-        await supabase.from('Projects').update({ status: newStatus }).eq('id', id);
+        const before = projectsRef.current.find(p => p.id === id);
+        patchProject(id, { status: newStatus });
+        await confirmSaved(
+            supabase.from('Projects').update({ status: newStatus }).eq('id', id),
+            'ステータスの変更',
+            () => patchProject(id, { status: before?.status }),
+        );
     };
 
     const updateProjectVisibilityAndStatus = async (id, newStatus, showOnHome) => {
-        setProjects(prev => prev.map(p =>
-            p.id === id ? { ...p, status: newStatus, show_on_home: showOnHome } : p
-        ));
-        await supabase.from('Projects').update({ status: newStatus, show_on_home: showOnHome }).eq('id', id);
+        const before = projectsRef.current.find(p => p.id === id);
+        patchProject(id, { status: newStatus, show_on_home: showOnHome });
+        await confirmSaved(
+            supabase.from('Projects').update({ status: newStatus, show_on_home: showOnHome }).eq('id', id),
+            'ステータスの変更',
+            () => patchProject(id, { status: before?.status, show_on_home: before?.show_on_home }),
+        );
     };
 
     const reorderAndMoveProjects = async (draggedId, targetStatus, targetProjectId, position = 'before') => {
@@ -210,7 +245,9 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
                     .update({ order: 10000 + Number(p.id) })
                     .eq('id', p.id)
             );
-            await Promise.all(tempPromises);
+            const tempResults = await Promise.all(tempPromises);
+            const tempError = tempResults.find(r => r.error);
+            if (tempError) throw tempError.error;
 
             // 本番の order および status でコミットする。
             // 全てが一度 10000 以上の値に退避されているため、順次/並列で書き戻しても衝突が発生しない。
@@ -259,8 +296,13 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
             }
         }
 
-        updateLayer(p => ({ [field]: value }));
-        await supabase.from('Projects').update({ [field]: value }).eq('id', id);
+        const before = projectsRef.current.find(p => p.id === id);
+        patchProject(id, { [field]: value });
+        await confirmSaved(
+            supabase.from('Projects').update({ [field]: value }).eq('id', id),
+            '工期の変更',
+            () => patchProject(id, { [field]: before?.[field] ?? null }),
+        );
     };
 
     const updateMasterItemLocal = (id, field, value) => {
@@ -271,12 +313,14 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
 
     const saveMasterItemDB = async (dbItemId, updateData) => {
         if (String(dbItemId).startsWith('temp-')) return;
-        await supabase.from('ProjectTasks').update(updateData).eq('id', dbItemId);
+        // 入力中は画面だけを書き換えている（updateMasterItemLocal）ため、失敗時は知らせて入力し直してもらう
+        await confirmSaved(supabase.from('ProjectTasks').update(updateData).eq('id', dbItemId), '作業項目の保存');
     };
 
     const reorderMasterItems = async (newMasterData) => {
         if (!activeProjectId) return;
 
+        const previousMasterData = activeProject.masterData;
         // 1. ローカル状態を先行更新（楽観的UI更新）
         updateLayer(p => ({
             masterData: newMasterData
@@ -289,7 +333,9 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
                     .update({ order: -(idx + 1) })
                     .eq('id', item.id)
             );
-            await Promise.all(tempPromises);
+            const tempResults = await Promise.all(tempPromises);
+            const tempError = tempResults.find(r => r.error);
+            if (tempError) throw tempError.error;
 
             // 3. 正しい順序を設定
             const updatePromises = newMasterData.map((item, idx) =>
@@ -305,6 +351,8 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
             }
         } catch (error) {
             console.error('仕様項目の並び替えに失敗しました:', error);
+            // 画面の並びを元に戻す
+            updateLayer(() => ({ masterData: previousMasterData }));
             showToast('並び替えの保存に失敗しました: ' + error.message, 'error');
         }
     };
@@ -358,7 +406,7 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
 
     const saveProgressDB = async (dbItemId, value) => {
         if (String(dbItemId).startsWith('temp-')) return;
-        await supabase.from('ProjectTasks').update({ progress_percentage: value }).eq('id', dbItemId);
+        await confirmSaved(supabase.from('ProjectTasks').update({ progress_percentage: value }).eq('id', dbItemId), '進捗の保存');
     };
 
     const addRecord = async (params = {}) => {
@@ -370,7 +418,8 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
             return;
         }
 
-        const date = initialValues.date || new Date().toISOString().split('T')[0];
+        // toISOString は UTC のため、日本時間の 0〜9 時に前日の日付になる。ローカル日付を使う
+        const date = initialValues.date || toDateStr(new Date());
         const workerName = initialValues.worker || (workers && workers.length > 0 ? workers[0].name : '');
         const taskId = initialValues.taskId || defaultTaskId;
         const hours = initialValues.hours || 0;
@@ -398,26 +447,33 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
     };
 
     const removeRecord = async (recordId) => {
-        const { error } = await supabase.from('TaskRecords').delete().eq('id', recordId);
-        if (error) { console.error(error); return; }
+        const ok = await confirmSaved(supabase.from('TaskRecords').delete().eq('id', recordId), '日報の削除');
+        if (!ok) return;
         updateLayer(p => ({ records: p.records.filter(r => r.id !== recordId) }));
     };
 
     const updateRecordField = async (recordId, field, value) => {
+        const previous = activeProject.records.find(r => r.id === recordId)?.[field];
         updateLayer(p => ({
             records: p.records.map(r => r.id === recordId ? { ...r, [field]: value } : r)
         }));
 
         const dbFieldMap = { date: 'date', taskId: 'project_task_id', worker: 'worker_name', hours: 'hours', note: 'note' };
         if (dbFieldMap[field]) {
-            await supabase.from('TaskRecords').update({ [dbFieldMap[field]]: value }).eq('id', recordId);
+            await confirmSaved(
+                supabase.from('TaskRecords').update({ [dbFieldMap[field]]: value }).eq('id', recordId),
+                '日報の保存',
+                () => updateLayer(p => ({
+                    records: p.records.map(r => r.id === recordId ? { ...r, [field]: previous } : r)
+                })),
+            );
         }
     };
 
     const addSubcontractorRecord = async () => {
         const newDbRecord = {
             project_id: activeProjectId,
-            date: new Date().toISOString().split('T')[0],
+            date: toDateStr(new Date()),
             company_name: '',
             worker_count: 1,
             unit_price: 0,
@@ -425,22 +481,33 @@ export function useProjects({ projects, setProjects, activeProjectId, setActiveP
         };
 
         const { data, error } = await supabase.from('SubcontractorRecords').insert([newDbRecord]).select();
-        if (error) { console.error(error); return; }
+        if (error) {
+            console.error(error);
+            showToast('協力業者の追加に失敗しました: ' + error.message, 'error');
+            return;
+        }
 
         updateLayer(p => ({ subcontractors: [data[0], ...(p.subcontractors || [])] }));
     };
 
     const removeSubcontractorRecord = async (recordId) => {
-        const { error } = await supabase.from('SubcontractorRecords').delete().eq('id', recordId);
-        if (error) { console.error(error); return; }
+        const ok = await confirmSaved(supabase.from('SubcontractorRecords').delete().eq('id', recordId), '協力業者の削除');
+        if (!ok) return;
         updateLayer(p => ({ subcontractors: (p.subcontractors || []).filter(r => r.id !== recordId) }));
     };
 
     const updateSubcontractorRecordField = async (recordId, field, value) => {
+        const previous = (activeProject.subcontractors || []).find(r => r.id === recordId)?.[field];
         updateLayer(p => ({
             subcontractors: (p.subcontractors || []).map(r => r.id === recordId ? { ...r, [field]: value } : r)
         }));
-        await supabase.from('SubcontractorRecords').update({ [field]: value }).eq('id', recordId);
+        await confirmSaved(
+            supabase.from('SubcontractorRecords').update({ [field]: value }).eq('id', recordId),
+            '協力業者の保存',
+            () => updateLayer(p => ({
+                subcontractors: (p.subcontractors || []).map(r => r.id === recordId ? { ...r, [field]: previous } : r)
+            })),
+        );
     };
 
     return {

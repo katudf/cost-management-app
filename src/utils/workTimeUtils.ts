@@ -267,11 +267,21 @@ export const splitRecordOvertime = (
  * @param {string} dateStr - "YYYY-MM-DD"
  * @returns {number} 人工数 (小数第1位)
  */
-export const calculateNinku = (totalWorkHours: number, dateStr: string | null | undefined): number => {
+export const calculateNinku = (totalWorkHours: number, dateStr: string | null | undefined): number =>
+    roundNinku(calculateNinkuExact(totalWorkHours, dateStr));
+
+/**
+ * 丸める前の人工数。複数の日報を合算するときはこちらで足してから最後に roundNinku で丸める
+ * （1件ずつ 0.1 単位に丸めてから足すと、0.33 人工 × 3 件が 0.9 人工になるなど合計がずれるため）。
+ */
+export const calculateNinkuExact = (totalWorkHours: number, dateStr: string | null | undefined): number => {
     const config = getSeasonConfig(dateStr);
     if (config.scheduledWorkHours <= 0) return 0;
-    return Math.round((totalWorkHours / config.scheduledWorkHours) * 10) / 10;
+    return totalWorkHours / config.scheduledWorkHours;
 };
+
+/** 人工数を表示用に小数第1位へ丸める */
+export const roundNinku = (ninku: number): number => Math.round(ninku * 10) / 10;
 
 // ============================================================
 // formatTimeDisplay: 時刻の表示用フォーマット

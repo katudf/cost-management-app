@@ -23,7 +23,8 @@ const SystemSettingsTab = ({
     setIsLoading, 
     workers = [], 
     fetchAllData,
-    onPasswordLogsViewed
+    onPasswordLogsViewed,
+    onCustomersChanged
 }) => {
     const { showToast } = useToast();
     const { currentStaff } = useAuth();
@@ -286,7 +287,7 @@ const SystemSettingsTab = ({
             )}
 
             {activeSubTab === 'customers' && (
-                <CustomerSettings />
+                <CustomerSettings onCustomersChanged={onCustomersChanged} />
             )}
 
             {activeSubTab === 'staff' && (

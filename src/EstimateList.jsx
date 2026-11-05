@@ -20,7 +20,9 @@ import {
   findAvailableBranchNumber,
   buildSaveItemsPayload,
   saveEstimateItemsV2,
+  calcTopSheetTotals,
 } from './supabaseEstimates';
+import { toDateStr } from './utils/dateUtils';
 import { downloadEstimatePDF } from './EstimatePDF';
 import { useToast } from './components/Toast';
 import { ESTIMATE_STATUS, ESTIMATE_STATUS_LABEL } from './utils/constants';
@@ -317,7 +319,7 @@ const EstimateList = ({ onEdit }) => {
         title: result.projectName || file.name.replace(/\.[^/.]+$/, ''),
         site_location: null,
         work_period: null,
-        issue_date: new Date().toISOString().split('T')[0],
+        issue_date: toDateStr(new Date()),
         valid_until: null,
         payment_terms: '従来通り',
         notes: result.notes || null,
@@ -331,9 +333,7 @@ const EstimateList = ({ onEdit }) => {
         net_calc_type: 'perc',
         net_perc: 95,
         net_amount: null,
-        total_with_tax: 0,
       };
-      const created = await createEstimate(payload);
       const saveableItems = result.items
         .filter(i => i.name?.trim())
         .map((item, idx) => ({
@@ -344,6 +344,9 @@ const EstimateList = ({ onEdit }) => {
           unit_price: item.unit_price !== '' && item.unit_price != null ? Number(item.unit_price) : null,
           amount: item.amount !== '' && item.amount != null ? Number(item.amount) : null,
         }));
+      // 一覧に出す税込合計を、エディタで保存したときと同じ計算で入れておく（以前は 0 のままで一覧が ¥0 だった）
+      payload.total_with_tax = calcTopSheetTotals(saveableItems, payload).total;
+      const created = await createEstimate(payload);
       const { payloadSheets, payloadItems } = buildSaveItemsPayload(
         [{ id: null, title: null }],
         saveableItems

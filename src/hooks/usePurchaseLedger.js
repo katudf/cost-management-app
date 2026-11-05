@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { fetchAllPages } from '../lib/fetchAllPages';
 
 /**
  * PurchaseRecords（購買台帳・仕入帳）のデータアクセスを集約するフック。
@@ -24,28 +25,13 @@ const FETCH_PAGE_SIZE = 1000;
  * @returns {Promise<Array<object>>} id 昇順の全レコード
  */
 const fetchPurchaseRecords = async () => {
-    let allRecords = [];
-    let from = 0;
-
-    while (true) {
-        const { data, error } = await supabase
-            .from('PurchaseRecords')
-            .select('*')
-            .order('id', { ascending: true })
-            .range(from, from + FETCH_PAGE_SIZE - 1);
-
-        if (error) throw error;
-
-        if (data && data.length > 0) {
-            allRecords = [...allRecords, ...data];
-            if (data.length < FETCH_PAGE_SIZE) break;
-            from += FETCH_PAGE_SIZE;
-        } else {
-            break;
-        }
-    }
-
-    return allRecords;
+    // ページ分けは共通の fetchAllPages に任せる（以前はここに同じループを独自に書いていた）
+    const { data, error } = await fetchAllPages(() => supabase
+        .from('PurchaseRecords')
+        .select('*')
+        .order('id', { ascending: true }), FETCH_PAGE_SIZE);
+    if (error) throw error;
+    return data || [];
 };
 
 /**

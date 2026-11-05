@@ -48,6 +48,10 @@ const ProjectListView = ({ projects, workers, onOpenProject, onStatusChange }) =
                 case 'overallProgress':
                     return ((Number(a.overallProgress) || 0) - (Number(b.overallProgress) || 0)) * dir;
                 case 'predictedProfitLoss':
+                    // 未集計（null）は並べ替えで常に最後に回す
+                    if (a.predictedProfitLoss == null || b.predictedProfitLoss == null) {
+                        return (a.predictedProfitLoss == null) - (b.predictedProfitLoss == null);
+                    }
                     return ((Number(a.predictedProfitLoss) || 0) - (Number(b.predictedProfitLoss) || 0)) * dir;
                 default:
                     return 0;
@@ -158,7 +162,7 @@ const ProjectListView = ({ projects, workers, onOpenProject, onStatusChange }) =
                                             <span className="text-xs font-bold text-slate-600 w-9 text-right">{Number(proj.overallProgress) || 0}%</span>
                                         </div>
                                     </td>
-                                    <td className={`px-4 py-3 text-right whitespace-nowrap text-xs font-bold ${(Number(proj.predictedProfitLoss) || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                    <td className={`px-4 py-3 text-right whitespace-nowrap text-xs font-bold ${proj.predictedProfitLoss == null ? 'text-slate-400' : proj.predictedProfitLoss >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                                         {formatProfitLoss(proj.predictedProfitLoss)}
                                     </td>
                                 </tr>
