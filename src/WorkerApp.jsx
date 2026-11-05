@@ -1491,55 +1491,122 @@ const WorkerApp = () => {
     const scheduledStartStr = `${Math.floor(seasonConfig.scheduledStart / 60)}:${String(seasonConfig.scheduledStart % 60).padStart(2, '0')}`;
     const scheduledEndStr = `${Math.floor(seasonConfig.scheduledEnd / 60)}:${String(seasonConfig.scheduledEnd % 60).padStart(2, '0')}`;
 
+    // 'YYYY-MM-DD' を days 日ずらす
+    const shiftDateStr = (dateStr, days) => {
+        const d = new Date(dateStr + 'T00:00:00');
+        d.setDate(d.getDate() + days);
+        return toDateStr(d);
+    };
+
+    // 作業日を切り替える。未送信の入力があれば、破棄してよいか確認する
+    const changeSelectedDate = async (nextDate) => {
+        if (!nextDate || nextDate === selectedDate) return;
+        if (hasUnsavedChanges && !(await confirm({
+            title: '別の日に移動',
+            message: '未送信の入力データがあります。破棄して別の日に移動しますか？',
+            confirmText: '破棄して移動',
+        }))) return;
+        setHasUnsavedChanges(false);
+        setSelectedDate(nextDate);
+    };
+
     return (
         <div className="min-h-screen bg-slate-100 font-sans text-slate-900 pb-24">
-            <header className="bg-blue-600 text-white p-4 shadow-md sticky top-0 z-40 flex items-center justify-between">
-                <div className="flex items-center gap-2"><HardHat size={20} /><span className="font-bold text-lg leading-none">{loggedInWorker.name}</span></div>
-                <div className="flex items-center gap-2">
+            {/* 青いヘッダーと作業日の切替を1つの固定ブロックにする。
+                ヘッダーのボタンが折り返して高さが変わっても、日付の行がずれたり隠れたりしない */}
+            <div className="sticky top-0 z-40 shadow-md">
+            {/* スマホ幅ではボタンをアイコンだけにして1行に収める（文字は sm 以上で表示。名前は aria-label / title で伝える） */}
+            <header className="bg-blue-600 text-white px-3 py-2 sm:p-4 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                    <HardHat size={20} className="shrink-0 hidden sm:block" />
+                    <span className="font-bold text-base sm:text-lg leading-none truncate">{loggedInWorker.name}</span>
+                </div>
+                <div className="flex items-center gap-1 sm:gap-2 shrink-0">
                     <button
                         onClick={handleCopyPreviousDay}
                         disabled={isCopyingPreviousDay}
                         aria-label="前日の作業をコピー"
                         title="直前に入力実績がある日の作業をコピー"
-                        className="flex items-center gap-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 px-3 py-1.5 rounded-lg text-sm font-bold transition"
+                        className="flex items-center justify-center gap-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 w-10 h-10 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 rounded-lg text-sm font-bold transition shrink-0"
                     >
-                        {isCopyingPreviousDay ? <Loader2 size={16} className="animate-spin" /> : <CopyPlus size={16} />} 前日の作業をコピー
+                        {isCopyingPreviousDay ? <Loader2 size={18} className="animate-spin" /> : <CopyPlus size={18} />}
+                        <span className="hidden sm:inline">前日の作業をコピー</span>
                     </button>
                     <button
                         onClick={() => setShowAssignmentChart(true)}
                         aria-label="配置表を表示"
                         title="配置表を表示"
-                        className="flex items-center gap-1 bg-blue-700 hover:bg-blue-800 px-3 py-1.5 rounded-lg text-sm font-bold transition"
+                        className="flex items-center justify-center gap-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 w-10 h-10 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 rounded-lg text-sm font-bold transition shrink-0"
                     >
-                        <CalendarDays size={16} /> 配置表
+                        <CalendarDays size={18} />
+                        <span className="hidden sm:inline">配置表</span>
                     </button>
                     <button
                         onClick={handleExportReportPDF}
                         disabled={isExportingPDF}
                         aria-label="日報出力"
                         title="日報出力"
-                        className="flex items-center gap-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 px-3 py-1.5 rounded-lg text-sm font-bold transition"
+                        className="flex items-center justify-center gap-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 w-10 h-10 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 rounded-lg text-sm font-bold transition shrink-0"
                     >
-                        {isExportingPDF ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />} 日報出力
+                        {isExportingPDF ? <Loader2 size={18} className="animate-spin" /> : <FileText size={18} />}
+                        <span className="hidden sm:inline">日報出力</span>
                     </button>
                     <div
-                        className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold ${isOnline ? 'bg-blue-700' : 'bg-orange-500'}`}
+                        className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold shrink-0 ${isOnline ? 'bg-blue-700' : 'bg-orange-500'}`}
                         title={isOnline ? 'オンライン' : 'オフライン'}
                     >
                         {isOnline ? <Wifi size={14} aria-label="オンライン" /> : <WifiOff size={14} aria-label="オフライン" />}
-                        {!isOnline && <span>オフライン</span>}
+                        {!isOnline && <span className="hidden sm:inline">オフライン</span>}
                     </div>
                     {notifiableDraftQueue.length > 0 && (
                         <div
-                            className="flex items-center gap-1 bg-orange-500 px-2 py-1 rounded-lg text-xs font-bold"
+                            className="flex items-center gap-1 bg-orange-500 px-2 py-1 rounded-lg text-xs font-bold shrink-0"
                             title={`未送信の下書き ${notifiableDraftQueue.length}件`}
                         >
                             <AlertCircle size={14} /> {notifiableDraftQueue.length}
                         </div>
                     )}
-                    <button onClick={handleLogout} aria-label="選択画面に戻る" title="選択画面に戻る" className="flex items-center gap-1 bg-blue-700 hover:bg-blue-800 px-3 py-1.5 rounded-lg text-sm font-bold transition"><LogOut size={16} /> 戻る</button>
+                    <button onClick={handleLogout} aria-label="選択画面に戻る" title="選択画面に戻る" className="flex items-center justify-center gap-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 w-10 h-10 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 rounded-lg text-sm font-bold transition shrink-0"><LogOut size={18} /><span className="hidden sm:inline">戻る</span></button>
                 </div>
             </header>
+            <div className="bg-slate-100 border-b border-slate-200">
+                <div className="max-w-lg mx-auto px-4 py-2 flex items-center gap-2">
+                    <button
+                        type="button"
+                        onClick={() => changeSelectedDate(shiftDateStr(selectedDate, -1))}
+                        aria-label="前日に移動"
+                        title="前日に移動"
+                        className="shrink-0 w-12 h-12 flex items-center justify-center bg-white border-2 border-blue-200 text-blue-600 rounded-xl font-bold text-lg active:scale-95 transition shadow-sm"
+                    >
+                        ◀
+                    </button>
+                    <div className="relative flex-1 min-w-0">
+                        <input type="date" value={selectedDate} aria-label="作業日"
+                            onChange={(e) => changeSelectedDate(e.target.value)}
+                            className="w-full h-12 bg-white border-2 border-blue-200 text-slate-800 px-3 max-[359px]:px-2 rounded-xl font-bold text-lg max-[359px]:text-sm outline-none focus:border-blue-500 shadow-sm appearance-none" />
+                        {(() => {
+                                const dow = new Date(selectedDate + 'T00:00:00').getDay();
+                                if (Number.isNaN(dow)) return null;
+                                const color = dow === 0 ? 'text-red-600' : dow === 6 ? 'text-blue-600' : 'text-slate-700';
+                                return (
+                                    <span className={`absolute right-14 max-[359px]:right-10 top-1/2 -translate-y-1/2 pointer-events-none font-bold text-lg max-[359px]:text-sm ${color}`} data-testid="selected-weekday">
+                                        ({'日月火水木金土'[dow]})
+                                    </span>
+                                );
+                            })()}
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => changeSelectedDate(shiftDateStr(selectedDate, 1))}
+                        aria-label="翌日に移動"
+                        title="翌日に移動"
+                        className="shrink-0 w-12 h-12 flex items-center justify-center bg-white border-2 border-blue-200 text-blue-600 rounded-xl font-bold text-lg active:scale-95 transition shadow-sm"
+                    >
+                        ▶
+                    </button>
+                </div>
+            </div>
+            </div>
 
             <main className="p-4 max-w-lg mx-auto">
                 {approvalNotices.length > 0 && (
@@ -1600,70 +1667,6 @@ const WorkerApp = () => {
                 )}
 
                 <div className="mb-6">
-                    <label className="block text-sm font-bold text-slate-600 mb-2">作業日</label>
-                    <div className="flex items-center gap-2 mb-2">
-                        <button
-                            type="button"
-                            onClick={async () => {
-                                if (hasUnsavedChanges && !(await confirm({
-                                    title: '別の日に移動',
-                                    message: '未送信の入力データがあります。破棄して別の日に移動しますか？',
-                                    confirmText: '破棄して移動',
-                                }))) return;
-                                setHasUnsavedChanges(false);
-                                const d = new Date(selectedDate + 'T00:00:00');
-                                d.setDate(d.getDate() - 1);
-                                setSelectedDate(toDateStr(d));
-                            }}
-                            aria-label="前日に移動"
-                            title="前日に移動"
-                            className="shrink-0 w-12 h-12 flex items-center justify-center bg-white border-2 border-blue-200 text-blue-600 rounded-xl font-bold text-lg active:scale-95 transition shadow-sm"
-                        >
-                            ◀
-                        </button>
-                        <div className="relative flex-1 min-w-0">
-                        <input type="date" value={selectedDate} onChange={async (e) => {
-                            const value = e.target.value;
-                            if (hasUnsavedChanges && !(await confirm({
-                                title: '別の日に移動',
-                                message: '未送信の入力データがあります。破棄して別の日に移動しますか？',
-                                confirmText: '破棄して移動',
-                            }))) return;
-                            setHasUnsavedChanges(false);
-                            setSelectedDate(value);
-                        }}
-                            className="w-full bg-white border-2 border-blue-200 text-slate-800 p-4 rounded-xl font-bold text-lg outline-none focus:border-blue-500 shadow-sm appearance-none" />
-                        {(() => {
-                            const dow = new Date(selectedDate + 'T00:00:00').getDay();
-                            if (Number.isNaN(dow)) return null;
-                            const color = dow === 0 ? 'text-red-600' : dow === 6 ? 'text-blue-600' : 'text-slate-700';
-                            return (
-                                <span className={`absolute right-14 top-1/2 -translate-y-1/2 pointer-events-none font-bold text-lg ${color}`} data-testid="selected-weekday">
-                                    ({'日月火水木金土'[dow]})
-                                </span>
-                            );
-                        })()}
-                        </div>
-                        <button
-                            type="button"
-                            onClick={async () => {
-                                if (hasUnsavedChanges && !(await confirm({
-                                    title: '別の日に移動',
-                                    message: '未送信の入力データがあります。破棄して別の日に移動しますか？',
-                                    confirmText: '破棄して移動',
-                                }))) return;
-                                setHasUnsavedChanges(false);
-                                const d = new Date(selectedDate + 'T00:00:00');
-                                d.setDate(d.getDate() + 1);
-                                setSelectedDate(toDateStr(d));
-                            }}
-                            aria-label="翌日に移動"
-                            title="翌日に移動"
-                            className="shrink-0 w-12 h-12 flex items-center justify-center bg-white border-2 border-blue-200 text-blue-600 rounded-xl font-bold text-lg active:scale-95 transition shadow-sm"
-                        >
-                            ▶
-                        </button>
-                    </div>
                     <div className="flex items-center gap-2 mb-2">
                         <span className={`text-xs font-bold px-2 py-1 rounded-full ${seasonLabel === '夏季' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}`}>{seasonLabel}</span>
                         <span className="text-xs font-bold text-slate-400">定時 {scheduledStartStr}〜{scheduledEndStr}</span>
