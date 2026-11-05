@@ -106,7 +106,8 @@ const WorkerApp = () => {
 
     // 残業理由（その現場・その日の残業に対する任意のメモ）
     const [overtimeReason, setOvertimeReason] = useState('');
-    // 表示中の現場・日付の残業申請の状態（送信で承認済みの残業が承認待ちに戻ったかの判定用）
+    // 表示中の現場・日付の残業申請の状態（送信で承認済みの残業が承認待ちに戻ったかの判定用）。
+    // 切替直後や送信後の取り直しで別の現場・日付の状態と取り違えないよう、projectId / date を一緒に持つ
     const [dayOvertimeApproval, setDayOvertimeApproval] = useState(null);
     // 本人がまだ確認していない「承認されました」のお知らせ
     const [approvalNotices, setApprovalNotices] = useState([]);
@@ -346,7 +347,7 @@ const WorkerApp = () => {
                 // 下書きを復元した直後は、下書きの理由を優先する
                 try {
                     const approval = await fetchDayOvertimeApproval(selectedProjectId, loggedInWorker.name, selectedDate);
-                    if (active) setDayOvertimeApproval(approval);
+                    if (active) setDayOvertimeApproval({ ...approval, projectId: String(selectedProjectId), date: selectedDate });
                     if (!keepRestoredReason && active && restoreSeqRef.current === startSeq) setOvertimeReason(approval.reason);
                 } catch (e) {
                     if (active) setDayOvertimeApproval(null);
@@ -387,8 +388,9 @@ const WorkerApp = () => {
             // 読み込み中に作業員が切り替わっていたら反映しない
             if (loggedInWorkerNameRef.current === loggedInWorker.name) setApprovalNotices(notices);
         } catch (e) {
-            // お知らせは補助的な表示なので、読めなくても日報の入力は止めない
+            // お知らせは補助的な表示なので、読めなくても日報の入力は止めない（知らせるだけ）
             console.error('Failed to load approval notices:', e);
+            showToast('承認のお知らせを読み込めませんでした。電波の良いところで画面を読み込み直してください。', 'warning');
         }
     }, [loggedInWorker]);
 
@@ -1170,8 +1172,8 @@ const WorkerApp = () => {
 
                     const recordData = {
                         hours: sc.netWorkHours || 0,
+                        // 早出（early_overtime_hours）は DB のトリガーが開始・終了時刻から求める
                         overtime_hours: sc.overtimeHours || 0,
-                        early_overtime_hours: sc.earlyOvertimeHours || 0,
                         start_time: slot.start_time,
                         end_time: slot.end_time,
                         note: j === 0 ? (t.today_note || '') : '',
@@ -1213,11 +1215,7 @@ const WorkerApp = () => {
                 if (!currentProjectIds.has(record.id) && !deletedRecordIds.has(record.id)) {
                     updateOps.push({
                         id: record.id,
-                        data: {
-                            hours: calculated.netWorkHours,
-                            overtime_hours: calculated.overtimeHours,
-                            early_overtime_hours: calculated.earlyOvertimeHours,
-                        },
+                        data: { hours: calculated.netWorkHours, overtime_hours: calculated.overtimeHours },
                     });
                 }
             });
@@ -1289,7 +1287,9 @@ const WorkerApp = () => {
             if (approvalSyncFailed) {
                 showToast('日報は保存しましたが、残業・作業手当の承認申請を更新できませんでした。もう一度送信してください。', 'warning');
             } else if (
-                dayOvertimeApproval?.status === 'approved'
+                dayOvertimeApproval?.projectId === String(selectedProjectId)
+                && dayOvertimeApproval?.date === targetDate
+                && dayOvertimeApproval.status === 'approved'
                 && overtimeTotal > 0
                 && round2(dayOvertimeApproval.approved_hours ?? 0) !== overtimeTotal
             ) {
@@ -1297,9 +1297,18 @@ const WorkerApp = () => {
                 showToast('承認済みの残業時間が変わったため、もう一度職長の承認待ちになりました。', 'warning');
             }
             // 承認状態とお知らせを取り直す（承認待ちに戻ったお知らせは消える）
-            fetchDayOvertimeApproval(selectedProjectId, loggedInWorker.name, targetDate)
-                .then(setDayOvertimeApproval)
-                .catch(e => console.error('Refresh overtime approval failed:', e));
+            const savedProjectId = String(selectedProjectId);
+            fetchDayOvertimeApproval(savedProjectId, loggedInWorker.name, targetDate)
+                .then(approval => setDayOvertimeApproval(current =>
+                    // 取り直しの間に別の現場・日付を読み込んでいたら、その状態を上書きしない
+                    current && (current.projectId !== savedProjectId || current.date !== targetDate)
+                        ? current
+                        : { ...approval, projectId: savedProjectId, date: targetDate }
+                ))
+                .catch(e => {
+                    console.error('Refresh overtime approval failed:', e);
+                    showToast('日報は保存しましたが、残業の承認状態を読み込めませんでした。画面を読み込み直してください。', 'warning');
+                });
             loadApprovalNotices();
             const savedTaskIds = new Set(tasks.map(t => t.id));
             setTasks(prev => prev.map(t => {

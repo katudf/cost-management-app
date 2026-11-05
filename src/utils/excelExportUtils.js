@@ -96,6 +96,7 @@ export const exportToExcel = (activeProject, summaryData) => {
     ];
     activeProject.records.forEach(r => {
         const taskName = activeProject.masterData.find(m => m.id === r.taskId)?.task || '不明';
+        const overtime = splitRecordOvertime(r);
 
         ws2Data.push([
             taskName,
@@ -105,8 +106,8 @@ export const exportToExcel = (activeProject, summaryData) => {
             r.end_time ? formatTimeDisplay(r.end_time) : '',
             r.hours || 0,
             r.overtime_hours || 0,
-            splitRecordOvertime(r).early,
-            splitRecordOvertime(r).late,
+            overtime.early,
+            overtime.late,
             r.date || '',
         ]);
     });
@@ -219,8 +220,8 @@ export const exportToExcel = (activeProject, summaryData) => {
 
     // 列幅の簡易調整
     ws1['!cols'] = [{ wch: 20 }, { wch: 15 }, { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 10 }];
-    ws2['!cols'] = [{ wch: 20 }, { wch: 30 }, { wch: 15 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 15 }];
-    ws3['!cols'] = [{ wch: 20 }, { wch: 22 }, { wch: 16 }, { wch: 22 }];
+    ws2['!cols'] = [{ wch: 20 }, { wch: 30 }, { wch: 15 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 15 }];
+    ws3['!cols'] = [{ wch: 20 }, { wch: 22 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 22 }];
 
     // A4横向き印刷設定
     applyA4LandscapePrintSettings(ws1);

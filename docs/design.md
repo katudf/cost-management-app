@@ -205,7 +205,7 @@ Supabase (PostgreSQL)
 | date | date | 作業日 |
 | hours | numeric | 作業時間 |
 | overtime_hours | numeric | 時間外の合計（早出 + 残業） |
-| early_overtime_hours | numeric | 時間外のうち早出（定時開始前）。残業 = overtime_hours − early_overtime_hours |
+| early_overtime_hours | numeric | 時間外のうち早出（定時開始前）。DB のトリガーが開始・終了時刻から求める。残業 = overtime_hours − early_overtime_hours |
 | work_content | text | 作業内容メモ |
 | created_at | timestamptz | |
 
