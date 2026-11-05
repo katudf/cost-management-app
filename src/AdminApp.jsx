@@ -567,9 +567,10 @@ const App = () => {
                                     aria-label="このタブのヘルプ"
                                     title="このタブのヘルプ"
                                     aria-expanded={isHelpOpen}
-                                    className={`p-2 rounded-lg transition shadow-sm border ${isHelpOpen ? 'text-blue-600 bg-blue-50 border-blue-200' : 'text-slate-400 border-transparent hover:text-blue-600 hover:bg-white hover:border-blue-200'}`}
+                                    className={`flex items-center gap-1.5 px-3 py-2 rounded-lg transition shadow-sm border font-bold text-sm whitespace-nowrap ${isHelpOpen ? 'text-white bg-blue-600 border-blue-600 hover:bg-blue-700' : 'text-blue-600 bg-white border-blue-300 hover:bg-blue-50 hover:border-blue-400'}`}
                                 >
                                     <HelpCircle size={18} />
+                                    ヘルプ
                                 </button>
                                 <button
                                     onClick={signOut}
