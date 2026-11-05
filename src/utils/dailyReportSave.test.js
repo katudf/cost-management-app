@@ -33,3 +33,20 @@ describe('describeSaveError', () => {
         expect(describeSaveError({ message: 'boom' })).toContain('電波');
     });
 });
+
+describe('describeSaveError（保存以外の操作）', () => {
+    it('action を渡すと「〇〇できませんでした」の文言になる', () => {
+        expect(describeSaveError({ code: '22023', message: 'この残業申請は承認待ちではありません。' }, { action: '承認' }))
+            .toBe('承認できませんでした: この残業申請は承認待ちではありません。');
+    });
+
+    it('DB が理由を返さないときは fallback を使う', () => {
+        expect(describeSaveError({ code: 'XX000', message: 'boom' }, { action: '承認', fallback: '承認に失敗しました。' }))
+            .toBe('承認に失敗しました。');
+    });
+
+    it('fallback が無ければ action から既定の文言を作る', () => {
+        expect(describeSaveError(new Error('x'), { action: '承認' }))
+            .toBe('承認に失敗しました。電波の良いところで再度お試しください。');
+    });
+});

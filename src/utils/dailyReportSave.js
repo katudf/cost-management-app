@@ -28,17 +28,23 @@ export function isNetworkSaveError(error, online = true) {
  * 通信以外で保存に失敗したときに作業員へ見せる文言。
  * DB 関数が日本語で理由を返すもの（権限・入力不正・対象なし）は、その理由をそのまま見せる。
  * これを「電波の良いところで」と案内すると、何度再送しても直らないため。
+ *
+ * 承認・作業項目の追加など、日報の保存以外の DB 関数の失敗にも使う。
+ * @param {object} error  Supabase のエラー
+ * @param {object} [options]
+ * @param {string} [options.action='保存']  「〇〇できませんでした」の〇〇
+ * @param {string} [options.fallback]       DB が理由を返さなかったときの文言
  */
-export function describeSaveError(error) {
+export function describeSaveError(error, { action = '保存', fallback } = {}) {
     switch (error?.code) {
         case '23505':
             return '同じ作業項目に、開始時刻が同じ時間枠が重複しています。時刻を確認してから送信してください。';
         case '42501':
-            return `保存できませんでした: ${error.message}（現場の職長が変わった場合は、画面を読み込み直してください）`;
+            return `${action}できませんでした: ${error.message}（現場の職長が変わった場合は、画面を読み込み直してください）`;
         case '22023':
         case 'P0002':
-            return `保存できませんでした: ${error.message}`;
+            return `${action}できませんでした: ${error.message}`;
         default:
-            return '保存に失敗しました。電波の良いところで再度お試しください。';
+            return fallback ?? `${action}に失敗しました。電波の良いところで再度お試しください。`;
     }
 }

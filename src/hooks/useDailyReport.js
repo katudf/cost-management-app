@@ -133,17 +133,33 @@ export async function saveWorkerDailyBreakSettings(workerName, date, breakDurati
 // ============================================================
 
 /**
- * 工種を1件追加する。
- * @returns {Promise<object>} 追加された行
+ * DB 関数がまだ無い（マイグレーション 20261105020000 の適用前）ときのエラーか。
+ * PostgREST は、名前・引数の組が合う関数が無いと PGRST202 を返す。
+ * 画面（PWA）が DB より先に新しくなっても動くよう、適用前は旧方式で処理するために使う。
+ * 本番への適用が済んだら、この判定と旧方式の処理は消してよい。
  */
-export async function insertProjectTask({ projectId, name, order, workerId }) {
-    // worker ロールは ProjectTasks に直接書けないため、職長かどうかを DB 側で確認する RPC を使う
-    const { data, error } = await supabase.rpc('add_project_task', {
+const isMissingRpcError = (error) => error?.code === 'PGRST202';
+
+/** add_project_task を呼ぶ。新しい DB では作業員名も渡して職長を判定し、適用前の DB には旧引数で呼び直す。 */
+async function callAddProjectTask({ projectId, name, order, workerId, workerName }) {
+    const base = {
         p_project_id: Number(projectId),
         p_name: name,
         p_order: order,
         p_worker_id: workerId ?? null,
-    });
+    };
+    const result = await supabase.rpc('add_project_task', { ...base, p_worker_name: workerName ?? null });
+    if (isMissingRpcError(result.error)) return supabase.rpc('add_project_task', base);
+    return result;
+}
+
+/**
+ * 工種を1件追加する。
+ * @returns {Promise<object>} 追加された行
+ */
+export async function insertProjectTask({ projectId, name, order, workerId, workerName }) {
+    // worker ロールは ProjectTasks に直接書けないため、職長かどうかを DB 側で確認する RPC を使う
+    const { data, error } = await callAddProjectTask({ projectId, name, order, workerId, workerName });
     if (error) throw error;
     if (!data) throw new Error('作業項目の追加結果が取得できませんでした。');
     return data;
@@ -154,24 +170,32 @@ export async function insertProjectTask({ projectId, name, order, workerId }) {
  * 表示の補助であり必須ではないため、失敗しても throw せず null を返す。
  * @returns {Promise<object[]|null>} 追加された行の配列。失敗時は null。
  */
-export async function insertDefaultProjectTask({ projectId, name, workerId }) {
-    const { data, error } = await supabase.rpc('add_project_task', {
-        p_project_id: Number(projectId),
-        p_name: name,
-        p_order: 1,
-        p_worker_id: workerId ?? null,
-    });
+export async function insertDefaultProjectTask({ projectId, name, workerId, workerName }) {
+    const { data, error } = await callAddProjectTask({ projectId, name, order: 1, workerId, workerName });
     if (error || !data) return null;
     return [data];
 }
 
-/** 指定作業員・指定日・指定現場の日報レコードをすべて削除する。 */
+/**
+ * 指定作業員・指定日・指定現場の日報レコードをすべて削除する（DB 関数 delete_worker_project_day）。
+ * 同じ現場・日付の残業／作業手当の承認申請も同じトランザクションで削除する。
+ */
 export async function deleteProjectDayRecords({ projectId, workerName, date }) {
-    const { error } = await supabase.from('TaskRecords').delete()
+    const { error } = await supabase.rpc('delete_worker_project_day', {
+        p_project_id: Number(projectId),
+        p_worker_name: workerName,
+        p_date: date,
+    });
+    if (!isMissingRpcError(error)) {
+        if (error) throw error;
+        return;
+    }
+    // DB 関数の適用前は旧方式（日報だけを削除。承認申請は残る）
+    const { error: fallbackError } = await supabase.from('TaskRecords').delete()
         .eq('worker_name', workerName)
         .eq('date', date)
         .eq('project_id', projectId);
-    if (error) throw error;
+    if (fallbackError) throw fallbackError;
 }
 
 /**

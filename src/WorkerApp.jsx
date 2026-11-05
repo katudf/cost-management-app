@@ -32,7 +32,7 @@ import { fetchPendingApprovals, approveOvertime, fetchApprovalReason } from './l
 import { fetchPendingWorkAllowanceApprovals, approveWorkAllowance } from './lib/workAllowanceApprovals';
 import { fetchWithCache, getDraftQueue, upsertDraft, removeDraft } from './utils/offlineCache';
 import { newClientUuid, isNetworkSaveError, describeSaveError } from './utils/dailyReportSave';
-import { draftKeyOf, upsertIntoQueue, selectNotifiableDrafts, selectWorkerDrafts } from './utils/draftQueueUtils';
+import { draftKeyOf, isSameDraftTarget, upsertIntoQueue, selectNotifiableDrafts, selectWorkerDrafts } from './utils/draftQueueUtils';
 import { fetchSystemSettings, DEFAULT_HOURLY_WAGE } from './hooks/useSystemSettings';
 import { summarizeTaskCosts } from './utils/projectUtils';
 import { calculateTimeOverlapWarnings } from './utils/timeOverlapUtils';
@@ -93,6 +93,8 @@ const WorkerApp = () => {
     const [isSyncingQueue, setIsSyncingQueue] = useState(false);
     // 下書き復元の世代番号。読み込み開始後に復元された場合は、その読み込み結果で入力内容を上書きしない。
     const restoreSeqRef = useRef(0);
+    // 自動保存の世代。上げると、それまでに予約された自動保存は書き込まずに終わる（削除直後に古い入力で下書きが戻るのを防ぐ）
+    const autosaveEpochRef = useRef(0);
     // 復元で現場・日付が切り替わった場合、切替後の読み込みで復元内容を上書きしないための目印。
     const pendingRestoreRef = useRef(null);
 
@@ -138,7 +140,18 @@ const WorkerApp = () => {
                     localStorage.setItem('cost-app-worker', JSON.stringify(targetWorker));
                 } else {
                     const savedWorkerStr = localStorage.getItem('cost-app-worker');
-                    if (savedWorkerStr) setLoggedInWorker(JSON.parse(savedWorkerStr));
+                    if (savedWorkerStr) {
+                        const savedWorker = JSON.parse(savedWorkerStr);
+                        // 管理者が名前を直していることがあるので、名簿の最新の内容に差し替える。
+                        // 古い名前のままだと日報が旧名で保存され、職長の判定（名前と ID の照合）にも通らない
+                        const freshWorker = wData?.find(w => String(w.id) === String(savedWorker?.id));
+                        if (freshWorker) {
+                            setLoggedInWorker(freshWorker);
+                            localStorage.setItem('cost-app-worker', JSON.stringify(freshWorker));
+                        } else {
+                            setLoggedInWorker(savedWorker);
+                        }
+                    }
                 }
 
                 const { data: pData } = await fetchWithCache('projects', fetchProjectsResult);
@@ -240,11 +253,13 @@ const WorkerApp = () => {
         const startSeq = restoreSeqRef.current;
         // 下書き復元で現場・日付が切り替わった直後の読み込みでは、復元した入力内容を上書きしない
         let keepRestoredInputs = false;
+        let keepRestoredReason = false;
         const pending = pendingRestoreRef.current;
         if (pending && !pending.loadApplied && pending.projectId === String(selectedProjectId) && pending.date === selectedDate) {
             pending.loadApplied = true;
             if (pending.breakApplied) pendingRestoreRef.current = null;
             keepRestoredInputs = true;
+            keepRestoredReason = pending.hasReason === true;
         }
 
         const loadProjectDetails = async () => {
@@ -269,6 +284,7 @@ const WorkerApp = () => {
                         projectId: selectedProjectId,
                         name: defaultTaskName,
                         workerId: loggedInWorker.id,
+                        workerName: loggedInWorker.name,
                     });
                     if (insertedData) {
                         tData = insertedData;
@@ -293,7 +309,9 @@ const WorkerApp = () => {
                             record_id: r.id,
                             start_time: formatTimeDisplay(r.start_time) || '',
                             end_time: formatTimeDisplay(r.end_time) || '',
-                            is_overnight: (formatTimeDisplay(r.start_time) > formatTimeDisplay(r.end_time)) && formatTimeDisplay(r.end_time) !== ''
+                            is_overnight: (formatTimeDisplay(r.start_time) > formatTimeDisplay(r.end_time)) && formatTimeDisplay(r.end_time) !== '',
+                            // 管理者が時間数だけで入力した行（時刻なし）。入力欄は空になるが、空のまま送信しても消さない
+                            hours_only: !r.start_time,
                         }))
                         : [{ slot_id: `new-${Date.now()}-${t.id}`, record_id: null, start_time: '', end_time: '', is_overnight: false }];
 
@@ -319,10 +337,13 @@ const WorkerApp = () => {
                 }
 
                 // 既存の残業理由を読み込む（その現場・その日・この作業員）
-                try {
-                    const reason = await fetchApprovalReason(selectedProjectId, loggedInWorker.name, selectedDate);
-                    if (active) setOvertimeReason(reason);
-                } catch (e) { if (active) setOvertimeReason(''); }
+                // 下書きを復元した直後は、下書きの理由を優先する
+                if (!keepRestoredReason) {
+                    try {
+                        const reason = await fetchApprovalReason(selectedProjectId, loggedInWorker.name, selectedDate);
+                        if (active && restoreSeqRef.current === startSeq) setOvertimeReason(reason);
+                    } catch (e) { if (active && restoreSeqRef.current === startSeq) setOvertimeReason(''); }
+                }
                 if (!active) return;
 
                 if (project && project.foreman_worker_id === loggedInWorker.id) {
@@ -376,7 +397,9 @@ const WorkerApp = () => {
             showToast('残業を承認しました。', 'success');
         } catch (e) {
             console.error('Approve overtime error:', e);
-            showToast('承認に失敗しました。', 'error');
+            showToast(describeSaveError(e, { action: '承認', fallback: '承認に失敗しました。' }), 'error');
+            // 他の端末で承認・取り消し済みのこともあるので一覧を取り直す
+            loadPendingApprovals();
         } finally {
             setApprovingId(null);
         }
@@ -408,7 +431,8 @@ const WorkerApp = () => {
             showToast('作業手当を承認しました。', 'success');
         } catch (e) {
             console.error('Approve work allowance error:', e);
-            showToast('承認に失敗しました。', 'error');
+            showToast(describeSaveError(e, { action: '承認', fallback: '承認に失敗しました。' }), 'error');
+            loadPendingAllowanceApprovals();
         } finally {
             setApprovingAllowanceId(null);
         }
@@ -713,7 +737,7 @@ const WorkerApp = () => {
 
             const ok = await confirm({
                 title: '前日の作業をコピー',
-                message: `${sourceDate} の入力内容を現在の入力欄にコピーします。${hasUnsavedChanges ? '未送信の入力内容は上書きされます。' : ''}よろしいですか？`,
+                message: `${sourceDate} の入力内容を現在の入力欄にコピーします。${hasUnsavedChanges ? '未送信の入力内容は上書きされます。' : ''}コピー元にある作業項目は、この日の送信済みの時間も送信時に置き換わります。よろしいですか？`,
                 confirmText: 'コピーする',
                 variant: hasUnsavedChanges ? 'danger' : 'primary',
             });
@@ -744,9 +768,16 @@ const WorkerApp = () => {
                         is_overnight: start > end && end !== '',
                     };
                 });
+                // この日に保存済みの枠は入力欄から消えるので、送信時に削除する（残すと二重計上になる）。
+                // 管理者が時間数だけで入力した行は作業員の入力ではないので、消さずに残す
+                const hoursOnlySlots = t.time_slots.filter(s => s.hours_only && s.record_id);
+                const replacedRecordIds = t.time_slots
+                    .filter(s => s.record_id && !s.hours_only)
+                    .map(s => s.record_id);
                 return {
                     ...t,
-                    time_slots,
+                    time_slots: [...time_slots, ...hoursOnlySlots],
+                    deleted_record_ids: [...new Set([...(t.deleted_record_ids || []), ...replacedRecordIds])],
                     today_note: srcForTask[0].note || '',
                     work_allowance: srcForTask[0].work_allowance || false,
                 };
@@ -797,6 +828,7 @@ const WorkerApp = () => {
                 name: taskName.trim(),
                 order: newTaskOrder,
                 workerId: loggedInWorker.id,
+                workerName: loggedInWorker.name,
             });
             setTasks(prev => [...prev, {
                 id: ins.id, name: ins.name, target_hours: ins.target_hours, progress_percentage: ins.progress_percentage, order: ins.order,
@@ -804,7 +836,7 @@ const WorkerApp = () => {
                 deleted_record_ids: [], today_note: '', work_allowance: false,
             }]);
             setHasUnsavedChanges(true);
-        } catch (e) { console.error(e); showToast('作業項目の追加に失敗しました。', 'error'); }
+        } catch (e) { console.error(e); showToast(describeSaveError(e, { action: '作業項目を追加', fallback: '作業項目の追加に失敗しました。' }), 'error'); }
         finally { setIsLoading(false); }
     };
 
@@ -812,7 +844,9 @@ const WorkerApp = () => {
     // 現場×日付 単位でキューに保存するため、他の現場/日付の未送信ドラフトは上書きされない
     useEffect(() => {
         if (hasUnsavedChanges && selectedProjectId && tasks.length > 0) {
+            const epoch = autosaveEpochRef.current;
             const timer = setTimeout(() => {
+                if (autosaveEpochRef.current !== epoch) return;
                 const { entry } = upsertDraft({
                     workerName: loggedInWorker?.name,
                     selectedProjectId,
@@ -821,6 +855,7 @@ const WorkerApp = () => {
                     subcontractors,
                     deletedSubcontractorIds,
                     breakDurations: dailyBreakSettings?.durations,
+                    overtimeReason,
                     isAutoSaved: true,
                 });
                 // 自動保存の失敗（容量超過など）はここでは通知しない。
@@ -830,7 +865,7 @@ const WorkerApp = () => {
             }, 1000);
             return () => clearTimeout(timer);
         }
-    }, [tasks, subcontractors, deletedSubcontractorIds, dailyBreakSettings, hasUnsavedChanges, selectedProjectId, selectedDate, loggedInWorker]);
+    }, [tasks, subcontractors, deletedSubcontractorIds, dailyBreakSettings, overtimeReason, hasUnsavedChanges, selectedProjectId, selectedDate, loggedInWorker]);
 
     // ========== 時間自動計算 (各タスク×各スロット) ==========
     const defaultBreakDurations = getSeasonConfig(selectedDate).breaks.map(brk => brk.e - brk.s);
@@ -897,6 +932,8 @@ const WorkerApp = () => {
             date: draft.selectedDate,
             loadApplied: sameDate && sameProject,
             breakApplied: sameDate,
+            // 理由を持たない古い下書きでは、切替先の現場の理由を DB から読む
+            hasReason: typeof draft.overtimeReason === 'string',
         };
         setIsLoadingBreakSettings(false);
         setSelectedProjectId(draft.selectedProjectId);
@@ -911,6 +948,8 @@ const WorkerApp = () => {
         });
         setSubcontractors(draft.subcontractors || []);
         setDeletedSubcontractorIds(draft.deletedSubcontractorIds || []);
+        // 古い下書きには理由が無い。その場合は入力欄の理由をそのまま残す
+        if (typeof draft.overtimeReason === 'string') setOvertimeReason(draft.overtimeReason);
         setHasUnsavedChanges(true);
         showToast('下書きを復元しました。内容を確認し「実績を送信」ボタンを押してください。', 'success');
     };
@@ -946,9 +985,15 @@ const WorkerApp = () => {
     // ========== 入力済み現場レコードの削除 ==========
     const handleDeleteProjectRecords = async (project) => {
         const dateLabel = new Date(selectedDate + 'T00:00:00').toLocaleDateString('ja-JP', { month: 'long', day: 'numeric' });
+        const isSelectedProject = String(selectedProjectId) === String(project.id);
+        // 削除済みの記録を指す下書きを残すと、復元・送信で記録がよみがえる。下書きも一緒に消すので、その旨を伝える
+        const hasDraft = draftQueue.some(d => isSameDraftTarget(d, project.id, selectedDate, loggedInWorker.name));
+        const draftNote = hasDraft || (isSelectedProject && hasUnsavedChanges)
+            ? '\n未送信の入力内容・下書きも破棄されます。'
+            : '';
         const ok = await confirm({
             title: '入力記録の削除',
-            message: `「${project.name}」の ${dateLabel} の入力記録をすべて削除しますか？\nこの操作は取り消せません。`,
+            message: `「${project.name}」の ${dateLabel} の入力記録をすべて削除しますか？${draftNote}\nこの操作は取り消せません。`,
             confirmText: '削除する',
             variant: 'danger',
         });
@@ -963,11 +1008,10 @@ const WorkerApp = () => {
             });
             deleted = true;
 
-            // workerDailyAllRecords を再取得
-            setWorkerDailyAllRecords(await fetchWorkerDailyRecords(loggedInWorker.name, selectedDate));
-
-            // 削除した現場が現在選択中なら入力欄をリセット
-            if (String(selectedProjectId) === String(project.id)) {
+            // 削除した現場が現在選択中なら入力欄をリセットする。
+            // 予約済みの自動保存は削除前の入力（削除済みの record_id）を持つので、世代を上げて書き込ませない
+            if (isSelectedProject) {
+                autosaveEpochRef.current += 1;
                 setTasks(prev => prev.map(t => ({
                     ...t,
                     time_slots: [{ slot_id: `new-${Date.now()}-${t.id}`, record_id: null, start_time: '', end_time: '', is_overnight: false }],
@@ -975,8 +1019,18 @@ const WorkerApp = () => {
                     today_note: '',
                     work_allowance: false,
                 })));
+                setOvertimeReason('');
                 setHasUnsavedChanges(false);
             }
+
+            // この現場・日付の下書きは削除済みの record_id を持つため、残すと復元・送信で記録がよみがえる
+            setDraftQueue(removeDraft(project.id, selectedDate, loggedInWorker.name).queue);
+            // 承認申請も一緒に消えるので、職長の承認待ち一覧を取り直す
+            loadPendingApprovals();
+            loadPendingAllowanceApprovals();
+
+            // workerDailyAllRecords を再取得
+            setWorkerDailyAllRecords(await fetchWorkerDailyRecords(loggedInWorker.name, selectedDate));
 
             showToast(`「${project.name}」の入力記録を削除しました。`, 'success');
         } catch (e) {
@@ -1005,6 +1059,10 @@ const WorkerApp = () => {
                 
                 if ((slot.start_time && !slot.end_time) || (!slot.start_time && slot.end_time)) {
                     showToast(`「${t.name}」の作業時間が片方しか入力されていません。`, 'error');
+                    hasValidationError = true;
+                }
+                if (slot.start_time && slot.end_time && slot.start_time === slot.end_time) {
+                    showToast(`「${t.name}」の開始時刻と終了時刻が同じです。`, 'error');
                     hasValidationError = true;
                 }
                 if (sc.netWorkHours > 16) {
@@ -1054,8 +1112,9 @@ const WorkerApp = () => {
                     const sc = tc.slotCalcs[j];
 
                     if (!slot.start_time || !slot.end_time) {
-                        // 空スロットで既存レコードがある場合は削除
-                        if (slot.record_id) {
+                        // 空スロットで既存レコードがある場合は削除。
+                        // ただし管理者が時間数だけで入力した行は、もともと時刻が無いので空でも消さない（明示的な削除は deleted_record_ids で届く）
+                        if (slot.record_id && !slot.hours_only) {
                             deleteIds.push(slot.record_id);
                             clearedSlotKeys.add(slotKey(t.id, slot.slot_id));
                         }
@@ -1154,7 +1213,10 @@ const WorkerApp = () => {
                 subcontractor_updates: subcontractorUpdates,
                 subcontractor_inserts: subInsertPayloads,
                 overtime: overtimeSyncs,
-                allowance_task_names: tasks.filter(t => t.work_allowance).map(t => t.name),
+                // 時間を入力していない作業項目は日報が保存されないので、作業手当の申請にも含めない
+                allowance_task_names: tasksWithCalculation
+                    .filter(tc => tc.work_allowance && tc.has_any_input)
+                    .map(tc => tc.name),
             });
 
             // 返り順は inserts と一致するため id を書き戻す（state は直接書き換えず、新しいオブジェクトで更新する）
@@ -1243,6 +1305,7 @@ const WorkerApp = () => {
                     subcontractors,
                     deletedSubcontractorIds,
                     breakDurations: effectiveBreakDurations,
+                    overtimeReason,
                 });
                 setDraftQueue(prev => upsertIntoQueue(prev, entry));
                 if (saved) {

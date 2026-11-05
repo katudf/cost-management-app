@@ -72,7 +72,7 @@ src/
 
 ### Supabase呼び出し
 - UIコンポーネントから直接 `supabase.from()` を呼ばない
-- 必ず `src/hooks/` のカスタムフック、または `supabaseEstimates.js` を経由する
+- 必ず `src/hooks/` のモジュール（`useDailyReport.js` のようにフックではなく関数をまとめたものもある）、`src/lib/` の承認申請モジュール（`overtimeApprovals.js` / `workAllowanceApprovals.js`）、または `supabaseEstimates.js` を経由する
 
 ### 削除確認
 - `window.confirm()` / `window.prompt()` は使用禁止

@@ -117,7 +117,7 @@ $function$;
 REVOKE EXECUTE ON FUNCTION public._upsert_task_record(jsonb, bigint, date, text) FROM anon, PUBLIC, authenticated;
 
 -- ---------------------------------------------------------
--- 内部: 残業承認の同期（src/lib/overtimeApprovals.js の syncOvertimeApproval と同じ規則）
+-- 内部: 残業承認の同期（以前 src/lib/overtimeApprovals.js にあった syncOvertimeApproval の規則を DB に移したもの）
 --   残業 0 → 申請を削除 / 無ければ pending で起票 / 承認済みで時間が変わったら pending に戻す
 -- ---------------------------------------------------------
 CREATE OR REPLACE FUNCTION public._sync_overtime_approval(
@@ -155,7 +155,7 @@ $function$;
 REVOKE EXECUTE ON FUNCTION public._sync_overtime_approval(bigint, text, date, numeric, text) FROM anon, PUBLIC, authenticated;
 
 -- ---------------------------------------------------------
--- 内部: 作業手当承認の同期（src/lib/workAllowanceApprovals.js の syncWorkAllowanceApproval と同じ規則）
+-- 内部: 作業手当承認の同期（以前 src/lib/workAllowanceApprovals.js にあった syncWorkAllowanceApproval の規則を DB に移したもの）
 -- ---------------------------------------------------------
 CREATE OR REPLACE FUNCTION public._sync_work_allowance_approval(
   p_project_id bigint, p_worker_name text, p_date date, p_task_names text[]

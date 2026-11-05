@@ -519,7 +519,7 @@ window.addEventListener('beforeunload', (e) => {
 ### Supabase操作のルール
 
 - UIコンポーネントから直接 `supabase.from()` を呼び出さない
-- 必ず `src/hooks/` のカスタムフック、または `supabaseEstimates.js` のようなサービス関数を経由する
+- 必ず `src/hooks/` のモジュール（`useDailyReport.js` のようにフックではなく関数をまとめたものもある）、`src/lib/` の承認申請モジュール（`overtimeApprovals.js` / `workAllowanceApprovals.js`）、または `supabaseEstimates.js` のようなサービス関数を経由する
 - エラーは `showToast('...', 'error')` でユーザーに通知する
 
 ### 削除確認のルール
