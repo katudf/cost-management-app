@@ -92,6 +92,9 @@ export const STAFF_ROLE_LIST = [
 ];
 // 管理者権限の判定（業務管理者・システム管理者の両方）。DBの is_admin() と一致させること。
 export const isAdminRole = (role) => role === STAFF_ROLE.ADMIN || role === STAFF_ROLE.SYSTEM_ADMIN;
+// 管理者画面（AdminApp）に入れるロール。RLS で書き込みを許している admin/office 系と一致させること。
+// worker / viewer は作業日報（worker.html）・工程表（schedule.html）を使う。
+export const canUseAdminApp = (role) => isAdminRole(role) || role === STAFF_ROLE.OFFICE;
 // システム管理者アカウントは画面上の一覧・選択肢に表示しない（権限には影響しない）。
 export const isDisplayableStaff = (staff) => staff?.role !== STAFF_ROLE.SYSTEM_ADMIN;
 // システム管理者のみ（パスワード変更履歴の閲覧など）。DBの RLS ポリシーと一致させること。

@@ -397,7 +397,8 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 
 [functions.gemini-optimize]
 enabled = true
-verify_jwt = false
+# Gemini の課金枠を守るため JWT 必須。関数内でもロール（admin/system_admin/office）を確認する
+verify_jwt = true
 import_map = "./functions/gemini-optimize/deno.json"
 # Uncomment to specify a custom file path to the entrypoint.
 # Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx

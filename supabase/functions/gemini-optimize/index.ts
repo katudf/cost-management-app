@@ -1,4 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { createClient } from "jsr:@supabase/supabase-js@2"
+
+// Gemini の課金枠を守るため、呼び出せるのは管理者画面のロール（admin/system_admin/office）に限る
+const ALLOWED_ROLES = ['admin', 'system_admin', 'office']
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -13,8 +17,52 @@ serve(async (req) => {
   }
 
   try {
+    const jsonHeaders = { ...corsHeaders, "Content-Type": "application/json" }
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
+    if (!supabaseUrl || !serviceRoleKey) {
+      console.error("SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not set on the server.")
+      return new Response(
+        JSON.stringify({ error: "サーバー側の設定が不足しています。" }),
+        { status: 500, headers: jsonHeaders }
+      )
+    }
+
+    // 呼び出し元のログインを検証する（トークンを明示して getUser に渡す）
+    const authHeader = req.headers.get('Authorization') ?? ''
+    const token = authHeader.replace(/^Bearer\s+/i, '')
+    if (!token) {
+      return new Response(
+        JSON.stringify({ error: "認証情報がありません。" }),
+        { status: 401, headers: jsonHeaders }
+      )
+    }
+
+    const adminClient = createClient(supabaseUrl, serviceRoleKey)
+    const { data: callerData, error: callerError } = await adminClient.auth.getUser(token)
+    if (callerError || !callerData?.user) {
+      return new Response(
+        JSON.stringify({ error: "ログイン情報が確認できません。再度ログインしてください。" }),
+        { status: 401, headers: jsonHeaders }
+      )
+    }
+
+    const { data: callerStaff, error: callerStaffError } = await adminClient
+      .from('office_staff')
+      .select('role')
+      .eq('auth_user_id', callerData.user.id)
+      .maybeSingle()
+    if (callerStaffError) throw callerStaffError
+    if (!callerStaff || !ALLOWED_ROLES.includes(callerStaff.role)) {
+      return new Response(
+        JSON.stringify({ error: "この操作を行う権限がありません。" }),
+        { status: 403, headers: jsonHeaders }
+      )
+    }
+
     const { items } = await req.json()
-    
+
     const apiKey = Deno.env.get("GEMINI_API_KEY")
     if (!apiKey) {
       console.error("GEMINI_API_KEY environment variable is not set on the server.");

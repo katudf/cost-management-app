@@ -9,11 +9,12 @@ import { useAuth } from './hooks/useAuth';
 import { usePasswordChangeLogUnread } from './hooks/usePasswordChangeLogs';
 import LoginScreen from './components/auth/LoginScreen';
 import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
+import NoPermissionScreen from './components/auth/NoPermissionScreen';
 import HomeLanding from './components/HomeLanding';
 import logoUrl from './img/kimura-logo.svg';
 import { Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, GripVertical, LogOut, Bell, Database, Upload, HelpCircle } from 'lucide-react';
 import { buildWeekDays, buildWeekPrefix, fetchWeeklyReportData } from './hooks/useWeeklyReportData';
-import { DEFAULT_MASTER_DATA, PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR, ITEM_TYPE, DASHBOARD_VIEW_MODE, DASHBOARD_VIEW_MODE_LIST, ESTIMATE_STATUS, isSystemAdminRole } from './utils/constants';
+import { DEFAULT_MASTER_DATA, PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR, ITEM_TYPE, DASHBOARD_VIEW_MODE, DASHBOARD_VIEW_MODE_LIST, ESTIMATE_STATUS, isSystemAdminRole, canUseAdminApp } from './utils/constants';
 import { calculateAge } from './utils/dateUtils';
 import { exportToExcel, generateWorkerReportExcel, generateMultipleWorkersReportExcel } from './utils/excelExportUtils';
 import { generateWorkerReportPDF, generateMultipleWorkersReportPDF } from './utils/pdfExportUtils';
@@ -49,6 +50,8 @@ const ImportExcelButton = ({ onClick, className, iconSize = 18 }) => (
 const App = () => {
     const { showToast } = useToast();
     const { isAuthenticated, isLoading: isAuthLoading, currentStaff, signOut, isPasswordRecovery } = useAuth();
+    // 作業員・閲覧者のアカウント（同一オリジンでセッション共有）で管理者画面に入れないようにする
+    const hasAdminAccess = isAuthenticated && canUseAdminApp(currentStaff?.role);
     const [activeTab, setActiveTab] = useState('dashboard');
     // ログイン直後はトップページ（タイル画面）を表示し、タイル選択で各タブへ入る。
     // ヘッダーのロゴ／システム名クリックでトップページへ戻る。
@@ -378,9 +381,10 @@ const App = () => {
     // （未認証のまま fetchAllData を走らせると RLS で空の結果が返り、
     //   ログイン直後に一覧が空のまま表示されてしまうため）
     useEffect(() => {
-        if (isAuthLoading || !isAuthenticated) return;
+        // 管理者画面の権限がないアカウントではマスタ一括取得自体を行わない
+        if (isAuthLoading || !hasAdminAccess) return;
         fetchAllData(null, setActiveProjectId);
-    }, [fetchAllData, isAuthLoading, isAuthenticated]);
+    }, [fetchAllData, isAuthLoading, hasAdminAccess]);
 
     useEffect(() => {
         if (activeProjectId) {
@@ -491,6 +495,10 @@ const App = () => {
 
     if (!isAuthenticated) {
         return <LoginScreen />;
+    }
+
+    if (!hasAdminAccess) {
+        return <NoPermissionScreen currentStaff={currentStaff} onSignOut={signOut} />;
     }
 
     if (isLoading && projects.length === 0) {

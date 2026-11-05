@@ -1,0 +1,22 @@
+-- =========================================================
+-- Workers テーブル: worker ロールの基表 SELECT を再び外す
+--
+-- 【問題】
+-- 20260710005126_phase3_workers_directory_view.sql で
+-- 「worker は workers_directory ビュー（安全カラムのみ）で足りる」として
+-- workers_select_worker を DROP したが、
+-- 20260911012655_fix_workers_policy_worker_write_access.sql で同名ポリシーが再作成され、
+-- worker の共有アカウントから Workers 基表の全カラム
+-- （birthDate / address / contactInfo / lineworks_user_id など個人情報）を読める状態に戻っていた。
+--
+-- 【影響確認】
+-- worker ロールが使う画面（WorkerApp / InventoryApp / ScheduleViewApp）は
+-- いずれも workers_directory ビュー経由で作業員名簿を読んでおり、Workers 基表は読まない
+-- （useDailyReport.js の fetchWorkersDirectoryResult、useInventory.js、useScheduleViewData.js）。
+-- Workers 基表を読むのは AdminApp（admin/office）だけで、workers_office_all で引き続き許可される。
+--
+-- 【備考】2026-11-05 時点の本番DBにはこのポリシーは既に存在しなかった（手動で削除済みとみられる）。
+-- マイグレーション履歴と実DBの状態を一致させるために残す（IF EXISTS のため本番では何も変わらない）。
+-- =========================================================
+
+drop policy if exists workers_select_worker on public."Workers";
