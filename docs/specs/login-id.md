@@ -22,7 +22,8 @@
   - Edge Function の処理本体は `handler.ts` に分け、`handler.test.ts`（Vitest）で偽のクライアントを使ってテストする
   - 架空メールのドメインは SQL では `login_id_email_domain()` 1か所にまとめ、画面・Edge Function の値との一致を
     DB テストと `handler.test.ts` で確かめる
-- 関連: [`security-permissions.md`](security-permissions.md)（ロール・RLS・共有アカウント方式 §3.3）
+- 関連: [`security-permissions.md`](security-permissions.md)（ロール・RLS・共有アカウント方式 §3.3）、
+  [`worker-login.md`](worker-login.md)（作業員への独自IDの拡大と共有アカウントの廃止。設計中）
 
 ## 1. 目的と背景
 
