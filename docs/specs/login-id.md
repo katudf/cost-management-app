@@ -61,7 +61,7 @@ Auth の email: kimura01@login.kimura-paint.com
 - 一覧表示用に、`get_office_staff_emails` を置き換える RPC `get_office_staff_login_ids()` を作る
   （SECURITY DEFINER、`is_admin()` のときだけ全行を返す。email が `@login.kimura-paint.com` で終わる行はドメインを外した ID、
   それ以外は NULL＝未割り当てとして返す）。
-- 本人用に `get_my_login_id()` を作る（自分の行だけ）。本人変更（§4.3）の再認証や画面表示に使う。
+- 本人用に `get_my_login_id()` を作る（自分の行だけ）。画面に自分のIDを表示するのに使う。
 - これにより、office ロールに全員のIDが見える問題（`office_staff_select` が office に全行を許している）も起きない。
 - 重複は Auth の email の一意制約で防がれる。
 
@@ -107,10 +107,11 @@ Auth の email: kimura01@login.kimura-paint.com
 - 共有アカウント（worker / viewer）の画面には出さない。
   **ただし `supabase.auth.updateUser` はクライアントから誰でも呼べるため、サーバー側では禁止できない**。
   共有アカウントのパスワード変更は履歴（§6）で検知する方針とする。
-- 現在のパスワードの確認は、変更前に `signInWithPassword` で再認証して行う
-  （Supabase の `updateUser` は既定では現在のパスワードを求めないため）。
-  再認証に使うメールは `session.user.email` ではなく `get_my_login_id()` から組み立てる。
-  ID割り当て直後はトークン更新（最大1時間）まで `session.user.email` が古い実メールのままのため。
+- 現在のパスワードの確認は、Supabase の「Require current password when updating」をオンにして
+  `updateUser({ password, current_password })` で行う（§9.2）。サーバー側で確認されるので、
+  クライアントから直接 `updateUser` を呼ばれても現在のパスワードなしでは変えられない。
+  `current_password_mismatch` のときは「現在のパスワードが違います」と表示する。
+  （`signInWithPassword` での再認証は不要。ID割り当て直後に `session.user.email` が古いメールのままでも影響しない）
 
 ### 4.4 パスワード再設定画面（`ResetPasswordScreen.jsx`）
 
@@ -178,7 +179,8 @@ change_login_id なら元の email に戻す）。
 
 1. **Supabase Auth の Email signups を無効にする**（本番）。架空メールのIDを第三者に先取りされないようにするため。
    管理者の `createUser` は無効でも動く。`supabase/config.toml` の `[auth] enable_signup` / `[auth.email] enable_signup` も false にする。
-2. Auth の設定を合わせる: パスワード最低長を8、Secure password change が無効であること、パスワード変更・メール変更のセキュリティ通知メールを無効にする（§9）。
+2. Auth の設定を合わせる（§9.2）: パスワード最低長を8に上げ、「Require current password when updating」をオンにする。
+   Secure password change はオフのまま、セキュリティ通知メールもオフのままにする。`supabase/config.toml` も同じ値にする。
 3. マイグレーション（RPC・保護トリガー・履歴の kind と列）を適用する。
 4. Edge Function を配置し、担当者設定に ID 発行・割り当てを出す。
 5. ログイン画面は「ログインID（またはメールアドレス）」表記にし、`@` を含む入力はメールとして受け付ける。
@@ -214,17 +216,41 @@ system_admin は現状 id=17 のシステムアカウント1つだけで、画�
 
 ## 9. 実装前に確認すること（本番の Supabase で）
 
-- [ ] Email signups が無効になっていること（ローカルの `config.toml` は有効）
-- [ ] `email_confirm: true` を付けた `createUser` / `updateUserById(email)` が、確認メールを送らずに即時反映されること
-- [ ] 管理者がパスワードを変えたとき、対象者の既存セッション（他端末）がどうなるか。
-      失効する場合 → 共有アカウントのリセットで現場の全端末がログアウトされる（§7-7 の周知に反映）。
-      失効しても、発行済みのアクセストークンは最大1時間（`jwt_expiry`）有効なので、即座の締め出しにはならない
-- [ ] Secure password change が無効であること（有効だと `updateUser` がメール再認証を求め、架空メールでは完了できない）
-- [ ] パスワード変更・メール変更のセキュリティ通知メールが無効であること（架空ドメインへの送信で SMTP の評価が下がるのを防ぐ）
-- [ ] 拡張メール検証（MX 確認）の有無と、Null MX のドメインで `createUser` が通ること
-- [ ] パスワード最低長を8にしたこと、ログイン試行回数制限の値
-- [ ] `login.kimura-paint.com` の DNS（Null MX、ワイルドカード A レコードがないこと）を DNS の管理者に確認
-- [ ] パスワードマネージャー・ブラウザの保存済みパスワードが、ID切り替え後も正しく候補に出るか（`autoComplete="username"`）
+2026-11-07 に確認した。本番プロジェクト `quaollobtalcixmlpmps` の Auth は v2.188.1。
+Supabase Auth の挙動は同じバージョンのソース（github.com/supabase/auth タグ v2.188.1）で確かめた。
+
+### 9.1 確認済み
+
+| 項目 | 結果 | 確認方法 | 設計への影響 |
+|------|------|----------|--------------|
+| Email signups | **有効**（`disable_signup: false`、`mailer_autoconfirm: false`） | 本番 `/auth/v1/settings` | §7-1 で必ず無効にする。確認メール必須なので先取りされても直接ログインはできないが、架空メールの枠は埋まり、そのIDで `create` できなくなる |
+| signups 無効時の管理者 `createUser` | 使える | ソース `signup.go:115` だけが `DisableSignup` を確認。`admin.go` は確認しない | 変更なし |
+| 管理者の `updateUserById({ email, email_confirm: true })` | すぐに書き換わり、メールは送られない。Secure email change の設定の影響を受けない。セッションは失効しない | ソース `admin.go:198-199, 248`。管理者 API に送信処理がない | `change_login_id` / `assign_login_id` は利用者側の操作なしで完了する。割り当て後も既存のセッションは続く（§4.3 のとおり、`session.user.email` は古いまま） |
+| 管理者の `updateUserById({ password })` | **対象者の全セッションとリフレッシュトークンが失効する** | ソース `admin.go:211` → `models/user.go:377-379` `Logout` → `sessions.go:343` | 共有アカウントのパスワードを変えると、現場の全端末が再ログインになる（§7-7）。発行済みのアクセストークンは期限（`jwt_expiry`、最大1時間）まで残るので、すぐに締め出せるわけではない |
+| 利用者の `updateUser({ password })` | 他の端末のセッションは失効し、今の端末だけ残る。**現在のパスワードは既定では求められない** | ソース `api/user.go:170, 215-220` | §4.3 の再認証は必要（下の「要確認」も参照） |
+| 管理者 API でのセキュリティ通知メール | 送られない | ソース `admin.go` に通知の呼び出しがない | 管理者の発行・リセット・ID変更では架空ドメインに送信されない |
+| 管理者 API でのメールアドレス検査 | 書式チェックだけで、DNS は引かない | ソース `mail.go:708-720` | Null MX でも ID発行・変更は通る |
+| `login.kimura-paint.com` の DNS | **MX なし。ワイルドカード A レコード（`*.kimura-paint.com` → 157.7.189.246）に一致する** | `nslookup`（8.8.8.8） | 誤ってメールを送ると、A レコードのホストへ配信を試みる。§3.1 の Null MX 設定が必要（DNS は heteml。Null MX を登録できるかは DNS の管理者に確認） |
+
+### 9.2 管理画面で確認した設定（2026-11-07、閲覧のみ・変更なし）
+
+| 項目（ダッシュボードの場所） | 現在値 | 判断 |
+|------------------------------|--------|------|
+| Secure password change（Sign In / Providers → Email） | **オフ** | このままでよい。オンだと、ログインから24時間を超えたセッションでの本人変更にメールの確認コードが必要になり、架空メールでは完了できない（ソース `api/user.go:151-160`） |
+| Require current password when updating（同上） | **オフ** | **§7-2 でオンにする**。`updateUser({ password, current_password })` の確認をサーバー側で強制できる（§4.3）。メールの再設定リンクから入ったセッションは確認が免除されるので（ソース `api/user.go:171-180`）、フェーズ1のメール再設定も壊れない |
+| Secure email change（同上） | オン | 管理者 API には影響しない（§9.1）。変更不要 |
+| Minimum password length（同上） | **6** | §7-2 で8に上げる |
+| Password requirements（同上） | 指定なし | 必要に応じて検討（必須ではない） |
+| Prevent use of leaked passwords（同上） | オフ | Pro プラン以上のみ。対象外 |
+| セキュリティ通知メール 7種（Emails → Security） | **すべてオフ** | このままでよい。架空ドメインへの送信は起きない |
+| SMTP（Emails → SMTP Settings） | 組み込みのメール送信（独自 SMTP なし） | 架空ドメインへの送信で評価が下がる心配はない。フェーズ1の招待・再設定メールは従来どおり組み込みの送信制限を受ける |
+| サインアップ・サインインの試行回数制限（Rate Limits） | 5分あたり30回／IP（1時間あたり360回） | 現状のままとする。IDは推測しやすいので、運用で不審なログイン失敗が多ければ下げる |
+| 招待済みでパスワード未設定のユーザー（Users） | **0人**（全9ユーザーが作成済み・ログイン履歴あり） | `assign_login_id` でパスワード必須になる対象は、今のところいない |
+
+### 9.3 その他
+
+- [ ] `login.kimura-paint.com` に Null MX（`MX 0 .`）を設定できるか、DNS（heteml）の管理者に確認する
+- [ ] パスワードマネージャー・ブラウザの保存済みパスワードが、ID切り替え後も正しく候補に出るか（`autoComplete="username"`）。実装後に確認する
 
 ## 10. 影響範囲
 
