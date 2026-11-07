@@ -1,7 +1,7 @@
 # 独自ログインIDへの切り替え 設計書
 
 - 作成日: 2026-11-07（同日、レビュー指摘を反映して改訂）
-- 状態: フェーズ1実装済み（ブランチ `feat/login-id`）。本番は Auth 設定・マイグレーション・Edge Function `manage-staff-login` まで反映済み（2026-11-07）、画面の公開は未実施。フェーズ2は未着手
+- 状態: フェーズ1を本番に公開済み（2026-11-07、PR #3）。Auth 設定・マイグレーション（`20261107000000` / `20261107010000`）・Edge Function `manage-staff-login`・画面のすべてを反映。既存ユーザーへのID割り当て（§7 フェーズ1）は未着手。フェーズ2は未着手
 - 実装: `src/utils/loginId.js`、`supabase/migrations/20261107000000_login_id_management.sql`、
   `supabase/functions/manage-staff-login/`、`src/components/tabs/settings/StaffLoginDialog.jsx` / `OwnPasswordChange.jsx`。
   テストは `src/utils/loginId.test.js` と `scripts/test-login-id-db.py`（`tests/db/login-id-fixture.sql`）
