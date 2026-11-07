@@ -1,23 +1,34 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Plus, Edit3, Trash2, Save, X, User, Shield, UserCheck, Loader2, Mail, Send, CheckCircle2 } from 'lucide-react';
+import { Search, Plus, Edit3, Trash2, Save, X, User, Shield, UserCheck, Loader2, Mail, KeyRound, AtSign, PencilLine } from 'lucide-react';
 import { useToast } from '../../components/Toast';
 import ConfirmModal from '../ConfirmModal';
 import { STAFF_ROLE, STAFF_ROLE_LABEL, STAFF_ROLE_LIST, isDisplayableStaff, isAdminRole } from '../../utils/constants';
 import { useStaffSettingsData } from '../../hooks/useStaffSettingsData';
 import { useAuth } from '../../hooks/useAuth';
+import { canManageStaffLogin } from '../../utils/loginId';
+import StaffLoginDialog from './settings/StaffLoginDialog';
+import OwnPasswordChange from './settings/OwnPasswordChange';
 
 const StaffSettings = () => {
     const { showToast } = useToast();
     const { currentStaff, refreshCurrentStaff } = useAuth();
     const isAdmin = isAdminRole(currentStaff?.role);
-    const { staffList, isLoading, refetch, createStaff, updateStaff, deleteStaff, inviteStaff } = useStaffSettingsData();
+    const isSystemAdmin = currentStaff?.role === STAFF_ROLE.SYSTEM_ADMIN;
+    const {
+        staffList, isLoading, refetch, createStaff, updateStaff, deleteStaff,
+        createLogin, assignLoginId, resetPassword, changeLoginId,
+    } = useStaffSettingsData();
     const [isSaving, setIsSaving] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [form, setForm] = useState({ id: null, name: '', role: STAFF_ROLE.WORKER, is_approver: false });
-    const [confirmDeleteId, setConfirmDeleteId] = useState(null);
-    const [inviteTargetId, setInviteTargetId] = useState(null);
-    const [inviteEmail, setInviteEmail] = useState('');
-    const [isInviting, setIsInviting] = useState(false);
+    const [confirmDeleteStaff, setConfirmDeleteStaff] = useState(null);
+    // ログイン操作ダイアログ: { mode: 'create' | 'assign' | 'reset' | 'changeId', staff }
+    const [loginDialog, setLoginDialog] = useState(null);
+
+    // 管理者の任命・解任はシステム管理者だけ（決定 #11）。業務管理者には「管理者」を選ばせない。
+    const roleOptions = isSystemAdmin ? STAFF_ROLE_LIST : STAFF_ROLE_LIST.filter(role => role !== STAFF_ROLE.ADMIN);
+    // 業務管理者が管理者の行を編集するときは権限区分を変えられない（名前・承認者は従来どおり）
+    const isRoleLocked = !isAdmin || (!isSystemAdmin && form.role === STAFF_ROLE.ADMIN && !!form.id);
 
     useEffect(() => {
         refetch().catch((error) => {
@@ -65,47 +76,62 @@ const StaffSettings = () => {
         }
     };
 
-    const handleDelete = async (id) => {
+    const handleDelete = async (staff) => {
         setIsSaving(true);
         try {
-            await deleteStaff(id);
+            await deleteStaff(staff);
             showToast('担当者情報を削除しました', 'success');
             refetch();
         } catch (error) {
             console.error('担当者情報削除エラー:', error);
-            showToast('削除に失敗しました', 'error');
+            showToast(`削除に失敗しました: ${error.message}`, 'error');
         } finally {
             setIsSaving(false);
         }
     };
 
-    const handleInvite = async () => {
-        if (!inviteEmail.trim() || !inviteTargetId) return;
-
-        setIsInviting(true);
-        try {
-            await inviteStaff(inviteTargetId, inviteEmail.trim());
-
-            showToast('招待メールを送信しました', 'success');
-            setInviteTargetId(null);
-            setInviteEmail('');
-            refetch();
-        } catch (error) {
-            console.error('招待エラー:', error);
-            showToast(`招待の送信に失敗しました: ${error.message}`, 'error');
-        } finally {
-            setIsInviting(false);
+    const handleLoginSubmit = async ({ loginId, password }) => {
+        const { mode, staff } = loginDialog;
+        let result;
+        if (mode === 'create') {
+            result = await createLogin(staff.id, loginId, password);
+            showToast(`ログインID「${loginId}」を発行しました。本人にIDとパスワードを伝えてください`, 'success');
+        } else if (mode === 'assign') {
+            result = await assignLoginId(staff.id, loginId, password);
+            showToast(`ログインID「${loginId}」を割り当てました。本人に新しいIDを伝えてください`, 'success');
+        } else if (mode === 'reset') {
+            result = await resetPassword(staff.id, password);
+            showToast('パスワードをリセットしました。本人に新しいパスワードを伝えてください', 'success');
+        } else if (mode === 'changeId') {
+            result = await changeLoginId(staff.id, loginId);
+            showToast(`ログインIDを「${loginId}」に変更しました。本人に伝えてください`, 'success');
         }
+        if (result?.logged === false) {
+            showToast('パスワード変更履歴への記録に失敗しました', 'error');
+        }
+        setLoginDialog(null);
+        refetch().catch((error) => console.error('担当者情報取得エラー:', error));
     };
 
-    const filteredStaff = staffList.filter(isDisplayableStaff).filter(s =>
+    // システム管理者の行は、システム管理者がログインしているときだけ出す（自分のID割り当て・リセットのため）
+    const filteredStaff = staffList.filter(s => isSystemAdmin || isDisplayableStaff(s)).filter(s =>
         s.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (STAFF_ROLE_LABEL[s.role] || s.role || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (s.email || '').toLowerCase().includes(searchQuery.toLowerCase())
+        (s.login_id || '').includes(searchQuery.toLowerCase()) ||
+        (s.legacy_email || '').toLowerCase().includes(searchQuery.toLowerCase())
     );
+
+    // 削除できるのは、ログインを操作できる行（admin は office / worker / viewer、system_admin は全員）の、自分以外
+    const canDeleteStaff = (staff) => canManageStaffLogin(currentStaff?.role, staff.role) && staff.id !== currentStaff?.id;
+    const deleteDisabledReason = (staff) => {
+        if (!isAdmin) return '削除には管理者権限が必要です';
+        if (staff.id === currentStaff?.id) return '自分自身は削除できません';
+        return '管理者・システム管理者はシステム管理者だけが削除できます';
+    };
 
     return (
         <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+            <OwnPasswordChange />
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-8">
                 <div className="flex justify-between items-center mb-6">
                     <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
@@ -142,12 +168,12 @@ const StaffSettings = () => {
                                 <select
                                     value={form.role}
                                     onChange={(e) => setForm({ ...form, role: e.target.value })}
-                                    disabled={!isAdmin}
-                                    title={isAdmin ? undefined : '権限区分の変更には管理者権限が必要です'}
+                                    disabled={isRoleLocked}
+                                    title={!isAdmin ? '権限区分の変更には管理者権限が必要です' : isRoleLocked ? '管理者の権限区分はシステム管理者だけが変更できます' : undefined}
                                     className="w-full pl-9 pr-4 py-2.5 rounded-lg border-2 border-slate-200 font-bold text-slate-700 outline-none focus:border-blue-500 transition appearance-none bg-white disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
                                 >
-                                    {STAFF_ROLE_LIST.map(role => (
-                                        <option key={role} value={role}>{STAFF_ROLE_LABEL[role]}</option>
+                                    {(isRoleLocked || form.role === STAFF_ROLE.SYSTEM_ADMIN ? [form.role] : roleOptions).map(role => (
+                                        <option key={role} value={role}>{STAFF_ROLE_LABEL[role] || role}</option>
                                     ))}
                                 </select>
                             </div>
@@ -192,7 +218,7 @@ const StaffSettings = () => {
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
                     <input
                         type="text"
-                        placeholder="名前・役職・メールで検索..."
+                        placeholder="名前・役職・ログインIDで検索..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:border-blue-400 focus:bg-white outline-none font-bold text-slate-700 transition-all"
@@ -240,59 +266,13 @@ const StaffSettings = () => {
                                             )}
                                         </td>
                                         <td className="p-4 text-sm">
-                                            {staff.auth_user_id ? (
-                                                <div className="flex flex-col items-start gap-1">
-                                                    <span className="inline-flex items-center gap-1.5 text-green-600 text-xs font-bold bg-green-50 border border-green-200 px-2.5 py-1 rounded-full">
-                                                        <CheckCircle2 size={14} /> 招待済み
-                                                    </span>
-                                                    {staff.email && (
-                                                        <span className="inline-flex items-center gap-1 text-xs text-slate-500 font-medium break-all" title={staff.email}>
-                                                            <Mail size={12} className="shrink-0" /> {staff.email}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            ) :inviteTargetId === staff.id ? (
-                                                <div className="flex items-center gap-2">
-                                                    <div className="relative">
-                                                        <Mail className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 w-3.5 h-3.5" />
-                                                        <input
-                                                            type="email"
-                                                            value={inviteEmail}
-                                                            onChange={(e) => setInviteEmail(e.target.value)}
-                                                            placeholder="you@example.com"
-                                                            autoFocus
-                                                            className="pl-8 pr-2 py-1.5 rounded-lg border-2 border-slate-200 font-bold text-slate-700 text-xs outline-none focus:border-blue-500 transition w-40"
-                                                        />
-                                                    </div>
-                                                    <button
-                                                        onClick={handleInvite}
-                                                        disabled={!inviteEmail.trim() || isInviting}
-                                                        aria-label="招待メールを送信"
-                                                        title="招待メールを送信"
-                                                        className="text-blue-600 hover:text-blue-700 disabled:opacity-50 p-1.5 rounded-lg hover:bg-blue-50 transition"
-                                                    >
-                                                        {isInviting ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                                                    </button>
-                                                    <button
-                                                        onClick={() => { setInviteTargetId(null); setInviteEmail(''); }}
-                                                        disabled={isInviting}
-                                                        aria-label="招待をキャンセル"
-                                                        title="キャンセル"
-                                                        className="text-slate-400 hover:text-slate-600 disabled:opacity-50 p-1.5 rounded-lg hover:bg-slate-100 transition"
-                                                    >
-                                                        <X size={16} />
-                                                    </button>
-                                                </div>
-                                            ) : !isAdmin ? (
-                                                <span className="text-slate-400 text-xs font-bold">未招待</span>
-                                            ) : (
-                                                <button
-                                                    onClick={() => { setInviteTargetId(staff.id); setInviteEmail(''); }}
-                                                    className="inline-flex items-center gap-1.5 text-slate-500 hover:text-blue-600 text-xs font-bold border border-slate-200 hover:border-blue-300 px-2.5 py-1.5 rounded-lg transition"
-                                                >
-                                                    <Mail size={14} /> 招待する
-                                                </button>
-                                            )}
+                                            <StaffLoginCell
+                                                staff={staff}
+                                                isAdmin={isAdmin}
+                                                canManage={canManageStaffLogin(currentStaff?.role, staff.role)}
+                                                disabled={isSaving}
+                                                onOpen={(mode) => setLoginDialog({ mode, staff })}
+                                            />
                                         </td>
                                         <td className="p-4 text-center">
                                             <div className="flex items-center justify-center gap-2">
@@ -308,10 +288,10 @@ const StaffSettings = () => {
                                                     </button>
                                                 )}
                                                 <button
-                                                    onClick={() => setConfirmDeleteId(staff.id)}
-                                                    disabled={isSaving || !isAdmin}
-                                                    aria-label={isAdmin ? '削除' : '削除（管理者のみ）'}
-                                                    title={isAdmin ? '削除' : '削除には管理者権限が必要です'}
+                                                    onClick={() => setConfirmDeleteStaff(staff)}
+                                                    disabled={isSaving || !canDeleteStaff(staff)}
+                                                    aria-label={canDeleteStaff(staff) ? '削除' : '削除（権限なし）'}
+                                                    title={canDeleteStaff(staff) ? '削除' : deleteDisabledReason(staff)}
                                                     className="bg-white border border-slate-200 text-red-500 hover:text-red-600 hover:border-red-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50 disabled:hover:text-red-500 disabled:hover:border-slate-200 disabled:cursor-not-allowed"
                                                 >
                                                     <Trash2 size={16} />
@@ -326,12 +306,93 @@ const StaffSettings = () => {
                 </div>
             </div>
             <ConfirmModal
-                isOpen={!!confirmDeleteId}
-                onClose={() => setConfirmDeleteId(null)}
-                onConfirm={() => { handleDelete(confirmDeleteId); setConfirmDeleteId(null); }}
+                isOpen={!!confirmDeleteStaff}
+                onClose={() => setConfirmDeleteStaff(null)}
+                onConfirm={() => { handleDelete(confirmDeleteStaff); setConfirmDeleteStaff(null); }}
                 title="担当者情報を削除"
-                message="この担当者情報を削除してもよろしいですか？過去の見積等の担当者名が消える場合があります。"
+                message={confirmDeleteStaff?.auth_user_id
+                    ? 'この担当者情報とログインを削除してもよろしいですか？この人はログインできなくなります。過去の見積等の担当者名が消える場合があります。'
+                    : 'この担当者情報を削除してもよろしいですか？過去の見積等の担当者名が消える場合があります。'}
             />
+            {loginDialog && (
+                <StaffLoginDialog
+                    mode={loginDialog.mode}
+                    staff={loginDialog.staff}
+                    onClose={() => setLoginDialog(null)}
+                    onSubmit={handleLoginSubmit}
+                />
+            )}
+        </div>
+    );
+};
+
+/**
+ * 一覧の「ログイン」列。行の状態ごとに表示とボタンを出し分ける（docs/specs/login-id.md §4.2）。
+ *   ログインなし              → 「ID発行」
+ *   ログインあり・ID未割り当て → 移行前のメールアドレスと「ID割り当て」
+ *   ID割り当て済み            → ID と「パスワードリセット」「ID変更」
+ * 管理者以外には RPC がIDを返さないので、ログインの有無だけを出す。
+ */
+const StaffLoginCell = ({ staff, isAdmin, canManage, disabled, onOpen }) => {
+    const actionButtonClass = 'inline-flex items-center gap-1.5 text-slate-500 hover:text-blue-600 text-xs font-bold border border-slate-200 hover:border-blue-300 px-2.5 py-1.5 rounded-lg transition disabled:opacity-50';
+    const iconButtonClass = 'text-slate-400 hover:text-blue-600 p-1.5 rounded-lg hover:bg-blue-50 transition disabled:opacity-50';
+
+    if (!staff.auth_user_id) {
+        if (!canManage) return <span className="text-slate-400 text-xs font-bold">未発行</span>;
+        return (
+            <button onClick={() => onOpen('create')} disabled={disabled} className={actionButtonClass}>
+                <KeyRound size={14} /> ID発行
+            </button>
+        );
+    }
+
+    if (!isAdmin) {
+        return <span className="text-green-600 text-xs font-bold">ログインあり</span>;
+    }
+
+    if (!staff.login_id) {
+        return (
+            <div className="flex flex-col items-start gap-1">
+                <span className="text-amber-600 text-xs font-bold bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full">ID未割り当て</span>
+                {staff.legacy_email && (
+                    <span className="inline-flex items-center gap-1 text-xs text-slate-500 font-medium break-all" title={staff.legacy_email}>
+                        <Mail size={12} className="shrink-0" /> {staff.legacy_email}
+                    </span>
+                )}
+                {canManage && (
+                    <button onClick={() => onOpen('assign')} disabled={disabled} className={actionButtonClass}>
+                        <AtSign size={14} /> ID割り当て
+                    </button>
+                )}
+            </div>
+        );
+    }
+
+    return (
+        <div className="flex items-center gap-1">
+            <span className="font-mono text-sm text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded">{staff.login_id}</span>
+            {canManage && (
+                <>
+                    <button
+                        onClick={() => onOpen('reset')}
+                        disabled={disabled}
+                        aria-label="パスワードをリセット"
+                        title="パスワードをリセット"
+                        className={iconButtonClass}
+                    >
+                        <KeyRound size={16} />
+                    </button>
+                    <button
+                        onClick={() => onOpen('changeId')}
+                        disabled={disabled}
+                        aria-label="ログインIDを変更"
+                        title="ログインIDを変更"
+                        className={iconButtonClass}
+                    >
+                        <PencilLine size={16} />
+                    </button>
+                </>
+            )}
         </div>
     );
 };

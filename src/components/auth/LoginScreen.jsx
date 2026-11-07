@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LogIn, Mail, Lock, Loader2, AlertCircle, CheckCircle2, ArrowLeft, Eye, EyeOff } from 'lucide-react';
+import { LogIn, Mail, Lock, Loader2, AlertCircle, CheckCircle2, ArrowLeft, Eye, EyeOff, User } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 
 const LoginScreen = ({ title = 'CostNavi', subtitle = '管理者ログイン' }) => {
@@ -26,14 +26,15 @@ const LoginScreen = ({ title = 'CostNavi', subtitle = '管理者ログイン' })
             await signIn(email.trim(), password);
         } catch (error) {
             console.error('ログインエラー:', error);
-            setErrorMessage('メールアドレスまたはパスワードが正しくありません');
+            setErrorMessage('ログインIDまたはパスワードが正しくありません');
         } finally {
             setIsSubmitting(false);
         }
     };
 
     const openResetMode = () => {
-        setResetEmail(email);
+        // 再設定メールはメールアドレスでログインしている（ID未割り当ての）人だけが使える
+        setResetEmail(email.includes('@') ? email : '');
         setResetError('');
         setResetSent(false);
         setMode('reset');
@@ -76,17 +77,22 @@ const LoginScreen = ({ title = 'CostNavi', subtitle = '管理者ログイン' })
                 {mode === 'login' ? (
                     <form onSubmit={handleSubmit} className="space-y-4">
                         <div>
-                            <label className="block text-xs font-bold text-slate-500 mb-1">メールアドレス</label>
+                            {/* 移行期間（フェーズ1）はメールアドレスでも入れる。@ を含むかどうかで判定する */}
+                            <label htmlFor="login-id" className="block text-xs font-bold text-slate-500 mb-1">ログインID（またはメールアドレス）</label>
                             <div className="relative">
-                                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+                                <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
                                 <input
-                                    type="email"
+                                    id="login-id"
+                                    type="text"
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
                                     required
                                     autoComplete="username"
+                                    autoCapitalize="none"
+                                    autoCorrect="off"
+                                    spellCheck={false}
                                     className="w-full pl-9 pr-4 py-2.5 rounded-lg border-2 border-slate-200 font-bold text-slate-700 outline-none focus:border-blue-500 transition"
-                                    placeholder="you@example.com"
+                                    placeholder="ログインID"
                                 />
                             </div>
                         </div>
@@ -150,6 +156,7 @@ const LoginScreen = ({ title = 'CostNavi', subtitle = '管理者ログイン' })
                         ) : (
                             <form onSubmit={handleResetSubmit} className="space-y-4">
                                 <p className="text-sm text-slate-500">登録済みのメールアドレスを入力してください。パスワード再設定用のリンクを送信します。</p>
+                                <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-2.5">ログインIDでログインしている方は、管理者にパスワードのリセットを依頼してください。</p>
                                 <div>
                                     <label className="block text-xs font-bold text-slate-500 mb-1">メールアドレス</label>
                                     <div className="relative">

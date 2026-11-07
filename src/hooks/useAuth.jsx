@@ -1,9 +1,17 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import { isAuthSessionMissingError } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { PASSWORD_CHANGE_KIND } from '../utils/constants';
 import { clearMasterCache } from '../utils/offlineCache';
+import { loginInputToEmail } from '../utils/loginId';
 
 const AuthContext = createContext(null);
+
+// サーバー側のセッション失効を確かめる間隔（画面を開いている間）と、フォーカスのたびに確かめすぎないための最短間隔
+const SESSION_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+const SESSION_CHECK_MIN_GAP_MS = 30 * 1000;
+// getUser() がこれらを返したら、そのログインはもう使えない（削除・利用停止されたユーザー）
+const SESSION_REVOKED_CODES = new Set(['session_not_found', 'user_not_found', 'user_banned']);
 
 export const AuthProvider = ({ children }) => {
     const [session, setSession] = useState(undefined); // undefined = 判定中, null = 未ログイン
@@ -99,9 +107,96 @@ export const AuthProvider = ({ children }) => {
         };
     }, [fetchCurrentStaff]);
 
-    const signIn = useCallback(async (email, password) => {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
+    // サーバー側でセッションが消されていないか確かめる（docs/specs/login-id.md §4.2）。
+    // 管理者がパスワードをリセットしたり担当者を削除したりすると、その人のセッションはサーバーで削除されるが、
+    // 手元のアクセストークンは期限（最大1時間）まで使え続ける。画面に戻ったときと定期的に getUser() を呼び、
+    // セッションが無いと分かったらログアウトする。getUser() はセッション削除（session_not_found）を受け取ると
+    // 手元のセッションを消して SIGNED_OUT を発火するので、画面は上の onAuthStateChange でログイン画面に戻る。
+    // 通信エラー（オフラインの日報入力など）ではログアウトしない。
+    const hasSession = !!session;
+    useEffect(() => {
+        if (!supabase || !hasSession) return undefined;
+
+        let lastCheckedAt = 0;
+        let checking = false;
+        const verifySession = async ({ force = false } = {}) => {
+            const now = Date.now();
+            if (checking || (!force && now - lastCheckedAt < SESSION_CHECK_MIN_GAP_MS)) return;
+            if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+            checking = true;
+            lastCheckedAt = now;
+            try {
+                const { error } = await supabase.auth.getUser();
+                if (error && (isAuthSessionMissingError(error) || SESSION_REVOKED_CODES.has(error.code))) {
+                    // 共有端末に名簿・現場一覧が残らないよう、通常のログアウトと同じく後片付けする
+                    await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
+                    clearMasterCache();
+                }
+            } catch (error) {
+                console.warn('ログイン状態の確認に失敗しました:', error);
+            } finally {
+                checking = false;
+            }
+        };
+
+        const onVisible = () => {
+            if (document.visibilityState === 'visible') verifySession();
+        };
+        window.addEventListener('focus', onVisible);
+        document.addEventListener('visibilitychange', onVisible);
+        const timer = window.setInterval(() => {
+            if (document.visibilityState === 'visible') verifySession({ force: true });
+        }, SESSION_CHECK_INTERVAL_MS);
+
+        return () => {
+            window.removeEventListener('focus', onVisible);
+            document.removeEventListener('visibilitychange', onVisible);
+            window.clearInterval(timer);
+        };
+    }, [hasSession]);
+
+    // loginInput はログインID。移行期間（フェーズ1）は従来のメールアドレスも受け付ける（docs/specs/login-id.md §3.3）
+    const signIn = useCallback(async (loginInput, password) => {
+        const { error } = await supabase.auth.signInWithPassword({ email: loginInputToEmail(loginInput), password });
         if (error) throw error;
+    }, []);
+
+    // ログイン中の本人によるパスワード変更（§4.3）。変更すると他の端末はログアウトされ、この端末だけ残る。
+    // 現在のパスワードは2段階で確かめる。
+    //   1. 現在のパスワードでログインし直す（Supabase Auth の設定に関係なく確かめられる）
+    //   2. updateUser に current_password を付ける（「Require current password when updating」がオンならサーバーでも確かめる）
+    const changeOwnPassword = useCallback(async (currentPassword, newPassword) => {
+        // ログイン用メールアドレスはサーバーから取り直す。ID割り当て直後は、手元のセッションの email が
+        // トークン更新まで古い実メールのままのため。
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+        if (userError || !userData?.user?.email) throw new Error('ログイン情報を確認できませんでした。再度ログインしてください');
+        const { error: verifyError } = await supabase.auth.signInWithPassword({
+            email: userData.user.email,
+            password: currentPassword,
+        });
+        if (verifyError) {
+            throw new Error(verifyError.code === 'invalid_credentials' ? '現在のパスワードが違います' : verifyError.message);
+        }
+
+        const { error } = await supabase.auth.updateUser({ password: newPassword, current_password: currentPassword });
+        if (error) {
+            const messages = {
+                current_password_mismatch: '現在のパスワードが違います',
+                current_password_required: '現在のパスワードを入力してください',
+                same_password: '新しいパスワードが現在のパスワードと同じです',
+                weak_password: '新しいパスワードが短すぎるか、弱すぎます',
+            };
+            throw new Error(messages[error.code] || error.message);
+        }
+        // 記録に失敗してもパスワード変更自体は成功しているので throw しない（updatePassword と同じ扱い）
+        try {
+            const { error: logError } = await supabase.rpc('log_password_change', { p_kind: PASSWORD_CHANGE_KIND.SELF });
+            if (logError) throw logError;
+            return { logged: true };
+        } catch (logError) {
+            console.error('パスワード変更履歴の記録に失敗しました:', logError);
+            return { logged: false };
+        }
     }, []);
 
     const signOut = useCallback(async () => {
@@ -154,6 +249,7 @@ export const AuthProvider = ({ children }) => {
         signOut,
         resetPasswordForEmail,
         updatePassword,
+        changeOwnPassword,
         cancelPasswordRecovery,
     };
 
