@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { KeyRound, Lock, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
+import { LOGIN_PASSWORD_MIN_LENGTH } from '../../utils/loginId';
 
 const ResetPasswordScreen = () => {
     const { updatePassword, cancelPasswordRecovery, signOut } = useAuth();
@@ -15,8 +16,8 @@ const ResetPasswordScreen = () => {
         e.preventDefault();
         setErrorMessage('');
 
-        if (newPassword.length < 6) {
-            setErrorMessage('パスワードは6文字以上で入力してください');
+        if (newPassword.length < LOGIN_PASSWORD_MIN_LENGTH) {
+            setErrorMessage(`パスワードは${LOGIN_PASSWORD_MIN_LENGTH}文字以上で入力してください`);
             return;
         }
         if (newPassword !== confirmPassword) {
@@ -84,10 +85,10 @@ const ResetPasswordScreen = () => {
                                     value={newPassword}
                                     onChange={(e) => setNewPassword(e.target.value)}
                                     required
-                                    minLength={6}
+                                    minLength={LOGIN_PASSWORD_MIN_LENGTH}
                                     autoComplete="new-password"
                                     className="w-full pl-9 pr-4 py-2.5 rounded-lg border-2 border-slate-200 font-bold text-slate-700 outline-none focus:border-blue-500 transition"
-                                    placeholder="6文字以上"
+                                    placeholder={`${LOGIN_PASSWORD_MIN_LENGTH}文字以上`}
                                 />
                             </div>
                         </div>
@@ -100,7 +101,7 @@ const ResetPasswordScreen = () => {
                                     value={confirmPassword}
                                     onChange={(e) => setConfirmPassword(e.target.value)}
                                     required
-                                    minLength={6}
+                                    minLength={LOGIN_PASSWORD_MIN_LENGTH}
                                     autoComplete="new-password"
                                     className="w-full pl-9 pr-4 py-2.5 rounded-lg border-2 border-slate-200 font-bold text-slate-700 outline-none focus:border-blue-500 transition"
                                     placeholder="もう一度入力"

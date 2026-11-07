@@ -1,12 +1,28 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import { STAFF_ROLE } from '../utils/constants';
 
-// 招待されたロールが最初に使う画面。管理者画面に入れない作業員・閲覧者を管理者画面に案内しないようにする。
-const INVITE_LANDING_PAGE = {
-    [STAFF_ROLE.WORKER]: 'worker.html',
-    [STAFF_ROLE.VIEWER]: 'schedule.html',
-};
+/**
+ * 担当者・関係者管理のデータ操作。
+ * ログインID の発行・割り当て・リセット・変更と、ログインのある担当者の削除は
+ * Edge Function manage-staff-login を経由する（docs/specs/login-id.md §5）。
+ */
+
+// Edge Function のエラー本文（{ error: '...' }）を取り出して画面に出せるようにする
+async function invokeManageStaffLogin(body) {
+    const { data, error } = await supabase.functions.invoke('manage-staff-login', { body });
+    if (error) {
+        const errorBody = await error.context?.json?.().catch(() => null);
+        throw new Error(errorBody?.error || error.message);
+    }
+    return data;
+}
+
+/** ログイン中の本人のログインID（未割り当てなら null） */
+export async function fetchMyLoginId() {
+    const { data, error } = await supabase.rpc('get_my_login_id');
+    if (error) throw error;
+    return data || null;
+}
 
 export function useStaffSettingsData() {
     const [staffList, setStaffList] = useState([]);
@@ -15,20 +31,27 @@ export function useStaffSettingsData() {
     const refetch = useCallback(async () => {
         setIsLoading(true);
         try {
-            const { data, error } = await supabase
-                .from('office_staff')
-                .select('*')
-                .order('name', { ascending: true });
+            // ログインIDは auth.users 側（架空メール）にしか無いため RPC で取得して合成する。互いに依存しないので同時に取る。
+            // 管理者以外は0件が返る（IDは表示しない）。取得失敗時も一覧自体は表示する。
+            //   login_id     : 割り当て済みのID
+            //   legacy_email : まだIDに移行していない人のメールアドレス（移行期間のみ）
+            const [
+                { data, error },
+                { data: logins, error: loginError },
+            ] = await Promise.all([
+                supabase.from('office_staff').select('*').order('name', { ascending: true }),
+                supabase.rpc('get_office_staff_login_ids'),
+            ]);
 
             if (error) throw error;
+            if (loginError) console.warn('担当者ログインIDの取得に失敗しました:', loginError);
+            const loginMap = new Map((logins || []).map(l => [l.staff_id, l]));
 
-            // ログイン用メールアドレスは auth.users 側にしか無いため RPC で取得して合成する。
-            // 管理者以外は0件が返る（メールは表示しない）。取得失敗時も一覧自体は表示する。
-            const { data: emails, error: emailError } = await supabase.rpc('get_office_staff_emails');
-            if (emailError) console.warn('担当者メールアドレスの取得に失敗しました:', emailError);
-            const emailMap = new Map((emails || []).map(e => [e.staff_id, e.email]));
-
-            setStaffList((data || []).map(s => ({ ...s, email: emailMap.get(s.id) || null })));
+            setStaffList((data || []).map(s => ({
+                ...s,
+                login_id: loginMap.get(s.id)?.login_id || null,
+                legacy_email: loginMap.get(s.id)?.legacy_email || null,
+            })));
         } finally {
             setIsLoading(false);
         }
@@ -49,35 +72,48 @@ export function useStaffSettingsData() {
         }
     }, []);
 
-    const deleteStaff = useCallback(async (id) => {
+    const deleteStaff = useCallback(async (staff) => {
+        // ログインのある担当者は Auth ユーザーも一緒に消すため Edge Function 経由にする
+        // （DB のトリガーが直接の削除を拒否する）
+        if (staff.auth_user_id) {
+            await invokeManageStaffLogin({ action: 'delete', staffId: staff.id });
+            return;
+        }
         // RLSで削除権限がない場合、PostgRESTはエラーを返さず0件削除のまま204を返す。
         // .select() で削除された行を受け取り、0件なら権限不足として明示的にエラーにする。
-        const { data, error } = await supabase.from('office_staff').delete().eq('id', id).select();
+        const { data, error } = await supabase.from('office_staff').delete().eq('id', staff.id).select();
         if (error) throw error;
         if (!data || data.length === 0) {
             throw new Error('削除する権限がないか、対象の担当者が見つかりません。');
         }
     }, []);
 
-    const inviteStaff = useCallback(async (staffId, email) => {
-        // 招待メールのリンク先を、いま開いている画面（本番URL等）を基準に決める。
-        // 未指定だと Supabase の Site URL が使われ、localhost に飛ばされることがある。
-        // 作業員は作業日報、閲覧者は工程表に直接案内する（管理者画面では「権限がありません」になるため）。
-        const role = staffList.find(s => s.id === staffId)?.role;
-        const landingPage = INVITE_LANDING_PAGE[role];
-        const baseDir = window.location.pathname.replace(/[^/]*$/, '');
-        const redirectTo = landingPage
-            ? `${window.location.origin}${baseDir}${landingPage}`
-            : `${window.location.origin}${window.location.pathname}`;
-        const { error } = await supabase.functions.invoke('invite-staff', {
-            body: { staffId, email, redirectTo },
-        });
-        if (error) {
-            // Edge Function が返したエラーメッセージ（{ error: '...' }）を取り出して画面に出せるようにする
-            const body = await error.context?.json?.().catch(() => null);
-            throw new Error(body?.error || error.message);
-        }
-    }, [staffList]);
+    /** ログインのない担当者にIDとパスワードを発行する */
+    const createLogin = useCallback(
+        (staffId, loginId, password) => invokeManageStaffLogin({ action: 'create', staffId, loginId, password }),
+        [],
+    );
 
-    return { staffList, isLoading, refetch, createStaff, updateStaff, deleteStaff, inviteStaff };
+    /** 移行用。メールでログインしていた担当者にIDを割り当てる（password は任意） */
+    const assignLoginId = useCallback(
+        (staffId, loginId, password) => invokeManageStaffLogin({ action: 'assign_login_id', staffId, loginId, password: password || undefined }),
+        [],
+    );
+
+    /** パスワードを管理者が決めた値にリセットする（対象者は全端末でログアウトされる） */
+    const resetPassword = useCallback(
+        (staffId, password) => invokeManageStaffLogin({ action: 'reset_password', staffId, password }),
+        [],
+    );
+
+    /** ログインIDを変える */
+    const changeLoginId = useCallback(
+        (staffId, loginId) => invokeManageStaffLogin({ action: 'change_login_id', staffId, loginId }),
+        [],
+    );
+
+    return {
+        staffList, isLoading, refetch, createStaff, updateStaff, deleteStaff,
+        createLogin, assignLoginId, resetPassword, changeLoginId,
+    };
 }

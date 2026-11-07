@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { supabase } from '../lib/supabase';
 import { PASSWORD_CHANGE_KIND } from '../utils/constants';
 import { clearMasterCache } from '../utils/offlineCache';
+import { loginInputToEmail } from '../utils/loginId';
 
 const AuthContext = createContext(null);
 
@@ -99,9 +100,48 @@ export const AuthProvider = ({ children }) => {
         };
     }, [fetchCurrentStaff]);
 
-    const signIn = useCallback(async (email, password) => {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
+    // loginInput はログインID。移行期間（フェーズ1）は従来のメールアドレスも受け付ける（docs/specs/login-id.md §3.3）
+    const signIn = useCallback(async (loginInput, password) => {
+        const { error } = await supabase.auth.signInWithPassword({ email: loginInputToEmail(loginInput), password });
         if (error) throw error;
+    }, []);
+
+    // ログイン中の本人によるパスワード変更（§4.3）。変更すると他の端末はログアウトされ、この端末だけ残る。
+    // 現在のパスワードは2段階で確かめる。
+    //   1. 現在のパスワードでログインし直す（Supabase Auth の設定に関係なく確かめられる）
+    //   2. updateUser に current_password を付ける（「Require current password when updating」がオンならサーバーでも確かめる）
+    const changeOwnPassword = useCallback(async (currentPassword, newPassword) => {
+        // ログイン用メールアドレスはサーバーから取り直す。ID割り当て直後は、手元のセッションの email が
+        // トークン更新まで古い実メールのままのため。
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+        if (userError || !userData?.user?.email) throw new Error('ログイン情報を確認できませんでした。再度ログインしてください');
+        const { error: verifyError } = await supabase.auth.signInWithPassword({
+            email: userData.user.email,
+            password: currentPassword,
+        });
+        if (verifyError) {
+            throw new Error(verifyError.code === 'invalid_credentials' ? '現在のパスワードが違います' : verifyError.message);
+        }
+
+        const { error } = await supabase.auth.updateUser({ password: newPassword, current_password: currentPassword });
+        if (error) {
+            const messages = {
+                current_password_mismatch: '現在のパスワードが違います',
+                current_password_required: '現在のパスワードを入力してください',
+                same_password: '新しいパスワードが現在のパスワードと同じです',
+                weak_password: '新しいパスワードが短すぎるか、弱すぎます',
+            };
+            throw new Error(messages[error.code] || error.message);
+        }
+        // 記録に失敗してもパスワード変更自体は成功しているので throw しない（updatePassword と同じ扱い）
+        try {
+            const { error: logError } = await supabase.rpc('log_password_change', { p_kind: PASSWORD_CHANGE_KIND.SELF });
+            if (logError) throw logError;
+            return { logged: true };
+        } catch (logError) {
+            console.error('パスワード変更履歴の記録に失敗しました:', logError);
+            return { logged: false };
+        }
     }, []);
 
     const signOut = useCallback(async () => {
@@ -154,6 +194,7 @@ export const AuthProvider = ({ children }) => {
         signOut,
         resetPasswordForEmail,
         updatePassword,
+        changeOwnPassword,
         cancelPasswordRecovery,
     };
 

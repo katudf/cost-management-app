@@ -35,7 +35,8 @@ export const PasswordChangeLogs = ({ onViewed }) => {
                         <KeyRound size={20} className="text-blue-600" /> パスワード変更履歴
                     </h3>
                     <p className="text-xs text-slate-500 mt-1">
-                        利用者がパスワードを再設定した日時と端末です（新しい順。未読がなければ最大{MAX_LOGS}件）。招待からの初回設定は記録されません。
+                        パスワードが変わった日時と端末です（本人の変更・メールでの再設定・管理者のリセット。新しい順。未読がなければ最大{MAX_LOGS}件）。
+                        ID発行時の初回パスワードと招待からの初回設定は記録されません。管理者のリセットの端末・IP は操作した管理者のものです。
                     </p>
                 </div>
                 <button
@@ -60,8 +61,9 @@ export const PasswordChangeLogs = ({ onViewed }) => {
                             <tr className="border-b border-slate-200 text-left text-slate-500">
                                 <th className="py-2 pr-4 font-bold whitespace-nowrap">日時</th>
                                 <th className="py-2 pr-4 font-bold whitespace-nowrap">担当者</th>
-                                <th className="py-2 pr-4 font-bold whitespace-nowrap">メール</th>
+                                <th className="py-2 pr-4 font-bold whitespace-nowrap">ログインID / メール</th>
                                 <th className="py-2 pr-4 font-bold whitespace-nowrap">種別</th>
+                                <th className="py-2 pr-4 font-bold whitespace-nowrap">操作した管理者</th>
                                 <th className="py-2 pr-4 font-bold whitespace-nowrap">端末</th>
                                 <th className="py-2 font-bold whitespace-nowrap">IP</th>
                             </tr>
@@ -73,8 +75,9 @@ export const PasswordChangeLogs = ({ onViewed }) => {
                                     <tr key={log.id} className="border-b border-slate-100">
                                         <td className="py-2 pr-4 whitespace-nowrap">{new Date(log.created_at).toLocaleString('ja-JP')}</td>
                                         <td className="py-2 pr-4 whitespace-nowrap">{log.staff_name || '-'}</td>
-                                        <td className="py-2 pr-4">{log.email || '-'}</td>
+                                        <td className={`py-2 pr-4 ${log.login_id ? 'font-mono' : ''}`}>{log.login_id || log.email || '-'}</td>
                                         <td className="py-2 pr-4 whitespace-nowrap">{PASSWORD_CHANGE_KIND_LABEL[log.kind] || log.kind}</td>
+                                        <td className="py-2 pr-4 whitespace-nowrap">{log.operator_staff_name || '-'}</td>
                                         <td className="py-2 pr-4 whitespace-nowrap" title={log.user_agent || ''}>{os} / {browser}</td>
                                         <td
                                             className="py-2 whitespace-nowrap font-mono text-xs"

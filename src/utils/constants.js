@@ -103,10 +103,14 @@ export const isSystemAdminRole = (role) => role === STAFF_ROLE.SYSTEM_ADMIN;
 // === パスワード変更履歴の種別（password_change_logs.kind）===
 // DB の CHECK 制約・log_password_change の検証と一致させること。
 export const PASSWORD_CHANGE_KIND = {
-    RECOVERY: 'recovery',
+    RECOVERY: 'recovery',       // メールの再設定リンクから（移行期間のみ）
+    SELF: 'self',               // ログイン中の本人による変更
+    ADMIN_RESET: 'admin_reset', // 管理者によるリセット（Edge Function が記録）
 };
 export const PASSWORD_CHANGE_KIND_LABEL = {
     [PASSWORD_CHANGE_KIND.RECOVERY]: '再設定',
+    [PASSWORD_CHANGE_KIND.SELF]: '本人変更',
+    [PASSWORD_CHANGE_KIND.ADMIN_RESET]: '管理者リセット',
 };
 
 // === 見積アイテム種別 ===

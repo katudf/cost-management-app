@@ -1,7 +1,27 @@
 # 独自ログインIDへの切り替え 設計書
 
 - 作成日: 2026-11-07（同日、レビュー指摘を反映して改訂）
-- 状態: 設計確定・未実装
+- 状態: フェーズ1実装済み・本番未反映（ブランチ `feat/login-id`）。フェーズ2は未着手
+- 実装: `src/utils/loginId.js`、`supabase/migrations/20261107000000_login_id_management.sql`、
+  `supabase/functions/manage-staff-login/`、`src/components/tabs/settings/StaffLoginDialog.jsx` / `OwnPasswordChange.jsx`。
+  テストは `src/utils/loginId.test.js` と `scripts/test-login-id-db.py`（`tests/db/login-id-fixture.sql`）
+- 実装で設計から変えた点:
+  - 履歴には `operator_staff_id` に加えて `operator_staff_name` も残す（操作した管理者を削除しても名前が残るように）
+  - `invite-staff` はフェーズ1では残し（画面からは呼ばない）、フェーズ2で削除する
+  - 権限の再確認は RPC `assert_can_manage_staff_login` にまとめ、`link_staff_login` / `delete_staff_with_login` /
+    `log_admin_password_reset` の中でも呼ぶ。ID割り当て・ID変更は Auth を書き換えたあとにもう一度確かめ、
+    権限が無くなっていたら元のメールに戻す。パスワードリセットは戻せないので、記録時の再確認で失敗したら
+    「システム管理者がもう一度リセットしてください」と返す
+  - 削除は「Auth ユーザーを BAN → 担当者の行を消す → Auth ユーザーを消す」の順。
+    先に Auth ユーザーを消すと `ON DELETE SET NULL` による更新が保護トリガーに止められ、
+    BAN しないと Auth ユーザーの削除に失敗したときに担当者のいないログインが使える状態で残るため。
+    行の削除に失敗したら BAN を解く
+  - 本人のパスワード変更（§4.3）は、Supabase の「Require current password when updating」に加えて、
+    変更前に現在のパスワードでログインし直して確かめる（設定がオフでも確認されるように）。
+    ログイン用メールは `getUser()` でサーバーから取り直す
+  - Edge Function の処理本体は `handler.ts` に分け、`handler.test.ts`（Vitest）で偽のクライアントを使ってテストする
+  - 架空メールのドメインは SQL では `login_id_email_domain()` 1か所にまとめ、画面・Edge Function の値との一致を
+    DB テストと `handler.test.ts` で確かめる
 - 関連: [`security-permissions.md`](security-permissions.md)（ロール・RLS・共有アカウント方式 §3.3）
 
 ## 1. 目的と背景
@@ -26,7 +46,7 @@
 | 7 | 本人によるパスワード変更 | 担当者はログイン中に「現在のパスワード＋新しいパスワード」で変更できる。共有アカウントは画面に出さない |
 | 8 | 移行手順 | 移行期間を設ける（メール・IDの併用 → 全員分の割り当て後にメール廃止） |
 | 9 | IDの変更 | 管理者は変更できる（権限ルールは #5 と同じ）。本人は変更できない |
-| 10 | 架空メールのドメイン | 自社ドメインのサブドメイン `login.kimura-paint.com` |
+| 10 | 架空メールのドメイン | 予約ドメイン `login.invalid`（当初は自社サブドメインの予定だったが、heteml の DNS では Null MX を登録できないため変更。§9.1） |
 | 11 | 管理者の任命・解任 | **admin への昇格・admin からの降格、admin の行の紐付け変更・削除は system_admin だけ**（レビューで判明した乗っ取り経路をふさぐため。従来は admin 同士で可能だった） |
 
 ### 検討して採用しなかった案
@@ -43,15 +63,15 @@
 
 ```
 ログインID  : kimura01
-Auth の email: kimura01@login.kimura-paint.com
+Auth の email: kimura01@login.invalid
 ```
 
 - 変換は1か所の関数にまとめ、フロント（`src/utils/loginId.js` 新設）と Edge Function で同じ規則を使う。
   - 前後の空白を除き、小文字にする
   - 形式チェック: `^[a-z0-9_-]{3,20}$`
-  - ドメインは定数 `LOGIN_ID_EMAIL_DOMAIN = 'login.kimura-paint.com'`
-- DNS には Null MX（`login.kimura-paint.com. MX 0 .`、RFC 7505）を設定し、誤送信が外部に届かないことを明示する。
-  ただし Supabase の拡張メール検証（MX 確認）が有効だと弾かれる可能性があるため §9 で確認する。
+  - ドメインは定数 `LOGIN_ID_EMAIL_DOMAIN = 'login.invalid'`
+- `.invalid` は RFC 2606 で「決して存在しない」と定められたトップレベルドメインなので、万一メールが送られてもどこにも届かず、DNS の設定も要らない。
+  Supabase の管理者 API は書式しか確かめないため登録できる（§9.1）。実装時に1件作って最終確認する（§9.3）。
 - 利用者の画面には架空メールを一切表示しない。
 
 ### 3.2 IDの保存場所（写しを持たない）
@@ -59,7 +79,7 @@ Auth の email: kimura01@login.kimura-paint.com
 **正は Auth の email だけ**とし、`office_staff` に列は追加しない。
 
 - 一覧表示用に、`get_office_staff_emails` を置き換える RPC `get_office_staff_login_ids()` を作る
-  （SECURITY DEFINER、`is_admin()` のときだけ全行を返す。email が `@login.kimura-paint.com` で終わる行はドメインを外した ID、
+  （SECURITY DEFINER、`is_admin()` のときだけ全行を返す。email が `@login.invalid` で終わる行はドメインを外した ID、
   それ以外は NULL＝未割り当てとして返す）。
 - 本人用に `get_my_login_id()` を作る（自分の行だけ）。画面に自分のIDを表示するのに使う。
 - これにより、office ロールに全員のIDが見える問題（`office_staff_select` が office に全行を許している）も起きない。
@@ -111,7 +131,8 @@ Auth の email: kimura01@login.kimura-paint.com
   `updateUser({ password, current_password })` で行う（§9.2）。サーバー側で確認されるので、
   クライアントから直接 `updateUser` を呼ばれても現在のパスワードなしでは変えられない。
   `current_password_mismatch` のときは「現在のパスワードが違います」と表示する。
-  （`signInWithPassword` での再認証は不要。ID割り当て直後に `session.user.email` が古いメールのままでも影響しない）
+  あわせて、変更の前に現在のパスワードで `signInWithPassword` し直して確かめる（設定がオフの間も確認されるように）。
+  そのときのメールは `getUser()` でサーバーから取り直す（ID割り当て直後は `session.user.email` が古いメールのままのため）
 
 ### 4.4 パスワード再設定画面（`ResetPasswordScreen.jsx`）
 
@@ -208,16 +229,24 @@ change_login_id なら元の email に戻す）。
 ## 8. 運用手順（system_admin のパスワードを忘れたとき）
 
 1. Supabase ダッシュボード → Authentication → Users を開く。
-2. `<ログインID>@login.kimura-paint.com` のユーザーを探し、パスワードを再設定する。
+2. `<ログインID>@login.invalid` のユーザーを探し、パスワードを再設定する。
 3. 再設定した旨を本人に伝え、ログイン後に本人変更（§4.3）で変えてもらう。
 
 system_admin は現状 id=17 のシステムアカウント1つだけで、画面から2人目は作れない。
 そのため**前提は「Supabase ダッシュボードにログインできる人を2人以上置く」**とする。この手順は運用マニュアルにも載せる。
 
+2026-11-07 時点で Supabase の組織メンバーは Owner の1人だけで、この前提を満たしていない。
+**フェーズ1を始める前に、社内のもう1人を組織メンバー（Administrator など）に招待する**（Owner が Organization → Team から行う）。
+
 ## 9. 実装前に確認すること（本番の Supabase で）
 
 2026-11-07 に確認した。本番プロジェクト `quaollobtalcixmlpmps` の Auth は v2.188.1。
 Supabase Auth の挙動は同じバージョンのソース（github.com/supabase/auth タグ v2.188.1）で確かめた。
+
+### 9.0 フェーズ1を始める前に済ませること
+
+- [ ] Supabase の組織メンバーに2人目を追加する（§8。現在は Owner の1人だけ）
+- [ ] §7-1・§7-2 の Auth 設定変更（新規登録を無効、パスワード最低長8、現在のパスワードを要求）
 
 ### 9.1 確認済み
 
@@ -227,10 +256,10 @@ Supabase Auth の挙動は同じバージョンのソース（github.com/supabas
 | signups 無効時の管理者 `createUser` | 使える | ソース `signup.go:115` だけが `DisableSignup` を確認。`admin.go` は確認しない | 変更なし |
 | 管理者の `updateUserById({ email, email_confirm: true })` | すぐに書き換わり、メールは送られない。Secure email change の設定の影響を受けない。セッションは失効しない | ソース `admin.go:198-199, 248`。管理者 API に送信処理がない | `change_login_id` / `assign_login_id` は利用者側の操作なしで完了する。割り当て後も既存のセッションは続く（§4.3 のとおり、`session.user.email` は古いまま） |
 | 管理者の `updateUserById({ password })` | **対象者の全セッションとリフレッシュトークンが失効する** | ソース `admin.go:211` → `models/user.go:377-379` `Logout` → `sessions.go:343` | 共有アカウントのパスワードを変えると、現場の全端末が再ログインになる（§7-7）。発行済みのアクセストークンは期限（`jwt_expiry`、最大1時間）まで残るので、すぐに締め出せるわけではない |
-| 利用者の `updateUser({ password })` | 他の端末のセッションは失効し、今の端末だけ残る。**現在のパスワードは既定では求められない** | ソース `api/user.go:170, 215-220` | §4.3 の再認証は必要（下の「要確認」も参照） |
+| 利用者の `updateUser({ password })` | 他の端末のセッションは失効し、今の端末だけ残る。**現在のパスワードは既定では求められない** | ソース `api/user.go:170, 215-220` | §4.3 のとおり、「Require current password when updating」をオンにしてサーバー側で確認させる（§9.2） |
 | 管理者 API でのセキュリティ通知メール | 送られない | ソース `admin.go` に通知の呼び出しがない | 管理者の発行・リセット・ID変更では架空ドメインに送信されない |
-| 管理者 API でのメールアドレス検査 | 書式チェックだけで、DNS は引かない | ソース `mail.go:708-720` | Null MX でも ID発行・変更は通る |
-| `login.kimura-paint.com` の DNS | **MX なし。ワイルドカード A レコード（`*.kimura-paint.com` → 157.7.189.246）に一致する** | `nslookup`（8.8.8.8） | 誤ってメールを送ると、A レコードのホストへ配信を試みる。§3.1 の Null MX 設定が必要（DNS は heteml。Null MX を登録できるかは DNS の管理者に確認） |
+| 管理者 API でのメールアドレス検査 | 書式チェックだけで、DNS は引かない | ソース `mail.go:708-720` | DNS に存在しない `login.invalid` でも ID発行・変更は通る |
+| 自社サブドメインを使う場合の DNS | `login.kimura-paint.com` は MX がなく、ワイルドカード A レコード（`*.kimura-paint.com` → 157.7.189.246）に一致する。ネームサーバーは heteml（`dns0.heteml.jp`）で、heteml のネームサーバーでは**レコードを個別に設定できない**（heteml ヘルプ「レコードの設定（編集）方法を教えて」） | `nslookup`（8.8.8.8）、heteml ヘルプ | Null MX を置けないため、自社サブドメインはやめて `login.invalid` にした（決定 #10） |
 
 ### 9.2 管理画面で確認した設定（2026-11-07、閲覧のみ・変更なし）
 
@@ -249,7 +278,7 @@ Supabase Auth の挙動は同じバージョンのソース（github.com/supabas
 
 ### 9.3 その他
 
-- [ ] `login.kimura-paint.com` に Null MX（`MX 0 .`）を設定できるか、DNS（heteml）の管理者に確認する
+- [ ] 実装時に、本番で `<ID>@login.invalid` のユーザーを1件作成・ログイン・削除できることを確かめる
 - [ ] パスワードマネージャー・ブラウザの保存済みパスワードが、ID切り替え後も正しく候補に出るか（`autoComplete="username"`）。実装後に確認する
 
 ## 10. 影響範囲

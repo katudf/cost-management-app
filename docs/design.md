@@ -111,13 +111,13 @@ AdminApp
     ├── 休日設定 (HolidayCalendar)
     ├── 資格管理
     ├── 顧客情報 (CustomerSettings)
-    ├── 担当者 (StaffSettings / 招待は invite-staff Edge Function)
+    ├── 担当者 (StaffSettings / ログインID発行・リセットは manage-staff-login Edge Function)
     └── 自社情報（社印・代表印）
 ```
 
 ### WorkerApp 機能
 
-- Supabase Auth によるメールアドレス＋パスワードログイン（`LoginScreen`）
+- Supabase Auth によるログインID＋パスワードログイン（`LoginScreen`。移行期間中はメールアドレスも可。[`specs/login-id.md`](specs/login-id.md)）
 - プロジェクト選択（施工中のみ表示）
 - 工種タスク別の作業時間・内容入力
 - 協力業者作業記録の追加
@@ -477,10 +477,15 @@ window.addEventListener('beforeunload', (e) => {
 
 ### Supabase Auth
 
-- メールアドレス＋パスワード認証。`AuthProvider` (`src/hooks/useAuth.jsx`) がセッションを保持する
+- ログインID＋パスワード認証。ID は Auth のメールアドレス `<ID>@login.invalid` として持つ（変換は `src/utils/loginId.js`）。
+  移行期間（フェーズ1）は `@` を含む入力を従来のメールアドレスとして受け付ける。設計は [`specs/login-id.md`](specs/login-id.md)
+- `AuthProvider` (`src/hooks/useAuth.jsx`) がセッションを保持する
 - `office_staff.auth_user_id` で Auth ユーザーと担当者マスタを紐付ける
-- 担当者の招待は `invite-staff` Edge Function（Service Role キーを使うためサーバーサイド必須）
-- パスワード再設定は `ResetPasswordScreen`
+- ID発行・ID割り当て（移行用）・パスワードリセット・ID変更・ログインのある担当者の削除は `manage-staff-login` Edge Function。
+  admin は office / worker / viewer の行まで、admin / system_admin の行は system_admin だけが操作できる（DB の `assert_can_manage_staff_login` で判定）
+- 管理者の任命・解任（role の admin への変更・admin からの変更）と管理者の行の紐付け変更・削除は system_admin だけ（保護トリガー）
+- 本人のパスワード変更は担当者設定の「自分のパスワード変更」（`updateUser` に `current_password` を付け、Auth の「Require current password when updating」で確認）
+- メールでのパスワード再設定（`ResetPasswordScreen`）と `invite-staff` は移行期間のみ残す（フェーズ2で撤去）
 - **anon key は秘密情報ではない**。アクセス制御は必ずRLSで実装する
 
 ### Supabase Edge Functions
@@ -488,7 +493,8 @@ window.addEventListener('beforeunload', (e) => {
 | Function | 役割 |
 |----------|------|
 | `gemini-optimize` | Gemini API のプロキシ（APIキーをサーバー側で秘匿） |
-| `invite-staff` | 担当者の招待メール送信（Service Role キー使用） |
+| `manage-staff-login` | 担当者のログインID発行・割り当て・パスワードリセット・ID変更・削除（Service Role キー使用） |
+| `invite-staff` | 担当者の招待メール送信（移行期間のみ。画面からは呼ばない。フェーズ2で削除） |
 
 ### Google Generative AI (Gemini)
 
