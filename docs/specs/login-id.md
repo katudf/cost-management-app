@@ -275,7 +275,7 @@ Supabase Auth の挙動は同じバージョンのソース（github.com/supabas
 | Email signups | **有効**（`disable_signup: false`、`mailer_autoconfirm: false`） | 本番 `/auth/v1/settings` | §7-1 で必ず無効にする。確認メール必須なので先取りされても直接ログインはできないが、架空メールの枠は埋まり、そのIDで `create` できなくなる |
 | signups 無効時の管理者 `createUser` | 使える | ソース `signup.go:115` だけが `DisableSignup` を確認。`admin.go` は確認しない | 変更なし |
 | 管理者の `updateUserById({ email, email_confirm: true })` | すぐに書き換わり、メールは送られない。Secure email change の設定の影響を受けない。セッションは失効しない | ソース `admin.go:198-199, 248`。管理者 API に送信処理がない | `change_login_id` / `assign_login_id` は利用者側の操作なしで完了する。割り当て後も既存のセッションは続く（§4.3 のとおり、`session.user.email` は古いまま） |
-| 管理者の `updateUserById({ password })` | **対象者の全セッションとリフレッシュトークンが失効する** | ソース `admin.go:211` → `models/user.go:377-379` `Logout` → `sessions.go:343` | 共有アカウントのパスワードを変えると、現場の全端末が再ログインになる（§7-7）。発行済みのアクセストークンは期限（`jwt_expiry`、最大1時間）まで残るので、すぐに締め出せるわけではない |
+| 管理者の `updateUserById({ password })` | **対象者の全セッションとリフレッシュトークンが失効する** | ソース `admin.go:211` → `models/user.go:377-379` `Logout` → `sessions.go:343` | 共有アカウントのパスワードを変えると、現場の全端末が再ログインになる（§7-7）。発行済みのアクセストークンは期限（`jwt_expiry`、最大1時間）まで残る。そこで画面側（`useAuth.jsx`）で、画面に戻ったとき（30秒おき以上）と表示中は5分おきに `getUser()` を呼び、`session_not_found` ならログアウトする（プレビューで、リセット後も別ウィンドウが残ることを確認して追加） |
 | 利用者の `updateUser({ password })` | 他の端末のセッションは失効し、今の端末だけ残る。**現在のパスワードは既定では求められない** | ソース `api/user.go:170, 215-220` | §4.3 のとおり、「Require current password when updating」をオンにしてサーバー側で確認させる（§9.2） |
 | 管理者 API でのセキュリティ通知メール | 送られない | ソース `admin.go` に通知の呼び出しがない | 管理者の発行・リセット・ID変更では架空ドメインに送信されない |
 | 管理者 API でのメールアドレス検査 | 書式チェックだけで、DNS は引かない | ソース `mail.go:708-720` | DNS に存在しない `login.invalid` でも ID発行・変更は通る |
