@@ -59,16 +59,24 @@ def check(name, action):
 
 SYSTEM_ADMIN, ADMIN_A, ADMIN_B, OFFICE, WORKER = 1, 2, 3, 4, 5
 
+LOGIN_ID_MIGRATIONS = ['supabase/migrations/20261107000000_login_id_management.sql',
+                       'supabase/migrations/20261107010000_password_change_logs_forwarded_for.sql']
+
 assert raw(f'CREATE DATABASE {database}', db='postgres').returncode == 0
-for file in ['tests/db/login-id-fixture.sql',
-             'supabase/migrations/20261026100000_password_change_logs.sql',
-             'supabase/migrations/20261107000000_login_id_management.sql']:
+for file in ['tests/db/login-id-fixture.sql', 'supabase/migrations/20261026100000_password_change_logs.sql']:
+    result = raw((root / file).read_text(encoding='utf-8'))
+    assert result.returncode == 0, (file, result.stderr)
+# 本番の password_change_logs は 20261026100000 の古い版で作られており、forwarded_for 列と
+# 種類の CHECK 制約が無かった（2026-11-07 確認）。その状態から適用できることを確かめる。
+admin_sql('ALTER TABLE password_change_logs DROP COLUMN forwarded_for; '
+          'ALTER TABLE password_change_logs DROP CONSTRAINT password_change_logs_kind_check;')
+for file in LOGIN_ID_MIGRATIONS:
     result = raw((root / file).read_text(encoding='utf-8'))
     assert result.returncode == 0, (file, result.stderr)
 
 # マイグレーションは2回流しても失敗しない
-result = raw((root / 'supabase/migrations/20261107000000_login_id_management.sql').read_text(encoding='utf-8'))
-check('migration is re-runnable', lambda: (result.returncode == 0) or (_ for _ in ()).throw(AssertionError(result.stderr)))
+rerun = [raw((root / file).read_text(encoding='utf-8')) for file in LOGIN_ID_MIGRATIONS]
+check('migrations are re-runnable', lambda: all(r.returncode == 0 for r in rerun) or (_ for _ in ()).throw(AssertionError([r.stderr for r in rerun])))
 
 
 # 架空メールのドメインは SQL・画面・Edge Function の3か所にあるので、一致を確かめる
