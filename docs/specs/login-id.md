@@ -1,7 +1,7 @@
 # 独自ログインIDへの切り替え 設計書
 
 - 作成日: 2026-11-07（同日、レビュー指摘を反映して改訂）
-- 状態: フェーズ1実装済み・本番未反映（ブランチ `feat/login-id`）。フェーズ2は未着手
+- 状態: フェーズ1実装済み（ブランチ `feat/login-id`）。本番は Auth 設定・マイグレーション・Edge Function `manage-staff-login` まで反映済み（2026-11-07）、画面の公開は未実施。フェーズ2は未着手
 - 実装: `src/utils/loginId.js`、`supabase/migrations/20261107000000_login_id_management.sql`、
   `supabase/functions/manage-staff-login/`、`src/components/tabs/settings/StaffLoginDialog.jsx` / `OwnPasswordChange.jsx`。
   テストは `src/utils/loginId.test.js` と `scripts/test-login-id-db.py`（`tests/db/login-id-fixture.sql`）
@@ -228,15 +228,31 @@ change_login_id なら元の email に戻す）。
 
 ## 8. 運用手順（system_admin のパスワードを忘れたとき）
 
-1. Supabase ダッシュボード → Authentication → Users を開く。
-2. `<ログインID>@login.invalid` のユーザーを探し、パスワードを再設定する。
-3. 再設定した旨を本人に伝え、ログイン後に本人変更（§4.3）で変えてもらう。
+ダッシュボードの Authentication → Users には、パスワードを直接設定する操作がない（2026-11-07 確認。
+あるのは再設定メール・マジックリンク・BAN・削除などで、メールは架空ドメインなので届かない）。そのため SQL Editor で設定する。
+
+1. Supabase ダッシュボード → SQL Editor を開く（組織メンバーの Owner / Administrator / Developer なら実行できる）。
+2. 次を実行する（`<ログインID>` と仮パスワードを置き換える）。
+
+   ```sql
+   update auth.users
+   set encrypted_password = extensions.crypt('仮パスワード', extensions.gen_salt('bf')),
+       updated_at = now()
+   where email = '<ログインID>@login.invalid';
+   ```
+
+   「1 row affected」と出れば成功。0件なら ID の綴りを確認する。
+3. 仮パスワードを本人に伝え、ログイン後すぐに本人変更（§4.3）で変えてもらう。
+4. SQL Editor のスニペットは「Save」を押さない限り保存されない（2026-11-07 時点）。仮パスワードを含む SQL は保存せず、
+   実行後はタブを閉じて破棄する（保存してしまった場合は削除する）。
+   この方法はパスワード変更履歴（§6）に記録されない。
 
 system_admin は現状 id=17 のシステムアカウント1つだけで、画面から2人目は作れない。
 そのため**前提は「Supabase ダッシュボードにログインできる人を2人以上置く」**とする。この手順は運用マニュアルにも載せる。
 
 2026-11-07 時点で Supabase の組織メンバーは Owner の1人だけで、この前提を満たしていない。
-**フェーズ1を始める前に、社内のもう1人を組織メンバー（Administrator など）に招待する**（Owner が Organization → Team から行う）。
+**フェーズ1を始める前に、社内のもう1人を組織メンバー（Administrator）に招待する**（Owner が Organization → Team → Invite members から行う）。
+組織は Free プランなので、役割は組織全体に効く（同じ組織の別プロジェクト `film-thickness` にも同じ権限で入れる）。
 
 ## 9. 実装前に確認すること（本番の Supabase で）
 
@@ -245,8 +261,12 @@ Supabase Auth の挙動は同じバージョンのソース（github.com/supabas
 
 ### 9.0 フェーズ1を始める前に済ませること
 
-- [ ] Supabase の組織メンバーに2人目を追加する（§8。現在は Owner の1人だけ）
-- [ ] §7-1・§7-2 の Auth 設定変更（新規登録を無効、パスワード最低長8、現在のパスワードを要求）
+- [x] Supabase の組織メンバーに2人目を追加する（§8。2026-11-07 追加）
+- [x] §7-1・§7-2 の Auth 設定変更（2026-11-07 本番に適用・再読み込みで確認済み）
+  - 新規登録: 無効（`disable_signup: true`）
+  - Minimum password length: 8
+  - Require current password when updating: オン
+  - Secure password change: オフのまま
 
 ### 9.1 確認済み
 
