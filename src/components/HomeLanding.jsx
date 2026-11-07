@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { HardHat, Calendar, Clipboard, FileText, Users, Database, Settings, LogOut } from 'lucide-react';
+import { HardHat, Calendar, Clipboard, FileText, Users, Database, Package, Settings, LogOut } from 'lucide-react';
 import { useCompanyInfo } from '../hooks/useSystemSettings';
 import WeatherPanel from './WeatherPanel';
 import logoUrl from '../img/kimura-logo.svg';
 
 // トップページのタイル定義。key は AdminApp の activeTab と対応する。
+// href を持つタイルは AdminApp のタブではなく別アプリなので、新しいタブで開く。
 const TILES = [
     { key: 'dashboard', label: '現場管理', Icon: HardHat },
     { key: 'assignment', label: '配置表', Icon: Calendar },
@@ -12,6 +13,7 @@ const TILES = [
     { key: 'daily_report', label: '日報管理', Icon: FileText },
     { key: 'workers', label: '従業員管理', Icon: Users },
     { key: 'paint_db', label: 'データベース', Icon: Database },
+    { key: 'inventory', label: '在庫管理', Icon: Package, href: '/inventory.html' },
 ];
 
 const SETTINGS_TILE = { key: 'settings', label: '設定', Icon: Settings };
@@ -71,16 +73,29 @@ const HomeLanding = ({ onNavigate, staffName, onSignOut, systemName = 'CostNavi'
 
                 <nav aria-label="メインメニュー">
                     <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                        {TILES.map(({ key, label, Icon }) => (
-                            <li key={key}>
-                                <button onClick={() => onNavigate(key)} className={`${tileClass} w-full h-full`}>
+                        {TILES.map(({ key, label, Icon, href }) => {
+                            const content = (
+                                <>
                                     <span className="flex items-center justify-center w-12 h-12 rounded-lg bg-emerald-100 text-emerald-700 shrink-0 transition group-hover:bg-emerald-200">
                                         <Icon size={26} />
                                     </span>
                                     <span className="text-xl md:text-2xl font-bold text-slate-700">{label}</span>
-                                </button>
-                            </li>
-                        ))}
+                                </>
+                            );
+                            return (
+                                <li key={key}>
+                                    {href ? (
+                                        <a href={href} target="_blank" rel="noopener noreferrer" className={`${tileClass} w-full h-full`}>
+                                            {content}
+                                        </a>
+                                    ) : (
+                                        <button onClick={() => onNavigate(key)} className={`${tileClass} w-full h-full`}>
+                                            {content}
+                                        </button>
+                                    )}
+                                </li>
+                            );
+                        })}
                         <li>
                             <button onClick={() => onNavigate(SETTINGS_TILE.key)} className={`${tileClass} w-full h-full`}>
                                 <span className="flex items-center justify-center w-12 h-12 rounded-lg bg-slate-100 text-slate-600 shrink-0 transition group-hover:bg-slate-200">
