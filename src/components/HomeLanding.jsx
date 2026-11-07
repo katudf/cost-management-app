@@ -4,8 +4,9 @@ import { useCompanyInfo } from '../hooks/useSystemSettings';
 import WeatherPanel from './WeatherPanel';
 import logoUrl from '../img/kimura-logo.svg';
 
-// トップページのタイル定義。key は AdminApp の activeTab と対応する。
-// href を持つタイルは AdminApp のタブではなく別アプリなので、新しいタブで開く。
+// トップページのタイル定義。href のないタイルの key は AdminApp の activeTab と対応する。
+// href を持つタイルは AdminApp のタブではなく別アプリなので、そのURLへ同じタブで遷移する
+// （新しいタブにするとPWA起動時に別ウィンドウへ飛び、戻れなくなるため）。
 const TILES = [
     { key: 'dashboard', label: '現場管理', Icon: HardHat },
     { key: 'assignment', label: '配置表', Icon: Calendar },
@@ -14,9 +15,13 @@ const TILES = [
     { key: 'workers', label: '従業員管理', Icon: Users },
     { key: 'paint_db', label: 'データベース', Icon: Database },
     { key: 'inventory', label: '在庫管理', Icon: Package, href: '/inventory.html' },
+    { key: 'settings', label: '設定', Icon: Settings, muted: true },
 ];
 
-const SETTINGS_TILE = { key: 'settings', label: '設定', Icon: Settings };
+const ICON_TONE = {
+    default: 'bg-emerald-100 text-emerald-700 group-hover:bg-emerald-200',
+    muted: 'bg-slate-100 text-slate-600 group-hover:bg-slate-200',
+};
 
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
 
@@ -73,37 +78,20 @@ const HomeLanding = ({ onNavigate, staffName, onSignOut, systemName = 'CostNavi'
 
                 <nav aria-label="メインメニュー">
                     <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                        {TILES.map(({ key, label, Icon, href }) => {
-                            const content = (
-                                <>
-                                    <span className="flex items-center justify-center w-12 h-12 rounded-lg bg-emerald-100 text-emerald-700 shrink-0 transition group-hover:bg-emerald-200">
-                                        <Icon size={26} />
-                                    </span>
-                                    <span className="text-xl md:text-2xl font-bold text-slate-700">{label}</span>
-                                </>
-                            );
+                        {TILES.map(({ key, label, Icon, href, muted }) => {
+                            const Tag = href ? 'a' : 'button';
+                            const linkProps = href ? { href } : { onClick: () => onNavigate(key) };
                             return (
                                 <li key={key}>
-                                    {href ? (
-                                        <a href={href} target="_blank" rel="noopener noreferrer" className={`${tileClass} w-full h-full`}>
-                                            {content}
-                                        </a>
-                                    ) : (
-                                        <button onClick={() => onNavigate(key)} className={`${tileClass} w-full h-full`}>
-                                            {content}
-                                        </button>
-                                    )}
+                                    <Tag {...linkProps} className={`${tileClass} w-full h-full`}>
+                                        <span className={`flex items-center justify-center w-12 h-12 rounded-lg shrink-0 transition ${ICON_TONE[muted ? 'muted' : 'default']}`}>
+                                            <Icon size={26} />
+                                        </span>
+                                        <span className="text-xl md:text-2xl font-bold text-slate-700">{label}</span>
+                                    </Tag>
                                 </li>
                             );
                         })}
-                        <li>
-                            <button onClick={() => onNavigate(SETTINGS_TILE.key)} className={`${tileClass} w-full h-full`}>
-                                <span className="flex items-center justify-center w-12 h-12 rounded-lg bg-slate-100 text-slate-600 shrink-0 transition group-hover:bg-slate-200">
-                                    <SETTINGS_TILE.Icon size={26} />
-                                </span>
-                                <span className="text-xl md:text-2xl font-bold text-slate-700">{SETTINGS_TILE.label}</span>
-                            </button>
-                        </li>
                     </ul>
                 </nav>
 
