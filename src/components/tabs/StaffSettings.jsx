@@ -8,7 +8,7 @@ import { useAuth } from '../../hooks/useAuth';
 
 const StaffSettings = () => {
     const { showToast } = useToast();
-    const { currentStaff } = useAuth();
+    const { currentStaff, refreshCurrentStaff } = useAuth();
     const isAdmin = isAdminRole(currentStaff?.role);
     const { staffList, isLoading, refetch, createStaff, updateStaff, deleteStaff, inviteStaff } = useStaffSettingsData();
     const [isSaving, setIsSaving] = useState(false);
@@ -43,6 +43,13 @@ const StaffSettings = () => {
             if (form.id) {
                 await updateStaff(form.id, payload);
                 showToast('担当者情報を更新しました', 'success');
+                // 自分の行を変えたときは、ヘッダーの名前や管理者かどうかの判定に反映させる
+                if (form.id === currentStaff?.id) {
+                    refreshCurrentStaff().catch((error) => {
+                        console.error('ログイン中の担当者情報の再取得エラー:', error);
+                        showToast('変更を画面に反映できませんでした。ページを再読み込みしてください', 'error');
+                    });
+                }
             } else {
                 await createStaff(payload);
                 showToast('担当者情報を追加しました', 'success');
@@ -107,7 +114,8 @@ const StaffSettings = () => {
                     </h3>
                 </div>
 
-                {/* 入力フォーム */}
+                {/* 入力フォーム（新規追加は管理者のみ。管理者以外は自分の行の編集時だけ表示） */}
+                {(isAdmin || form.id) && (
                 <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 mb-8 shadow-sm">
                     <h4 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
                         {form.id ? <Edit3 size={18} className="text-blue-600" /> : <Plus size={18} className="text-green-600" />}
@@ -134,7 +142,9 @@ const StaffSettings = () => {
                                 <select
                                     value={form.role}
                                     onChange={(e) => setForm({ ...form, role: e.target.value })}
-                                    className="w-full pl-9 pr-4 py-2.5 rounded-lg border-2 border-slate-200 font-bold text-slate-700 outline-none focus:border-blue-500 transition appearance-none bg-white"
+                                    disabled={!isAdmin}
+                                    title={isAdmin ? undefined : '権限区分の変更には管理者権限が必要です'}
+                                    className="w-full pl-9 pr-4 py-2.5 rounded-lg border-2 border-slate-200 font-bold text-slate-700 outline-none focus:border-blue-500 transition appearance-none bg-white disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
                                 >
                                     {STAFF_ROLE_LIST.map(role => (
                                         <option key={role} value={role}>{STAFF_ROLE_LABEL[role]}</option>
@@ -143,12 +153,16 @@ const StaffSettings = () => {
                             </div>
                         </div>
                     </div>
-                    <label className="mt-4 inline-flex items-center gap-2 cursor-pointer select-none">
+                    <label
+                        className={`mt-4 inline-flex items-center gap-2 select-none ${isAdmin ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}`}
+                        title={isAdmin ? undefined : '承認者の変更には管理者権限が必要です'}
+                    >
                         <input
                             type="checkbox"
                             checked={form.is_approver}
                             onChange={(e) => setForm({ ...form, is_approver: e.target.checked })}
-                            className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                            disabled={!isAdmin}
+                            className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed"
                         />
                         <span className="text-sm font-bold text-slate-600">見積の承認者にする</span>
                     </label>
@@ -171,6 +185,7 @@ const StaffSettings = () => {
                         </button>
                     </div>
                 </div>
+                )}
 
                 {/* 検索バー */}
                 <div className="mb-4 relative max-w-md">
@@ -268,6 +283,8 @@ const StaffSettings = () => {
                                                         <X size={16} />
                                                     </button>
                                                 </div>
+                                            ) : !isAdmin ? (
+                                                <span className="text-slate-400 text-xs font-bold">未招待</span>
                                             ) : (
                                                 <button
                                                     onClick={() => { setInviteTargetId(staff.id); setInviteEmail(''); }}
@@ -279,14 +296,17 @@ const StaffSettings = () => {
                                         </td>
                                         <td className="p-4 text-center">
                                             <div className="flex items-center justify-center gap-2">
-                                                <button
-                                                    onClick={() => setForm({ ...staff })}
-                                                    disabled={isSaving}
-                                                    className="bg-white border border-slate-200 text-blue-600 hover:text-blue-700 hover:border-blue-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50"
-                                                    title="編集"
-                                                >
-                                                    <Edit3 size={16} />
-                                                </button>
+                                                {(isAdmin || staff.id === currentStaff?.id) && (
+                                                    <button
+                                                        onClick={() => setForm({ ...staff })}
+                                                        disabled={isSaving}
+                                                        className="bg-white border border-slate-200 text-blue-600 hover:text-blue-700 hover:border-blue-300 p-2 rounded-lg transition shadow-sm disabled:opacity-50"
+                                                        aria-label="編集"
+                                                        title="編集"
+                                                    >
+                                                        <Edit3 size={16} />
+                                                    </button>
+                                                )}
                                                 <button
                                                     onClick={() => setConfirmDeleteId(staff.id)}
                                                     disabled={isSaving || !isAdmin}

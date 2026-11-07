@@ -44,6 +44,22 @@ export const AuthProvider = ({ children }) => {
         }
     }, []);
 
+    // 自分の担当者情報（名前・ロール）を変更したあとに読み直す。
+    // 画面がローディング表示に切り替わって入力中のフォームが消えないよう、isStaffLoading は立てない。
+    const refreshCurrentStaff = useCallback(async () => {
+        const authUserId = staffUserIdRef.current;
+        if (!authUserId) return;
+        const { data, error } = await supabase
+            .from('office_staff')
+            .select('*')
+            .eq('auth_user_id', authUserId)
+            .maybeSingle();
+        if (error) throw error;
+        // 読み直している間にログアウト・別ユーザーへの切替があった場合は反映しない
+        if (staffUserIdRef.current !== authUserId) return;
+        setCurrentStaff(data || null);
+    }, []);
+
     useEffect(() => {
         if (!supabase) {
             setSession(null);
@@ -132,6 +148,7 @@ export const AuthProvider = ({ children }) => {
         isAuthenticated: !!session,
         isLoading: session === undefined || isStaffLoading,
         currentStaff,
+        refreshCurrentStaff,
         isPasswordRecovery,
         signIn,
         signOut,
