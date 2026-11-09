@@ -68,6 +68,15 @@ serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       )
     }
+    // ログインID（架空メール）の Auth ユーザーは、下の「既存ユーザーを探して紐付ける」処理で
+    // 作業員のログインなどを担当者に紐付けられてしまうので受け付けない（docs/specs/worker-login.md §5.1）。
+    // ログインIDの発行は manage-staff-login を使う。
+    if (String(email).trim().toLowerCase().endsWith('@login.invalid')) {
+      return new Response(
+        JSON.stringify({ error: "ログインIDは招待できません。担当者設定の「ID発行」を使ってください。" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      )
+    }
 
     const { data: staffRow, error: staffFetchError } = await adminClient
       .from('office_staff')

@@ -221,6 +221,43 @@ describe('作業員ごとの下書き', () => {
         expect(selectWorkerDrafts(queue, null)).toEqual([]);
     });
 
+    it('同じ名前でも作業員 ID が違えば別の下書きとして積む（上書きしない）', () => {
+        const a = d(1, '2026-01-01', { workerName: '山田', workerId: 7, tasks: ['a'] });
+        const b = d(1, '2026-01-01', { workerName: '山田', workerId: 8, tasks: ['b'] });
+        const next = upsertIntoQueue([a], b);
+        expect(next).toHaveLength(2);
+        expect(next[0].tasks).toEqual(['a']);
+        expect(draftKeyOf(a)).not.toBe(draftKeyOf(b));
+    });
+
+    it('ID の無い古い本人の下書きは、ID 付きの新しい下書きで上書きする', () => {
+        const legacy = d(1, '2026-01-01', { workerName: '山田', tasks: ['old'] });
+        const next = upsertIntoQueue([legacy], d(1, '2026-01-01', { workerName: '山田', workerId: 7, tasks: ['new'] }));
+        expect(next).toHaveLength(1);
+        expect(next[0].tasks).toEqual(['new']);
+    });
+
+    it('removeFromQueue は ID で消し、ID の無い古い本人の下書きも消す。同名の別人の下書きは残す', () => {
+        const queue = [
+            d(1, '2026-01-01', { workerName: '山田', workerId: 7 }),
+            d(1, '2026-01-01', { workerName: '山田' }),
+            d(1, '2026-01-01', { workerName: '山田', workerId: 8 }),
+        ];
+        expect(removeFromQueue(queue, 1, '2026-01-01', '山田', 7).map(x => x.workerId)).toEqual([8]);
+    });
+
+    it('selectWorkerDrafts は作業員 ID がある下書きを ID で絞る（改名・同名の別人）', () => {
+        const queue = [
+            d(1, '2026-01-01', { workerName: '山田', workerId: 7 }),   // 本人（改名前の名前）
+            d(2, '2026-01-01', { workerName: '山田太郎', workerId: 8 }), // 同名の別人
+            d(3, '2026-01-01', { workerName: '山田太郎' }),              // ID の無い古い本人の下書き
+        ];
+        expect(selectWorkerDrafts(queue, '山田太郎', 7).map(x => x.selectedProjectId)).toEqual([1, 3]);
+        expect(selectWorkerDrafts(queue, '山田太郎', '8').map(x => x.selectedProjectId)).toEqual([2, 3]);
+        // ID を渡さなければ従来どおり名前で
+        expect(selectWorkerDrafts(queue, '山田').map(x => x.selectedProjectId)).toEqual([1]);
+    });
+
     it('removeFromQueue は本人の下書きだけを消す', () => {
         const queue = [
             d(1, '2026-01-01', { workerName: '山田' }),

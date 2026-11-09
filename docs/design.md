@@ -96,7 +96,8 @@ AdminApp
 │   ├── 作業員マスタ
 │   └── 資格情報
 ├── 配置表 (AssignmentChartTab)
-│   └── ガントチャート形式アサイン管理
+│   ├── ガントチャート形式アサイン管理
+│   └── 現場名の右に「人工」列（消化人工/目標人工。目標はセルをクリックして入力。下記「人工の表示」参照。Excel出力にも載る）
 ├── 日報 (DailyReportTab)
 │   └── 作業員提出日報の一覧（残業・作業手当の承認は作業員画面で職長が行う）
 ├── 見積 (EstimateList → EstimateForm)
@@ -118,13 +119,27 @@ AdminApp
 ### WorkerApp 機能
 
 - Supabase Auth によるログインID＋パスワードログイン（`LoginScreen`。移行期間中はメールアドレスも可。[`specs/login-id.md`](specs/login-id.md)）
-- プロジェクト選択（施工中のみ表示）
+- プロジェクト選択（施工中のみ表示）。選んだ現場の「消化人工 / 目標人工」を全員に表示する
 - 工種タスク別の作業時間・内容入力
 - 協力業者作業記録の追加
 - 残業・作業手当の申請（早出は申請不要）。承認は作業員画面で現場の職長が行う
 - 承認された残業・作業手当のお知らせ（本人が「確認した」を押すまで画面上部に表示。`lib/approvalNotices.js`）
 - 配置表（工程表）の参照
 - オフラインキャッシュ（`utils/offlineCache.js`）による通信断時の入力保持
+
+### 人工の表示（配置表・作業員画面）
+
+- 表示は「消化人工/目標人工」（`utils/ninkuDisplay.js` の `formatNinkuRatio`）。
+  - 消化人工は小数第1位まで（端数がなければ整数）。
+  - 目標人工は管理シート（工種の目標時間）とは**別管理**。配置表の人工セルをクリックしてその場で入力する（0以上の整数、空欄で未設定。Enter/フォーカス外しで保存、Escで取り消し）。`Projects.assignment_target_ninku` に保存し、更新できるのは管理者・事務だけ（Projects の RLS）。
+  - 目標未設定で消化があれば「12/－」、どちらも無ければ空欄。
+- 消化人工は本来は日報から求めるが、日報の運用開始までの仮の算出として、配置表（`Assignments`）の**今日（当日を含む）まで**の配置から求める（DB関数 `get_project_ninku_summary`、マイグレーション `20261109000000_project_ninku_summary.sql`）。
+  - 作業員区分に関係なく、現場に配置された人を数える。
+  - 1人が同じ日に複数の現場にいるときは現場数で均等に分ける（2現場なら 0.5 人工ずつ）。
+  - 有給などの予定（現場なし）は数えない。土日・祝日・休工日でも配置があれば数える。
+- 集計はバーに出す現場（作業員画面は選んだ1現場）に絞って取得する。配置の追加・削除・移動と他の人の編集（realtime）のときだけ取り直し、表示期間の移動では取り直さない。取得に失敗したらトーストで知らせ、配置表の見出しに「!」を付ける。Excel出力は出力時に取り直す。
+- 日報ベースに切り替えるときは、DB関数と `fetchProjectNinkuSummary` の中身だけを差し替える。
+- 認証なしの工程表閲覧（共有URL）には表示しない。
 
 ### InventoryApp 機能
 
@@ -370,6 +385,7 @@ AdminApp.jsx
 | `useAuth.jsx` | Supabase Auth セッション・ロール判定（`AuthProvider` / `useAuth()`） |
 | `useDashboardStats.js` | ダッシュボードの原価・利益集計 |
 | `useAssignmentState.js` | 配置表の編集状態管理 |
+| `useProjectNinku.js` | 現場ごとの消化人工・目標人工の取得（DB関数 `get_project_ninku_summary`）と目標人工の保存 |
 | `useWorkerAssignments.js` | 作業員別アサインの取得 |
 | `useInventory.js` | 在庫アイテム・倉庫の取得と入出庫 |
 
@@ -493,7 +509,7 @@ window.addEventListener('beforeunload', (e) => {
 | Function | 役割 |
 |----------|------|
 | `gemini-optimize` | Gemini API のプロキシ（APIキーをサーバー側で秘匿） |
-| `manage-staff-login` | 担当者のログインID発行・割り当て・パスワードリセット・ID変更・削除（Service Role キー使用） |
+| `manage-staff-login` | 担当者・作業員（`target: 'worker'`）のログインID発行・割り当て・パスワードリセット・ID変更・削除、作業員の退職日に合わせた BAN（Service Role キー使用。作業員は [`specs/worker-login.md`](specs/worker-login.md)） |
 | `invite-staff` | 担当者の招待メール送信（移行期間のみ。画面からは呼ばない。フェーズ2で削除） |
 
 ### Google Generative AI (Gemini)

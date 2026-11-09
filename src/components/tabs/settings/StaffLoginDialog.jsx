@@ -12,6 +12,8 @@ import { isValidLoginId, normalizeLoginId, LOGIN_PASSWORD_MIN_LENGTH } from '../
  *          'changeId' … ID変更
  * onSubmit({ loginId, password }) は失敗時に throw する。エラーはトーストで知らせ、ダイアログは開いたままにする。
  * 開くたびに新しくマウントされる（親が条件付きで描画する）ので、入力欄の初期値は useState で決める。
+ * 作業員のログイン（docs/specs/worker-login.md §4.4）にも使う。staff には { name, login_id } を渡し、
+ * ID発行では initialLoginId（フリガナからの候補）を最初から入れておける。
  */
 const MODE_CONFIG = {
     create: { title: 'ログインIDの発行', needsId: true, needsPassword: true, submitLabel: '発行する' },
@@ -22,10 +24,10 @@ const MODE_CONFIG = {
 
 const SHARED_ROLES = [STAFF_ROLE.WORKER, STAFF_ROLE.VIEWER];
 
-const StaffLoginDialog = ({ mode, staff, onClose, onSubmit }) => {
+const StaffLoginDialog = ({ mode, staff, onClose, onSubmit, initialLoginId = '' }) => {
     const { showToast } = useToast();
     const config = MODE_CONFIG[mode];
-    const [loginId, setLoginId] = useState(() => (mode === 'changeId' ? staff?.login_id || '' : ''));
+    const [loginId, setLoginId] = useState(() => (mode === 'changeId' ? staff?.login_id || '' : initialLoginId));
     const [password, setPassword] = useState('');
     const [passwordConfirm, setPasswordConfirm] = useState('');
     const [showPassword, setShowPassword] = useState(false);

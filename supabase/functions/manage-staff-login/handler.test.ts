@@ -222,8 +222,8 @@ describe('delete', () => {
   it('BAN → 行の削除 → Auth ユーザーの削除の順に行う', async () => {
     const { admin, calls, names } = fakeAdmin();
     await handleAction(admin, CALLER, { action: 'delete', staffId: 10 }, META);
-    expect(names()).toEqual(['rpc:assert_can_manage_staff_login', 'updateUserById', 'rpc:delete_staff_with_login', 'deleteUser']);
-    expect(calls[1][2]).toEqual({ ban_duration: '876000h' });
+    expect(names()).toEqual(['rpc:assert_can_manage_staff_login', 'rpc:worker_id_for_auth_user', 'updateUserById', 'rpc:delete_staff_with_login', 'deleteUser']);
+    expect(calls[2][2]).toEqual({ ban_duration: '876000h' });
   });
 
   it('行の削除に失敗したら BAN を解く', async () => {
@@ -235,7 +235,7 @@ describe('delete', () => {
   it('BAN に失敗したら何も消さない', async () => {
     const { admin, names } = fakeAdmin({ auth: { updateUserById: { data: null, error: { message: 'down' } } } });
     await expectHttpError(handleAction(admin, CALLER, { action: 'delete', staffId: 10 }, META), 500);
-    expect(names()).toEqual(['rpc:assert_can_manage_staff_login', 'updateUserById']);
+    expect(names()).toEqual(['rpc:assert_can_manage_staff_login', 'rpc:worker_id_for_auth_user', 'updateUserById']);
   });
 
   it('Auth ユーザーの削除だけ失敗したら、停止済みと伝える', async () => {
@@ -253,5 +253,183 @@ describe('delete', () => {
     const { admin, names } = fakeAdmin({ target: { id: 10, name: 'x', role: 'office', auth_user_id: null } });
     await handleAction(admin, CALLER, { action: 'delete', staffId: 10 }, META);
     expect(names()).toEqual(['rpc:assert_can_manage_staff_login', 'rpc:delete_staff_with_login']);
+  });
+
+  it('作業員にも紐付いたログインは止めも消しもせず、担当者の行だけ消す', async () => {
+    const { admin, names } = fakeAdmin({ rpc: { worker_id_for_auth_user: { data: 6, error: null } } });
+    const result = await handleAction(admin, CALLER, { action: 'delete', staffId: 10 }, META);
+    expect(result).toEqual({ success: true, keptWorkerLogin: true });
+    expect(names()).toEqual(['rpc:assert_can_manage_staff_login', 'rpc:worker_id_for_auth_user', 'rpc:delete_staff_with_login']);
+  });
+});
+
+// ======================================================================
+// 作業員（target: 'worker'。docs/specs/worker-login.md §5）
+// ======================================================================
+type WorkerTarget = { id: number; name: string; auth_user_id: string | null };
+
+function fakeWorkerAdmin({
+  target = { id: 20, name: '田中 太郎', auth_user_id: 'worker-uid' } as WorkerTarget,
+  rpc = {} as Record<string, unknown>,
+  auth = {} as Record<string, unknown>,
+  user = { id: 'worker-uid', email: 'tanaka@login.invalid', last_sign_in_at: 'x' } as Record<string, unknown>,
+} = {}) {
+  return fakeAdmin({
+    user,
+    auth,
+    rpc: {
+      assert_can_manage_worker_login: { data: target, error: null },
+      assert_can_delete_worker: { data: target, error: null },
+      ...rpc,
+    },
+  });
+}
+
+const W = (body: Record<string, unknown>) => ({ target: 'worker', workerId: 20, ...body });
+
+describe('作業員: 共通', () => {
+  it('workerId が不正なら何もしない', async () => {
+    const { admin, calls } = fakeWorkerAdmin();
+    await expectHttpError(handleAction(admin, CALLER, { target: 'worker', action: 'create', workerId: 'x' }, META), 400);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('権限がなければ 403 で、Auth には触らない', async () => {
+    const { admin, names } = fakeWorkerAdmin({ rpc: { assert_can_manage_worker_login: denied } });
+    await expectHttpError(handleAction(admin, CALLER, W({ action: 'reset_password', password: 'password1' }), META), 403);
+    expect(names()).toEqual(['rpc:assert_can_manage_worker_login']);
+  });
+});
+
+describe('作業員: create', () => {
+  const noLogin = { id: 20, name: '田中 太郎', auth_user_id: null };
+
+  it('架空メールで作成して作業員に紐付ける', async () => {
+    const { admin, calls, names } = fakeWorkerAdmin({ target: noLogin });
+    const result = await handleAction(admin, CALLER, W({ action: 'create', loginId: 'Tanaka_T', password: 'password1' }), META);
+    expect(result).toEqual({ success: true, loginId: 'tanaka_t' });
+    expect(names()).toEqual(['rpc:assert_can_manage_worker_login', 'createUser', 'rpc:link_worker_login']);
+    expect(calls[1][1]).toMatchObject({ email: 'tanaka_t@login.invalid', app_metadata: { worker_id: 20 } });
+    expect(calls[2][1]).toEqual({ p_caller: CALLER, p_worker_id: 20, p_auth_user_id: 'new-uid' });
+  });
+
+  it('紐付けに失敗したら作ったユーザーを消す', async () => {
+    const { admin, names } = fakeWorkerAdmin({ target: noLogin, rpc: { link_worker_login: denied } });
+    await expectHttpError(handleAction(admin, CALLER, W({ action: 'create', loginId: 'tanaka', password: 'password1' }), META), 403);
+    expect(names().at(-1)).toBe('deleteUser');
+  });
+
+  it('既にログインがあれば 409', async () => {
+    const { admin } = fakeWorkerAdmin();
+    await expectHttpError(handleAction(admin, CALLER, W({ action: 'create', loginId: 'tanaka', password: 'password1' }), META), 409);
+  });
+});
+
+describe('作業員: link_staff_account', () => {
+  it('RPC に担当者を渡す（対象の制限は RPC が確かめる）', async () => {
+    const { admin, calls } = fakeWorkerAdmin({ target: { id: 20, name: 'x', auth_user_id: null } });
+    await handleAction(admin, CALLER, W({ action: 'link_staff_account', staffId: 4 }), META);
+    expect(calls.at(-1)).toEqual(['rpc:link_worker_to_staff_login', { p_caller: CALLER, p_worker_id: 20, p_staff_id: 4 }]);
+  });
+
+  it('共有アカウントを断られたら 403', async () => {
+    const { admin } = fakeWorkerAdmin({
+      target: { id: 20, name: 'x', auth_user_id: null },
+      rpc: { link_worker_to_staff_login: { data: null, error: { code: '42501', message: '共有アカウント・閲覧用アカウントは作業員に紐付けられません。' } } },
+    });
+    await expectHttpError(handleAction(admin, CALLER, W({ action: 'link_staff_account', staffId: 5 }), META), 403, '共有アカウント');
+  });
+});
+
+describe('作業員: reset_password', () => {
+  it('パスワードを変えて作業員の履歴に残す', async () => {
+    const { admin, calls, names } = fakeWorkerAdmin();
+    const result = await handleAction(admin, CALLER, W({ action: 'reset_password', password: 'password1' }), META);
+    expect(result).toEqual({ success: true, logged: true });
+    expect(names()).toEqual(['rpc:assert_can_manage_worker_login', 'updateUserById', 'rpc:log_admin_worker_password_reset']);
+    expect(calls[2][1]).toMatchObject({ p_worker_id: 20, p_user_agent: 'UA' });
+  });
+});
+
+describe('作業員: change_login_id', () => {
+  it('確かめ直しで権限が無くなっていたら元のIDに戻す', async () => {
+    const { admin, calls } = fakeWorkerAdmin({
+      rpc: { assert_can_manage_worker_login: [{ data: { id: 20, name: 'x', auth_user_id: 'worker-uid' }, error: null }, denied] },
+    });
+    await expectHttpError(handleAction(admin, CALLER, W({ action: 'change_login_id', loginId: 'tanaka2' }), META), 403);
+    expect(calls.at(-1)).toEqual(['updateUserById', 'worker-uid', { email: 'tanaka@login.invalid', email_confirm: true }]);
+  });
+});
+
+describe('作業員: unlink / delete', () => {
+  it('delete は BAN → 行の削除 → Auth の削除', async () => {
+    const { admin, names } = fakeWorkerAdmin();
+    const result = await handleAction(admin, CALLER, W({ action: 'delete' }), META);
+    expect(result).toEqual({ success: true, keptStaffLogin: false });
+    expect(names()).toEqual([
+      'rpc:assert_can_delete_worker', 'rpc:staff_id_for_auth_user', 'updateUserById',
+      'rpc:delete_worker_with_login', 'deleteUser',
+    ]);
+  });
+
+  it('delete は管理者権限ではなく削除用の確認（事務以上）を使う', async () => {
+    const { admin, names } = fakeWorkerAdmin({ rpc: { assert_can_manage_worker_login: denied } });
+    await handleAction(admin, CALLER, W({ action: 'delete' }), META);
+    expect(names()).not.toContain('rpc:assert_can_manage_worker_login');
+  });
+
+  it('delete の権限が無ければ 403 で、Auth には触らない', async () => {
+    const { admin, names } = fakeWorkerAdmin({ rpc: { assert_can_delete_worker: denied } });
+    await expectHttpError(handleAction(admin, CALLER, W({ action: 'delete' }), META), 403);
+    expect(names()).toEqual(['rpc:assert_can_delete_worker']);
+  });
+
+  it('unlink に失敗したら BAN を解く', async () => {
+    const { admin, calls } = fakeWorkerAdmin({ rpc: { unlink_worker_login: denied } });
+    await expectHttpError(handleAction(admin, CALLER, W({ action: 'unlink' }), META), 403);
+    expect(calls.at(-1)).toEqual(['updateUserById', 'worker-uid', { ban_duration: 'none' }]);
+  });
+
+  it('担当者と共有のログインは止めも消しもしない', async () => {
+    const { admin, names } = fakeWorkerAdmin({ rpc: { staff_id_for_auth_user: { data: 4, error: null } } });
+    const result = await handleAction(admin, CALLER, W({ action: 'unlink' }), META);
+    expect(result).toEqual({ success: true, keptStaffLogin: true });
+    expect(names()).toEqual(['rpc:assert_can_manage_worker_login', 'rpc:staff_id_for_auth_user', 'rpc:unlink_worker_login']);
+  });
+
+  it('ログインのない作業員の unlink は 400', async () => {
+    const { admin } = fakeWorkerAdmin({ target: { id: 20, name: 'x', auth_user_id: null } });
+    await expectHttpError(handleAction(admin, CALLER, W({ action: 'unlink' }), META), 400);
+  });
+});
+
+describe('作業員: sync_ban', () => {
+  const state = (s: Record<string, unknown>) => ({ worker_ban_state: { data: [s], error: null } });
+
+  it('退職日があれば BAN する（BAN するかは呼び出し元の値を使わない）', async () => {
+    const { admin, calls, names } = fakeWorkerAdmin({ rpc: state({ auth_user_id: 'worker-uid', should_ban: true, shared: false }) });
+    const result = await handleAction(admin, CALLER, W({ action: 'sync_ban', ban: false }), META);
+    expect(result).toEqual({ success: true, banned: true });
+    expect(names()).toEqual(['rpc:worker_ban_state', 'updateUserById']);
+    expect(calls[1][2]).toEqual({ ban_duration: '876000h' });
+  });
+
+  it('退職日が無ければ BAN を解く', async () => {
+    const { admin, calls } = fakeWorkerAdmin({ rpc: state({ auth_user_id: 'worker-uid', should_ban: false, shared: false }) });
+    await handleAction(admin, CALLER, W({ action: 'sync_ban' }), META);
+    expect(calls[1][2]).toEqual({ ban_duration: 'none' });
+  });
+
+  it('担当者と共有・ログインなしなら何もしない', async () => {
+    for (const s of [{ auth_user_id: 'worker-uid', should_ban: true, shared: true }, { auth_user_id: null, should_ban: true, shared: false }]) {
+      const { admin, names } = fakeWorkerAdmin({ rpc: state(s) });
+      expect(await handleAction(admin, CALLER, W({ action: 'sync_ban' }), META)).toEqual({ success: true, banned: null });
+      expect(names()).toEqual(['rpc:worker_ban_state']);
+    }
+  });
+
+  it('事務未満は 403', async () => {
+    const { admin } = fakeWorkerAdmin({ rpc: { worker_ban_state: { data: null, error: { code: '42501', message: 'この操作には事務以上の権限が必要です。' } } } });
+    await expectHttpError(handleAction(admin, CALLER, W({ action: 'sync_ban' }), META), 403);
   });
 });

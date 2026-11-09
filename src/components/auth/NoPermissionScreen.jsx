@@ -11,9 +11,11 @@ const ROLE_ENTRY = {
 /**
  * 管理者画面に入る権限がないアカウントでログインしたときの画面。
  * 担当者情報（office_staff）が取得できなかった場合もここに来るため、再読み込みも用意する。
+ * 作業員の個人アカウント（currentWorker あり・担当者の行なし）は作業日報へ案内する（docs/specs/worker-login.md §4.1）。
  */
-const NoPermissionScreen = ({ currentStaff, onSignOut }) => {
-    const entry = ROLE_ENTRY[currentStaff?.role];
+const NoPermissionScreen = ({ currentStaff, currentWorker, onSignOut }) => {
+    const isPersonalWorker = !currentStaff && !!currentWorker;
+    const entry = isPersonalWorker ? ROLE_ENTRY[STAFF_ROLE.WORKER] : ROLE_ENTRY[currentStaff?.role];
 
     return (
         <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
@@ -24,7 +26,7 @@ const NoPermissionScreen = ({ currentStaff, onSignOut }) => {
                     </div>
                     <h1 className="text-lg font-bold text-slate-800">管理者画面を利用できません</h1>
                     <p className="text-slate-500 text-sm mt-2">
-                        {currentStaff
+                        {currentStaff || isPersonalWorker
                             ? 'このアカウントには管理者画面の利用権限がありません。'
                             : '担当者情報を確認できませんでした。管理者に担当者設定を確認してもらうか、再読み込みしてください。'}
                     </p>
@@ -40,7 +42,7 @@ const NoPermissionScreen = ({ currentStaff, onSignOut }) => {
                             <ArrowRight size={16} />
                         </a>
                     )}
-                    {!currentStaff && (
+                    {!currentStaff && !isPersonalWorker && (
                         <button
                             type="button"
                             onClick={() => window.location.reload()}

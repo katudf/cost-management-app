@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useConfirm } from '../components/ConfirmProvider';
 import { WORKER_TYPE } from '../utils/constants';
+import { syncWorkerBan, deleteWorkerWithLogin } from './useWorkerLogins';
 
 export function useWorkers({ workers, setWorkers, showToast }) {
     const { confirm } = useConfirm();
@@ -42,9 +43,25 @@ export function useWorkers({ workers, setWorkers, showToast }) {
             };
 
             if (editingWorker.id) {
+                const before = workers.find(w => w.id === editingWorker.id);
                 const { error } = await supabase.from('Workers').update(workerDataToSave).eq('id', editingWorker.id);
                 if (error) throw error;
                 setWorkers(prev => prev.map(w => w.id === editingWorker.id ? { ...w, ...workerDataToSave } : w));
+                // ログインのある作業員の退職日を変えたら、ログインの停止・再開を揃える
+                // （docs/specs/worker-login.md 決定 #8。権限そのものは DB 側の退職日の判定で既に無くなっている）
+                if (before?.auth_user_id && (before.resignation_date || null) !== workerDataToSave.resignation_date) {
+                    try {
+                        await syncWorkerBan(editingWorker.id);
+                    } catch (banError) {
+                        console.error('ログインの停止・再開に失敗しました:', banError);
+                        showToast(
+                            workerDataToSave.resignation_date
+                                ? `退職日は保存しましたが、ログインの停止に失敗しました（作業員としての権限は既にありません）。もう一度保存してください: ${banError.message}`
+                                : `退職日を消しましたが、ログインの再開に失敗しました。もう一度保存してください: ${banError.message}`,
+                            'error',
+                        );
+                    }
+                }
             } else {
                 const maxOrder = workers.length > 0 ? Math.max(...workers.map(w => w.display_order || 0)) : 0;
                 const { data, error } = await supabase.from('Workers').insert([{
@@ -64,18 +81,33 @@ export function useWorkers({ workers, setWorkers, showToast }) {
     };
 
     const removeWorker = async (workerId, workerName) => {
+        const target = workers.find(w => w.id === workerId);
         const ok = await confirm({
             title: '作業員の削除',
-            message: `「${workerName}」を削除しますか？\n（※過去の実績データから名前は消えませんが、ログイン画面等の選択肢からは消去されます）`,
+            message: `「${workerName}」を削除しますか？\n（※過去の実績データから名前は消えませんが、ログイン画面等の選択肢からは消去されます）`
+                + (target?.auth_user_id
+                    ? '\n※この作業員のログインIDも削除され、ログインできなくなります（担当者と共有のIDは、担当者としては使えます）。元に戻せません。'
+                    : ''),
             confirmText: '削除する',
         });
         if (!ok) return;
 
-        const { error } = await supabase.from('Workers').delete().eq('id', workerId);
-        if (error) {
-            console.error(error);
-            showToast("作業員の削除に失敗しました。", 'error');
-            return;
+        // ログインのある作業員は Auth ユーザーも一緒に消すため Edge Function 経由にする（DB のトリガーが直接の削除を拒否する）
+        if (target?.auth_user_id) {
+            try {
+                await deleteWorkerWithLogin(workerId);
+            } catch (deleteError) {
+                console.error(deleteError);
+                showToast(`作業員の削除に失敗しました: ${deleteError.message}`, 'error');
+                return;
+            }
+        } else {
+            const { error } = await supabase.from('Workers').delete().eq('id', workerId);
+            if (error) {
+                console.error(error);
+                showToast("作業員の削除に失敗しました。", 'error');
+                return;
+            }
         }
 
         setWorkers(prev => prev.filter(w => w.id !== workerId));
@@ -146,7 +178,16 @@ export function useWorkers({ workers, setWorkers, showToast }) {
         }
     };
 
+    // 作業員マスタでログインを発行・紐付け・解除したあとに、手元の一覧のログイン有無を合わせる
+    // （削除・退職日の保存で Edge Function を通すかの判定に使う。実際の値はサーバーにしか無いので有無だけ）
+    const markWorkerLoginLinked = (workerId, linked) => {
+        setWorkers(prev => prev.map(w => w.id === workerId
+            ? { ...w, auth_user_id: linked ? (w.auth_user_id || 'linked') : null }
+            : w));
+    };
+
     return {
+        markWorkerLoginLinked,
         isWorkerModalOpen,
         setIsWorkerModalOpen,
         editingWorker,

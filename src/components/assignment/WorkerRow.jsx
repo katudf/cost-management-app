@@ -35,7 +35,7 @@ const WorkerRow = ({
 }) => {
     return (
         <tr className={`${widx % 2 === 0 ? 'bg-white' : 'bg-slate-50'} assignment-row-hover`}>
-            <td className="sticky left-0 z-10 text-xs font-bold p-2 border border-slate-200 truncate"
+            <td colSpan={2} className="sticky left-0 z-10 text-xs font-bold p-2 border border-slate-200 truncate"
                 style={{ backgroundColor: widx % 2 === 0 ? 'white' : '#F8FAFC' }}
                 title={worker.name}
             >

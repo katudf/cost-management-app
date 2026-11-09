@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useRef, useEffect } from 'react';
 import { isNonWorkingDay } from '../../utils/holidayUtils';
+import { NINKU_SOURCE_NOTE, INVALID_NINKU_INPUT } from '../../utils/ninkuDisplay';
 
 const EMPTY_COMMENTS = {};
 
@@ -17,6 +18,13 @@ const ProjectBarRow = ({
     holidayMap,
     todayStr,
     customerLabel,
+    ninkuLabel = '', // 「消化人工/目標人工」（空なら空欄）
+    ninkuLeft = 140, // 人工列の固定位置（現場名列の幅）
+    targetNinku = null,      // 配置表で入力した目標人工（未設定は null）
+    isEditingNinku = false,  // 目標人工を入力中か
+    onStartNinkuEdit,        // (projectId) => void
+    onSaveNinku,             // (projectId, inputString) => void
+    onCancelNinkuEdit,       // () => void
     getBarSpan,
     handleGanttPointerDown,
     handleProjectReorder,
@@ -27,6 +35,17 @@ const ProjectBarRow = ({
     onCellComment              // (proj, dateStr, event) => void
 }) => {
     const isDraggingThis = !!draggingGantt;
+    // Esc で取り消したときに、続いて起きる blur で保存しないための印
+    const ninkuCancelledRef = useRef(false);
+    // Enter/Esc で入力を終えたら、キーボード操作を続けられるよう人工セルのボタンにフォーカスを戻す
+    const ninkuButtonRef = useRef(null);
+    const ninkuReturnFocusRef = useRef(false);
+    useEffect(() => {
+        if (!isEditingNinku && ninkuReturnFocusRef.current) {
+            ninkuReturnFocusRef.current = false;
+            ninkuButtonRef.current?.focus();
+        }
+    }, [isEditingNinku]);
     const effStart = isDraggingThis ? draggingGantt.tempStartStr : proj.startDate;
     const effEnd = isDraggingThis ? draggingGantt.tempEndStr : proj.endDate;
     const bar = getBarSpan({ startDate: effStart, endDate: effEnd });
@@ -80,6 +99,58 @@ const ProjectBarRow = ({
                         <div className="truncate text-slate-800">{proj.name}</div>
                     </div>
                 </div>
+            </td>
+            <td
+                className="sticky z-10 bg-white text-xs font-bold text-slate-700 text-center whitespace-nowrap border border-slate-200 tabular-nums p-0"
+                style={{ left: `${ninkuLeft}px` }}
+            >
+                {isEditingNinku ? (
+                    <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        inputMode="numeric"
+                        autoFocus
+                        defaultValue={targetNinku ?? ''}
+                        aria-label={`${proj.name}の目標人工`}
+                        title="目標人工（0以上の整数。空欄で未設定）。Enterで保存、Escで取り消し"
+                        className="w-full h-full min-h-[2rem] px-1 text-xs font-bold text-center border-2 border-blue-500 outline-none bg-white"
+                        onFocus={(e) => { ninkuCancelledRef.current = false; e.currentTarget.select(); }}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                                e.preventDefault();
+                                ninkuReturnFocusRef.current = true;
+                                e.currentTarget.blur();
+                            } else if (e.key === 'Escape') {
+                                e.preventDefault();
+                                ninkuCancelledRef.current = true;
+                                ninkuReturnFocusRef.current = true;
+                                onCancelNinkuEdit();
+                            }
+                        }}
+                        onBlur={(e) => {
+                            if (ninkuCancelledRef.current) return;
+                            // 数値として読めない入力（「41e」など）は value が空になる。空欄（未設定）と取り違えて
+                            // 目標を消さないよう、不正な入力として渡す
+                            const { value, validity } = e.currentTarget;
+                            onSaveNinku(proj.id, validity?.badInput ? INVALID_NINKU_INPUT : value);
+                        }}
+                    />
+                ) : (
+                    <button
+                        ref={ninkuButtonRef}
+                        type="button"
+                        className="w-full h-full min-h-[2rem] px-1 text-xs font-bold text-slate-700 text-center whitespace-nowrap tabular-nums hover:bg-blue-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 disabled:cursor-default disabled:hover:bg-transparent"
+                        onClick={() => onStartNinkuEdit?.(proj.id)}
+                        disabled={!onStartNinkuEdit}
+                        aria-label={`${proj.name}の人工${ninkuLabel ? `（消化人工/目標人工 ${ninkuLabel}）` : ''}。目標人工を入力`}
+                        title={`${ninkuLabel ? `消化人工/目標人工: ${ninkuLabel}
+` : ''}クリックで目標人工を入力
+${NINKU_SOURCE_NOTE}`}
+                    >
+                        {ninkuLabel}
+                    </button>
+                )}
             </td>
             {dateColumns.map((col, i) => {
                 const isInBar = bar && i >= bar.startIdx && i <= bar.endIdx;

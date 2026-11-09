@@ -8,7 +8,8 @@ import { supabase } from '../lib/supabase';
  */
 
 // Edge Function のエラー本文（{ error: '...' }）を取り出して画面に出せるようにする
-async function invokeManageStaffLogin(body) {
+// （作業員のログイン操作 useWorkerLogins.js も使う）
+export async function invokeManageStaffLogin(body) {
     const { data, error } = await supabase.functions.invoke('manage-staff-login', { body });
     if (error) {
         const errorBody = await error.context?.json?.().catch(() => null);

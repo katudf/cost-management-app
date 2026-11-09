@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
     Loader2, LogOut, Package, Search, Plus, Map as MapIcon, Home, X,
     Trash2, ImageIcon, Minus, Upload, MapPin, ArrowDownUp,
@@ -8,7 +8,9 @@ import { useAuth } from './hooks/useAuth';
 import LoginScreen from './components/auth/LoginScreen';
 import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
 import { useInventory } from './hooks/useInventory';
-import { INVENTORY_CATEGORY_LIST, INVENTORY_CATEGORY_COLOR } from './utils/constants';
+import { INVENTORY_CATEGORY_LIST, INVENTORY_CATEGORY_COLOR, SESSION_KIND } from './utils/constants';
+import WorkerNoAccessScreen from './components/auth/WorkerNoAccessScreen';
+import { readJson, writeJson, removeStorage, workerStorageKey as workerKeyFor } from './utils/safeStorage';
 // ローカルタイムゾーンでの 'YYYY-MM-DD' 生成は dateUtils が持ち主
 import { toDateStr } from './utils/dateUtils';
 
@@ -30,13 +32,35 @@ const emptyForm = () => ({
 
 const InventoryApp = () => {
     const { showToast } = useToast();
-    const { isAuthenticated, isLoading: isAuthLoading, isPasswordRecovery, signOut } = useAuth();
+    const { isAuthenticated, isLoading: isAuthLoading, isPasswordRecovery, signOut, session, currentStaff, currentWorker, sessionKind } = useAuth();
+    // 名前を選ぶのは作業員の共有アカウント（移行期間）だけ。作業員の個人アカウントは本人、担当者は担当者名で記録する
+    // （docs/specs/worker-login.md §4.3）
+    // 初めてのオフライン起動でまだ誰か分からないときも、共有アカウントと同じく名前を選んで使える
+    const isSharedWorker = sessionKind === SESSION_KIND.SHARED_WORKER || sessionKind === SESSION_KIND.UNKNOWN;
+    const isPersonalWorker = sessionKind === SESSION_KIND.PERSONAL_WORKER;
+    const isStaff = sessionKind === SESSION_KIND.STAFF;
+    // 作業日報アプリと同じ保存キー（ログインしている人ごと）。共有アカウントで日報アプリで選んだ名前をそのまま使う
+    const workerStorageKey = workerKeyFor(session?.user?.id);
     const {
         items, warehouses, workers, isLoading,
         saveItem, deleteItem, updateQuantity, uploadWarehouseMap,
     } = useInventory({ showToast });
 
-    const [loggedInWorker, setLoggedInWorker] = useState(null);
+    // 共有アカウントで選んだ名前。描画のたびに端末の保存から読む（読み込みを待つ間に名前選択が一瞬出ないように）。
+    // 選び直したときは storageVersion を進めて読み直す
+    const [storageVersion, setStorageVersion] = useState(0);
+    // 端末に保存できない（プライベートモードなど）ときに選んだ名前
+    const [pickedWorker, setPickedWorker] = useState(null);
+    const chosenWorker = useMemo(
+        () => (isSharedWorker ? (readJson(workerStorageKey) ?? pickedWorker) : null),
+        [isSharedWorker, workerStorageKey, storageVersion, pickedWorker],
+    );
+    // 記録者。担当者は worker_id を持たない（作業員ではないため）
+    const loggedInWorker = isPersonalWorker
+        ? currentWorker
+        : isStaff
+            ? (currentStaff ? { id: null, name: currentStaff.name } : null)
+            : isSharedWorker ? chosenWorker : null;
     const [tab, setTab] = useState('home');
     const [searchText, setSearchText] = useState('');
     const [filterWarehouse, setFilterWarehouse] = useState('');
@@ -51,22 +75,21 @@ const InventoryApp = () => {
     const [isSaving, setIsSaving] = useState(false);
     const [uploadingMapId, setUploadingMapId] = useState(null);
 
-    // WorkerAppと同じ保存キーを共用（日報アプリでログイン済みならそのまま使える）
-    useEffect(() => {
-        const saved = localStorage.getItem('cost-app-worker');
-        if (saved) {
-            try { setLoggedInWorker(JSON.parse(saved)); } catch { /* ignore */ }
-        }
-    }, []);
-
+    // 共有アカウント: WorkerApp と同じ保存キーを共用（日報アプリで名前を選んでいればそのまま使える）
     const handleLogin = (worker) => {
-        setLoggedInWorker(worker);
-        localStorage.setItem('cost-app-worker', JSON.stringify(worker));
+        if (!writeJson(workerStorageKey, worker)) setPickedWorker(worker);
+        setStorageVersion(v => v + 1);
     };
 
-    const handleLogout = () => {
-        setLoggedInWorker(null);
-        localStorage.removeItem('cost-app-worker');
+    // ヘッダーの「ログアウト」: 共有アカウントは名前選択に戻る、作業員の個人アカウントはログアウトする
+    const handleLogout = async () => {
+        if (isSharedWorker) {
+            removeStorage(workerStorageKey);
+            setPickedWorker(null);
+            setStorageVersion(v => v + 1);
+            return;
+        }
+        await signOut();
     };
 
     // ===== オートコンプリート候補 =====
@@ -219,6 +242,11 @@ const InventoryApp = () => {
         return <LoginScreen title="在庫管理システム" subtitle="ログイン" />;
     }
 
+    // 閲覧用の共有アカウント・退職者・どこにも紐付かないログインは使えない
+    if (sessionKind === SESSION_KIND.OTHER) {
+        return <WorkerNoAccessScreen title="在庫管理システム" onSignOut={signOut} accentClass="border-emerald-600" />;
+    }
+
     if (isLoading && !loggedInWorker) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-slate-100">
@@ -264,10 +292,15 @@ const InventoryApp = () => {
                     </h1>
                     <div className="flex items-center gap-3">
                         <span className="text-sm font-bold">{loggedInWorker.name}</span>
-                        <button onClick={handleLogout} aria-label="ログアウト" title="ログアウト"
-                            className="p-2 rounded-full hover:bg-emerald-600 transition">
-                            <LogOut size={18} />
-                        </button>
+                        {/* 担当者は管理画面から開いているので、ここではログアウトさせない */}
+                        {!isStaff && (
+                            <button onClick={handleLogout}
+                                aria-label={isSharedWorker ? '名前の選択に戻る' : 'ログアウト'}
+                                title={isSharedWorker ? '名前の選択に戻る' : 'ログアウト'}
+                                className="p-2 rounded-full hover:bg-emerald-600 transition">
+                                <LogOut size={18} />
+                            </button>
+                        )}
                     </div>
                 </div>
             </header>

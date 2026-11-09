@@ -18,7 +18,7 @@ import {
     saveDailyReport,
     saveWorkerDailyBreakSettings,
 } from './hooks/useDailyReport';
-import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, BellRing, Save, Trash2, PlusCircle, Clock, X, Wifi, WifiOff, FileText, CalendarDays, CopyPlus, GripVertical, ChevronDown } from 'lucide-react';
+import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, BellRing, Save, Trash2, PlusCircle, Clock, X, Wifi, WifiOff, FileText, CalendarDays, CopyPlus, GripVertical, ChevronDown, KeyRound, UserCog } from 'lucide-react';
 import WorkerAssignmentView from './components/worker/WorkerAssignmentView';
 import QuarterTimeSelect from './components/worker/QuarterTimeSelect';
 import { useAuth } from './hooks/useAuth';
@@ -27,13 +27,17 @@ import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
 import { useToast } from './components/Toast';
 import { useConfirm } from './components/ConfirmProvider';
 import { calculateWorkHours, calculateNinku, getSeasonConfig, formatTimeDisplay, splitRecordOvertime } from './utils/workTimeUtils';
-import { PROJECT_STATUS, WORKER_TYPE } from './utils/constants';
+import { PROJECT_STATUS, WORKER_TYPE, SESSION_KIND } from './utils/constants';
+import { isResigned } from './utils/resignation';
+import { readStorage, writeStorage, removeStorage, readJson, workerStorageKey as workerKeyFor, projectStorageKey as projectKeyFor } from './utils/safeStorage';
+import OwnPasswordChange from './components/tabs/settings/OwnPasswordChange';
+import WorkerNoAccessScreen from './components/auth/WorkerNoAccessScreen';
 import { fetchPendingApprovals, approveOvertime, fetchDayOvertimeApproval } from './lib/overtimeApprovals';
 import { fetchUnacknowledgedApprovals, acknowledgeApprovals } from './lib/approvalNotices';
 import { fetchPendingWorkAllowanceApprovals, approveWorkAllowance } from './lib/workAllowanceApprovals';
-import { fetchWithCache, getDraftQueue, upsertDraft, removeDraft, clearDraftQueue } from './utils/offlineCache';
+import { fetchWithCache, getDraftQueue, upsertDraft, removeDraft, clearDraftQueue, removeWorkerDrafts } from './utils/offlineCache';
 import { newClientUuid, isNetworkSaveError, describeSaveError } from './utils/dailyReportSave';
-import { draftKeyOf, isSameDraftTarget, upsertIntoQueue, selectNotifiableDrafts, selectWorkerDrafts } from './utils/draftQueueUtils';
+import { draftKeyOf, isSameDraftTarget, upsertIntoQueue, selectNotifiableDrafts, selectWorkerDrafts, isWorkerDraft } from './utils/draftQueueUtils';
 import { fetchSystemSettings, DEFAULT_HOURLY_WAGE } from './hooks/useSystemSettings';
 import { summarizeTaskCosts } from './utils/projectUtils';
 import { calculateTimeOverlapWarnings } from './utils/timeOverlapUtils';
@@ -44,6 +48,8 @@ import { applyTaskOrder, saveTaskOrder } from './utils/taskOrderUtils';
 import { fetchCompanyHolidays } from './hooks/useCompanyHolidays';
 import { generateMultipleWorkersReportPDF } from './utils/pdfExportUtils';
 import { buildWeekDays, buildWeekPrefix, fetchWorkerReportData } from './hooks/useWeeklyReportData';
+import { useProjectNinku } from './hooks/useProjectNinku';
+import { formatNinkuRatio, NINKU_SOURCE_NOTE } from './utils/ninkuDisplay';
 
 // 同じ日に別現場で記録した作業時間の合計。netWorkHours / hours は残業を含むため、残業は足さない。
 const sumOtherProjectsHours = (records, projectId, date, breakDurations) => records
@@ -60,14 +66,29 @@ const sumOtherProjectsHours = (records, projectId, date, breakDurations) => reco
 const WorkerApp = () => {
     const { showToast } = useToast();
     const { confirm, prompt } = useConfirm();
-    const { isAuthenticated, isLoading: isAuthLoading, isPasswordRecovery, signOut } = useAuth();
+    const { isAuthenticated, isLoading: isAuthLoading, isPasswordRecovery, signOut, session, currentWorker, sessionKind } = useAuth();
+    // 作業員の個人アカウントは本人に固定し、名前選択を出さない（docs/specs/worker-login.md §4.2）
+    const isPersonalWorker = sessionKind === SESSION_KIND.PERSONAL_WORKER;
+    // 名前選択を出すのは担当者（代理入力）と共有アカウント（移行期間）だけ。
+    // 初めてのオフライン起動でまだ誰か分からないときも、名前を選んで入力できるようにする（保存時の本人は DB が決める）
+    const canChooseWorker = sessionKind === SESSION_KIND.STAFF || sessionKind === SESSION_KIND.SHARED_WORKER
+        || sessionKind === SESSION_KIND.UNKNOWN;
+    // 選んだ作業員・現場の端末保存は、ログインしている人ごとに分ける（別の人のログインに持ち越さない）
+    const authUserId = session?.user?.id || '';
+    const workerStorageKey = workerKeyFor(authUserId);
+    const projectStorageKey = projectKeyFor(authUserId);
+    const [showPasswordChange, setShowPasswordChange] = useState(false);
     const [workers, setWorkers] = useState([]);
     // 配置表（閲覧専用）用: 管理画面の配置表と同じく「配置表に表示」チェックで判定する（属性は問わない）
     const [assignmentWorkers, setAssignmentWorkers] = useState([]);
     const [loggedInWorker, setLoggedInWorker] = useState(null);
     // online イベントなど、初回だけ登録するハンドラから現在の作業員名を参照するため
     const loggedInWorkerNameRef = useRef(null);
-    useEffect(() => { loggedInWorkerNameRef.current = loggedInWorker?.name || null; }, [loggedInWorker]);
+    const loggedInWorkerIdRef = useRef(null);
+    useEffect(() => {
+        loggedInWorkerNameRef.current = loggedInWorker?.name || null;
+        loggedInWorkerIdRef.current = loggedInWorker?.id ?? null;
+    }, [loggedInWorker]);
     const [isLoading, setIsLoading] = useState(true);
 
     const [projects, setProjects] = useState([]);
@@ -79,6 +100,21 @@ const WorkerApp = () => {
     const [saveMessage, setSaveMessage] = useState('');
 
     const [subcontractors, setSubcontractors] = useState([]);
+
+    // 選んだ現場の「消化人工/目標人工」（ログイン後、現場を選んだらその1現場だけ取得する）
+    const selectedNinkuProjectIds = useMemo(
+        () => (selectedProjectId ? [Number(selectedProjectId)] : []),
+        [selectedProjectId]
+    );
+    const handleNinkuLoadError = useCallback(() => {
+        showToast('この現場の消化人工・目標人工を取得できませんでした', 'error');
+    }, [showToast]);
+    const { ninkuByProject } = useProjectNinku({
+        projectIds: selectedNinkuProjectIds,
+        delayMs: 0,
+        enabled: !!loggedInWorker && selectedNinkuProjectIds.length > 0,
+        onError: handleNinkuLoadError
+    });
     const [deletedSubcontractorIds, setDeletedSubcontractorIds] = useState([]);
 
     const [hourlyWage, setHourlyWage] = useState(DEFAULT_HOURLY_WAGE);
@@ -130,34 +166,33 @@ const WorkerApp = () => {
             try {
                 setDraftQueue(getDraftQueue());
 
-                const savedProjectId = localStorage.getItem('cost-app-worker-project');
+                const savedProjectId = readStorage(projectStorageKey);
                 if (savedProjectId) setSelectedProjectId(savedProjectId);
 
                 const { data: wData } = await fetchWithCache('workers', fetchWorkersDirectoryResult);
-                if (wData) setWorkers(wData.filter(w => w.name && w.name.trim() !== '' && !w.resignation_date && w.worker_type !== WORKER_TYPE.OFFICE));
-                if (wData) setAssignmentWorkers(wData.filter(w => w.name && w.name.trim() !== '' && !w.resignation_date && w.show_in_assignment !== false));
+                // 退職の判定は DB と同じく「退職日が今日以前」（退職予定日の前日までは在籍）
+                if (wData) setWorkers(wData.filter(w => w.name && w.name.trim() !== '' && !isResigned(w.resignation_date) && w.worker_type !== WORKER_TYPE.OFFICE));
+                if (wData) setAssignmentWorkers(wData.filter(w => w.name && w.name.trim() !== '' && !isResigned(w.resignation_date) && w.show_in_assignment !== false));
+                // 管理者が名前を直していることがあるので、名簿の最新の内容に差し替える。
+                // 古い名前のままだと日報が旧名で保存され、職長の判定（名前と ID の照合）にも通らない
+                const fresh = (worker) => wData?.find(w => String(w.id) === String(worker?.id)) || worker;
 
-                // 管理画面の「日報編集」リンクから ?workerId=<id> 付きで開かれた場合はその作業員で自動ログイン
-                const workerIdParam = new URLSearchParams(window.location.search).get('workerId');
-                const targetWorker = workerIdParam && wData
-                    ? wData.find(w => String(w.id) === workerIdParam)
-                    : null;
-                if (targetWorker) {
-                    setLoggedInWorker(targetWorker);
-                    localStorage.setItem('cost-app-worker', JSON.stringify(targetWorker));
-                } else {
-                    const savedWorkerStr = localStorage.getItem('cost-app-worker');
-                    if (savedWorkerStr) {
-                        const savedWorker = JSON.parse(savedWorkerStr);
-                        // 管理者が名前を直していることがあるので、名簿の最新の内容に差し替える。
-                        // 古い名前のままだと日報が旧名で保存され、職長の判定（名前と ID の照合）にも通らない
-                        const freshWorker = wData?.find(w => String(w.id) === String(savedWorker?.id));
-                        if (freshWorker) {
-                            setLoggedInWorker(freshWorker);
-                            localStorage.setItem('cost-app-worker', JSON.stringify(freshWorker));
-                        } else {
-                            setLoggedInWorker(savedWorker);
-                        }
+                if (isPersonalWorker) {
+                    // 作業員の個人アカウントは本人に固定（?workerId= は無視する）
+                    setLoggedInWorker(fresh(currentWorker));
+                } else if (canChooseWorker) {
+                    // 管理画面の「日報編集」リンクから ?workerId=<id> 付きで開かれた場合はその作業員（担当者なら代理入力）
+                    const workerIdParam = new URLSearchParams(window.location.search).get('workerId');
+                    const targetWorker = workerIdParam && wData
+                        ? wData.find(w => String(w.id) === workerIdParam)
+                        : null;
+                    const savedWorker = readJson(workerStorageKey);
+                    // 担当者兼作業員は、何も指定が無ければ本人
+                    const chosen = targetWorker || (savedWorker && fresh(savedWorker))
+                        || (sessionKind === SESSION_KIND.STAFF && currentWorker ? fresh(currentWorker) : null);
+                    if (chosen) {
+                        setLoggedInWorker(chosen);
+                        writeStorage(workerStorageKey, JSON.stringify(chosen));
                     }
                 }
 
@@ -183,7 +218,7 @@ const WorkerApp = () => {
         const handleOnline = () => {
             setIsOnline(true);
             // 他の作業員の下書きは数えない（共有端末で他人の下書きを知らせない）
-            const queued = selectWorkerDrafts(getDraftQueue(), loggedInWorkerNameRef.current);
+            const queued = selectWorkerDrafts(getDraftQueue(), loggedInWorkerNameRef.current, loggedInWorkerIdRef.current);
             if (queued.length > 0) {
                 showToast(`通信が回復しました。未送信のデータが${queued.length}件あります。内容を確認して送信してください。`, 'warning');
             }
@@ -195,14 +230,15 @@ const WorkerApp = () => {
             window.removeEventListener('online', handleOnline);
             window.removeEventListener('offline', handleOffline);
         };
-    }, [isAuthLoading, isAuthenticated]);
+    // sessionKind・本人が決まってから作業員を決める（担当者・作業員の情報の取得は isAuthLoading に含まれる）
+    }, [isAuthLoading, isAuthenticated, sessionKind, currentWorker?.id, authUserId]);
 
     // Fetch worker daily records across ALL projects
     useEffect(() => {
         if (!loggedInWorker || !selectedDate) { setWorkerDailyAllRecords([]); return; }
         const fetch = async () => {
             try {
-                const cacheKey = `worker-daily-records-${loggedInWorker.name}-${selectedDate}`;
+                const cacheKey = `worker-daily-records-${loggedInWorker.id}-${selectedDate}`;
                 const { data } = await fetchWithCache(cacheKey,
                     () => fetchWorkerDailyRecordsResult(loggedInWorker.name, selectedDate)
                 );
@@ -232,7 +268,7 @@ const WorkerApp = () => {
         setIsLoadingBreakSettings(true);
         setDailyBreakSettings(null);
         const startSeq = restoreSeqRef.current;
-        fetchWithCache(`worker-break-settings-${loggedInWorker.name}-${selectedDate}`,
+        fetchWithCache(`worker-break-settings-${loggedInWorker.id}-${selectedDate}`,
             () => fetchWorkerDailyBreakSettingsResult(loggedInWorker.name, selectedDate)
         ).then(({ data }) => {
             if (!active) return;
@@ -300,7 +336,7 @@ const WorkerApp = () => {
 
                 if (!active) return;
 
-                const { data: rData } = await fetchWithCache(`task-records-${selectedProjectId}-${loggedInWorker.name}-${targetDate}`,
+                const { data: rData } = await fetchWithCache(`task-records-${selectedProjectId}-${loggedInWorker.id}-${targetDate}`,
                     () => fetchTaskRecordsResult(selectedProjectId, loggedInWorker.name, targetDate)
                 );
                 const { data: sData } = await fetchWithCache(`subcontractor-records-${selectedProjectId}-${targetDate}`,
@@ -484,8 +520,29 @@ const WorkerApp = () => {
         }
     };
 
-    const handleLogin = (worker) => { setLoggedInWorker(worker); localStorage.setItem('cost-app-worker', JSON.stringify(worker)); };
+    const handleLogin = (worker) => { setLoggedInWorker(worker); writeStorage(workerStorageKey, JSON.stringify(worker)); };
+
+    // 作業員の個人アカウントのログアウト。消すのは自分の未送信の下書きだけ（docs/specs/worker-login.md §4.2）
+    const handlePersonalLogout = async () => {
+        const ownDrafts = selectWorkerDrafts(getDraftQueue(), loggedInWorker?.name, loggedInWorker?.id).length;
+        const ok = await confirm({
+            title: 'ログアウト',
+            message: ownDrafts > 0
+                ? `未送信の下書きが${ownDrafts}件あります。ログアウトすると下書きは削除されます。ログアウトしますか？`
+                : (hasUnsavedChanges ? '未送信の入力データがあります。破棄してログアウトしますか？' : 'ログアウトしますか？'),
+            confirmText: 'ログアウト',
+            variant: ownDrafts > 0 || hasUnsavedChanges ? 'danger' : 'primary',
+        });
+        if (!ok) return;
+        if (loggedInWorker) setDraftQueue(removeWorkerDrafts(loggedInWorker.name, loggedInWorker.id).queue);
+        setHasUnsavedChanges(false);
+        removeStorage(projectStorageKey);
+        setLoggedInWorker(null);
+        await signOut();
+    };
+
     const handleLogout = async () => {
+        if (isPersonalWorker) return handlePersonalLogout();
         const message = hasUnsavedChanges ? "未送信の入力データがあります。破棄して選択画面に戻りますか？" : "選択画面に戻りますか？";
         const ok = await confirm({
             title: '選択画面に戻る',
@@ -496,7 +553,7 @@ const WorkerApp = () => {
         if (ok) {
             setHasUnsavedChanges(false);
             setLoggedInWorker(null); setSelectedProjectId(''); setTasks([]); setSubcontractors([]); setDeletedSubcontractorIds([]);
-            localStorage.removeItem('cost-app-worker'); localStorage.removeItem('cost-app-worker-project');
+            removeStorage(workerStorageKey); removeStorage(projectStorageKey);
         }
     };
 
@@ -895,6 +952,7 @@ const WorkerApp = () => {
                 if (autosaveEpochRef.current !== epoch) return;
                 const { entry } = upsertDraft({
                     workerName: loggedInWorker?.name,
+                    workerId: loggedInWorker?.id,
                     selectedProjectId,
                     selectedDate,
                     tasks,
@@ -955,8 +1013,8 @@ const WorkerApp = () => {
     // 通信エラーで保存された下書き、または他の現場/日付の未送信下書きのみを通知対象とする。
     const notifiableDraftQueue = useMemo(
         () => selectNotifiableDrafts(
-            selectWorkerDrafts(draftQueue, loggedInWorker?.name),
-            selectedProjectId, selectedDate, loggedInWorker?.name
+            selectWorkerDrafts(draftQueue, loggedInWorker?.name, loggedInWorker?.id),
+            selectedProjectId, selectedDate, loggedInWorker?.name, loggedInWorker?.id
         ),
         [draftQueue, selectedProjectId, selectedDate, loggedInWorker]
     );
@@ -964,7 +1022,7 @@ const WorkerApp = () => {
     // ========== ドラフト（オフライン下書き）操作 ==========
     const handleRestoreDraft = async (draft) => {
         // 念のため、他の作業員の下書きは復元しない（一覧には本人の分しか出さない）
-        if (!loggedInWorker || draft.workerName !== loggedInWorker.name) return;
+        if (!loggedInWorker || !isWorkerDraft(draft, loggedInWorker.name, loggedInWorker.id)) return;
         const ok = await confirm({
             title: '下書きの復元',
             message: '下書きを復元しますか？（現在の入力内容は上書きされます）',
@@ -1010,7 +1068,7 @@ const WorkerApp = () => {
             confirmText: '破棄する',
         });
         if (!ok) return;
-        const { queue, saved } = removeDraft(draft.selectedProjectId, draft.selectedDate, draft.workerName);
+        const { queue, saved } = removeDraft(draft.selectedProjectId, draft.selectedDate, draft.workerName, draft.workerId);
         setDraftQueue(queue);
         if (!saved) {
             showToast('下書きの破棄を保存できませんでした。次回起動時に復活する可能性があります。', 'error');
@@ -1036,7 +1094,7 @@ const WorkerApp = () => {
         const dateLabel = new Date(selectedDate + 'T00:00:00').toLocaleDateString('ja-JP', { month: 'long', day: 'numeric' });
         const isSelectedProject = String(selectedProjectId) === String(project.id);
         // 削除済みの記録を指す下書きを残すと、復元・送信で記録がよみがえる。下書きも一緒に消すので、その旨を伝える
-        const hasDraft = draftQueue.some(d => isSameDraftTarget(d, project.id, selectedDate, loggedInWorker.name));
+        const hasDraft = draftQueue.some(d => isSameDraftTarget(d, project.id, selectedDate, loggedInWorker.name, loggedInWorker.id));
         const draftNote = hasDraft || (isSelectedProject && hasUnsavedChanges)
             ? '\n未送信の入力内容・下書きも破棄されます。'
             : '';
@@ -1073,7 +1131,7 @@ const WorkerApp = () => {
             }
 
             // この現場・日付の下書きは削除済みの record_id を持つため、残すと復元・送信で記録がよみがえる
-            setDraftQueue(removeDraft(project.id, selectedDate, loggedInWorker.name).queue);
+            setDraftQueue(removeDraft(project.id, selectedDate, loggedInWorker.name, loggedInWorker.id).queue);
             // 承認申請も一緒に消えるので、職長の承認待ち一覧を取り直す
             loadPendingApprovals();
             loadPendingAllowanceApprovals();
@@ -1362,7 +1420,7 @@ const WorkerApp = () => {
             }
 
             // 送信は成功しているので、下書きの掃除に失敗しても送信自体はエラーにしない。
-            setDraftQueue(removeDraft(selectedProjectId, selectedDate, loggedInWorker.name).queue);
+            setDraftQueue(removeDraft(selectedProjectId, selectedDate, loggedInWorker.name, loggedInWorker.id).queue);
             setHasUnsavedChanges(false);
 
             const breakSummary = effectiveBreakDurations.map((duration, index) => {
@@ -1379,6 +1437,7 @@ const WorkerApp = () => {
             if (isNetworkSaveError(error, navigator.onLine)) {
                 const { entry, saved } = upsertDraft({
                     workerName: loggedInWorker.name,
+                    workerId: loggedInWorker.id,
                     selectedProjectId,
                     selectedDate,
                     tasks,
@@ -1414,7 +1473,12 @@ const WorkerApp = () => {
         return <LoginScreen title="作業日報システム" subtitle="ログイン" />;
     }
 
-    if (isLoading && !loggedInWorker) {
+    // 閲覧用の共有アカウント・退職者・どこにも紐付かないログインは使えない
+    if (sessionKind === SESSION_KIND.OTHER) {
+        return <WorkerNoAccessScreen title="作業日報システム" onSignOut={signOut} />;
+    }
+
+    if ((isLoading || isPersonalWorker) && !loggedInWorker) {
         return <div className="min-h-screen flex items-center justify-center bg-slate-100"><Loader2 className="w-12 h-12 text-blue-500 animate-spin" /></div>;
     }
 
@@ -1469,6 +1533,8 @@ const WorkerApp = () => {
     }
 
     // ========== メイン画面 ==========
+    // 担当者が他の作業員の日報を入力している（代理モード）。担当者兼作業員が自分の日報を書くときは代理ではない
+    const isProxyMode = sessionKind === SESSION_KIND.STAFF && String(loggedInWorker.id) !== String(currentWorker?.id ?? '');
     const activeProject = projects.find(p => p.id === Number(selectedProjectId));
     const isForeman = activeProject && activeProject.foreman_worker_id === loggedInWorker.id;
     const seasonConfig = getSeasonConfig(selectedDate);
@@ -1477,6 +1543,10 @@ const WorkerApp = () => {
     // 残業理由の入力欄は、承認が要る残業（終業後）だけを対象にする
     const totalInputOvertimeHours = tasksWithCalculation.reduce((s, t) => s + (t.total_late || 0), 0);
     const currentSiteNinku = calculateNinku(totalInputHours, selectedDate);
+    const selectedProjectNinku = ninkuByProject[Number(selectedProjectId)];
+    const selectedProjectNinkuLabel = selectedProjectNinku
+        ? formatNinkuRatio(selectedProjectNinku.consumedNinku, selectedProjectNinku.targetNinku)
+        : '';
 
     const otherProjectsHours = sumOtherProjectsHours(workerDailyAllRecords, selectedProjectId, selectedDate, effectiveBreakDurations);
     const totalDailyHours = totalInputHours + otherProjectsHours;
@@ -1578,9 +1648,29 @@ const WorkerApp = () => {
                             <AlertCircle size={14} /> {notifiableDraftQueue.length}
                         </div>
                     )}
-                    <button onClick={handleLogout} aria-label="選択画面に戻る" title="選択画面に戻る" className="flex items-center justify-center gap-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 w-10 h-10 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 rounded-lg text-sm font-bold transition shrink-0"><LogOut size={18} /><span className="hidden sm:inline">戻る</span></button>
+                    {isPersonalWorker && (
+                        <button
+                            onClick={() => setShowPasswordChange(true)}
+                            aria-label="パスワード変更"
+                            title="パスワード変更"
+                            className="flex items-center justify-center gap-1 bg-blue-700 hover:bg-blue-800 w-10 h-10 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 rounded-lg text-sm font-bold transition shrink-0"
+                        >
+                            <KeyRound size={18} />
+                            <span className="hidden sm:inline">パスワード</span>
+                        </button>
+                    )}
+                    {isPersonalWorker ? (
+                        <button onClick={handleLogout} aria-label="ログアウト" title="ログアウト" className="flex items-center justify-center gap-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 w-10 h-10 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 rounded-lg text-sm font-bold transition shrink-0"><LogOut size={18} /><span className="hidden sm:inline">ログアウト</span></button>
+                    ) : (
+                        <button onClick={handleLogout} aria-label="選択画面に戻る" title="選択画面に戻る" className="flex items-center justify-center gap-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 w-10 h-10 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 rounded-lg text-sm font-bold transition shrink-0"><LogOut size={18} /><span className="hidden sm:inline">戻る</span></button>
+                    )}
                 </div>
             </header>
+            {isProxyMode && (
+                <div role="status" className="bg-amber-400 text-amber-950 text-sm font-bold px-3 py-1.5 flex items-center justify-center gap-2">
+                    <UserCog size={16} aria-hidden="true" /> 代理入力中：{loggedInWorker.name}さん
+                </div>
+            )}
             <div className="bg-slate-100 border-b border-slate-200">
                 <div className="max-w-lg mx-auto px-4 py-2 flex items-center gap-2">
                     <button
@@ -1641,10 +1731,13 @@ const WorkerApp = () => {
                                 );
                             })}
                         </ul>
-                        <button onClick={handleAcknowledgeNotices} disabled={isAcknowledging}
-                            className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold py-2 rounded-lg text-xs transition shadow-sm">
-                            {isAcknowledging ? '記録中…' : '確認した'}
-                        </button>
+                        {/* 代理入力中は本人が見ていないので「確認した」を出さない */}
+                        {!isProxyMode && (
+                            <button onClick={handleAcknowledgeNotices} disabled={isAcknowledging}
+                                className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold py-2 rounded-lg text-xs transition shadow-sm">
+                                {isAcknowledging ? '記録中…' : '確認した'}
+                            </button>
+                        )}
                     </div>
                 )}
                 {notifiableDraftQueue.length > 0 && (
@@ -1803,7 +1896,7 @@ const WorkerApp = () => {
                                                         }))) return;
                                                         setHasUnsavedChanges(false);
                                                         setSelectedProjectId(String(p.id));
-                                                        localStorage.setItem('cost-app-worker-project', String(p.id));
+                                                        writeStorage(projectStorageKey, String(p.id));
                                                     }}
                                                     className="px-2.5 py-1 cursor-pointer hover:opacity-80"
                                                 >
@@ -1852,13 +1945,25 @@ const WorkerApp = () => {
                         }))) return;
                         setHasUnsavedChanges(false);
                         setSelectedProjectId(value);
-                        localStorage.setItem('cost-app-worker-project', value);
+                        writeStorage(projectStorageKey, value);
                     }}
                         className="w-full bg-white border-2 border-blue-200 text-slate-800 p-4 rounded-xl font-bold text-lg outline-none focus:border-blue-500 shadow-sm appearance-none">
                         <option value="">現場を選ぶ...</option>
                         {projects.filter(p => ["【会社】社内業務・雑務", "【会社】有給", "有給", "【有給】"].includes(p.name)).map(p => (<option key={p.id} value={p.id}>{p.name}</option>))}
                         {projects.filter(p => !["【会社】社内業務・雑務", "【会社】有給", "有給", "【有給】"].includes(p.name) && p.status === PROJECT_STATUS.IN_PROGRESS).map(p => (<option key={p.id} value={p.id}>{p.name || '無題の現場'}</option>))}
                     </select>
+                    {/* この現場の消化人工 / 目標人工（全員に表示） */}
+                    {selectedProjectId && selectedProjectNinkuLabel && (
+                        <div className="mt-2 bg-white border border-slate-200 rounded-xl px-4 py-2.5 flex items-center justify-between shadow-sm" title={NINKU_SOURCE_NOTE}>
+                            <div className="flex flex-col">
+                                <span className="text-xs font-bold text-slate-500">消化人工 / 目標人工</span>
+                                <span className="text-[10px] text-slate-400">配置表の今日までの配置から算出（仮）</span>
+                            </div>
+                            <div className="text-xl font-black text-slate-800 tabular-nums">
+                                {selectedProjectNinkuLabel.replace('/', ' / ')}<span className="text-xs text-slate-400 font-bold ml-1">人工</span>
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 {isLoading && selectedProjectId && <div className="flex justify-center p-10"><Loader2 className="w-8 h-8 text-blue-500 animate-spin" /></div>}
@@ -2212,6 +2317,21 @@ const WorkerApp = () => {
             )}
 
             {/* 配置表（全画面・閲覧専用） */}
+            {showPasswordChange && (
+                <div className="fixed inset-0 z-50 bg-black/50 flex items-start sm:items-center justify-center p-4 overflow-y-auto" role="dialog" aria-modal="true" aria-label="パスワード変更">
+                    <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-4 relative">
+                        <button
+                            onClick={() => setShowPasswordChange(false)}
+                            aria-label="閉じる"
+                            title="閉じる"
+                            className="absolute top-2 right-2 p-2 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                        >
+                            <X size={18} />
+                        </button>
+                        <OwnPasswordChange />
+                    </div>
+                </div>
+            )}
             {showAssignmentChart && (
                 <WorkerAssignmentView
                     workers={assignmentWorkers}

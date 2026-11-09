@@ -1,9 +1,10 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { isAuthSessionMissingError } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
-import { PASSWORD_CHANGE_KIND } from '../utils/constants';
+import { PASSWORD_CHANGE_KIND, getSessionKind } from '../utils/constants';
 import { clearMasterCache } from '../utils/offlineCache';
 import { loginInputToEmail } from '../utils/loginId';
+import { readJson, writeJson, removeStorage, migrateLegacyWorkerKeys } from '../utils/safeStorage';
 
 const AuthContext = createContext(null);
 
@@ -13,9 +14,20 @@ const SESSION_CHECK_MIN_GAP_MS = 30 * 1000;
 // getUser() がこれらを返したら、そのログインはもう使えない（削除・利用停止されたユーザー）
 const SESSION_REVOKED_CODES = new Set(['session_not_found', 'user_not_found', 'user_banned']);
 
+// 担当者・作業員の情報の端末保存（オフライン起動用）。ログインしている Auth ユーザーごとに分ける。
+const IDENTITY_CACHE_PREFIX = 'cost-app-identity:';
+const loadIdentityCache = (authUserId) => readJson(IDENTITY_CACHE_PREFIX + authUserId);
+const saveIdentityCache = (authUserId, value) => writeJson(IDENTITY_CACHE_PREFIX + authUserId, value);
+const clearIdentityCache = (authUserId) => { if (authUserId) removeStorage(IDENTITY_CACHE_PREFIX + authUserId); };
+
 export const AuthProvider = ({ children }) => {
     const [session, setSession] = useState(undefined); // undefined = 判定中, null = 未ログイン
     const [currentStaff, setCurrentStaff] = useState(null);
+    // 自分の作業員（get_my_worker）。作業員の個人アカウントと担当者兼作業員で入る
+    const [currentWorker, setCurrentWorker] = useState(null);
+    // 担当者・作業員の情報を取れず、端末の保存も無い（初めてのオフライン起動）。
+    // このときは「その他（利用不可）」にせず、通信が戻ったら取り直す
+    const [isIdentityUnknown, setIsIdentityUnknown] = useState(false);
     const [isStaffLoading, setIsStaffLoading] = useState(false);
     const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
     // 担当者情報を取得済み（または取得中）のユーザーID。
@@ -26,27 +38,51 @@ export const AuthProvider = ({ children }) => {
     // 招待リンクからの初回パスワード設定中か。初回設定は変更履歴に記録しない。
     const isInviteFlowRef = useRef(false);
 
+    // 担当者の行と、自分の作業員（作業員の個人アカウント・担当者兼作業員）を取る。
+    // 通信できないとき（現場でのオフライン起動）は、前回取れた内容をこの端末の保存から使う
+    // （作業員アプリの画面の分岐がこれで決まるため。権限そのものは DB が判定する）。
     const fetchCurrentStaff = useCallback(async (authUserId) => {
         if (!authUserId) {
             staffUserIdRef.current = null;
             setCurrentStaff(null);
+            setCurrentWorker(null);
+            setIsIdentityUnknown(false);
             return;
         }
         if (staffUserIdRef.current === authUserId) return;
         staffUserIdRef.current = authUserId;
+        // 以前の（ログインしている人で分けていない）作業員・現場の保存を、この人のキーへ移す
+        migrateLegacyWorkerKeys(authUserId);
         setIsStaffLoading(true);
         try {
-            const { data, error } = await supabase
-                .from('office_staff')
-                .select('*')
-                .eq('auth_user_id', authUserId)
-                .maybeSingle();
-            if (error) throw error;
-            setCurrentStaff(data || null);
+            const [staffResult, workerResult] = await Promise.all([
+                supabase.from('office_staff').select('*').eq('auth_user_id', authUserId).maybeSingle(),
+                supabase.rpc('get_my_worker'),
+            ]);
+            if (staffResult.error) throw staffResult.error;
+            const staff = staffResult.data || null;
+            let worker;
+            if (workerResult.error) {
+                // 作業員の取得だけ失敗したときは、担当者の判定は活かし、作業員は前回の保存を使う
+                console.error('作業員情報の取得に失敗しました:', workerResult.error);
+                worker = loadIdentityCache(authUserId)?.worker ?? null;
+            } else {
+                worker = (Array.isArray(workerResult.data) ? workerResult.data[0] : workerResult.data) || null;
+            }
+            if (staffUserIdRef.current !== authUserId) return;
+            setCurrentStaff(staff);
+            setCurrentWorker(worker);
+            setIsIdentityUnknown(false);
+            saveIdentityCache(authUserId, { staff, worker });
         } catch (error) {
             console.error('担当者情報の取得に失敗しました:', error);
-            staffUserIdRef.current = null;
-            setCurrentStaff(null);
+            if (staffUserIdRef.current !== authUserId) return;
+            const cached = loadIdentityCache(authUserId);
+            setCurrentStaff(cached?.staff ?? null);
+            setCurrentWorker(cached?.worker ?? null);
+            setIsIdentityUnknown(!cached);
+            // キャッシュも無ければ、次のイベント（通信の回復など）で取り直せるようにしておく
+            if (!cached) staffUserIdRef.current = null;
         } finally {
             setIsStaffLoading(false);
         }
@@ -155,6 +191,15 @@ export const AuthProvider = ({ children }) => {
         };
     }, [hasSession]);
 
+    // 初めてのオフライン起動で担当者・作業員の情報が取れなかったときは、通信が戻ったら取り直す
+    const sessionUserId = session?.user?.id || null;
+    useEffect(() => {
+        if (!isIdentityUnknown || !sessionUserId) return undefined;
+        const retry = () => fetchCurrentStaff(sessionUserId);
+        window.addEventListener('online', retry);
+        return () => window.removeEventListener('online', retry);
+    }, [isIdentityUnknown, sessionUserId, fetchCurrentStaff]);
+
     // loginInput はログインID。移行期間（フェーズ1）は従来のメールアドレスも受け付ける（docs/specs/login-id.md §3.3）
     const signIn = useCallback(async (loginInput, password) => {
         const { error } = await supabase.auth.signInWithPassword({ email: loginInputToEmail(loginInput), password });
@@ -200,6 +245,7 @@ export const AuthProvider = ({ children }) => {
     }, []);
 
     const signOut = useCallback(async () => {
+        clearIdentityCache(staffUserIdRef.current);
         await supabase.auth.signOut();
         // 共有端末でログアウト後も名簿・現場一覧が端末に残らないよう、マスタのキャッシュを消す。
         // 未送信の下書きは消さない（消すかどうかは画面側で確認してから clearDraftQueue を呼ぶ）。
@@ -243,6 +289,8 @@ export const AuthProvider = ({ children }) => {
         isAuthenticated: !!session,
         isLoading: session === undefined || isStaffLoading,
         currentStaff,
+        currentWorker,
+        sessionKind: getSessionKind(currentStaff, currentWorker, isIdentityUnknown),
         refreshCurrentStaff,
         isPasswordRecovery,
         signIn,

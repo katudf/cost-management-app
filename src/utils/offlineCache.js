@@ -8,6 +8,7 @@ import {
     draftKeyOf,
     upsertIntoQueue,
     removeFromQueue,
+    isWorkerDraft,
 } from './draftQueueUtils';
 
 const CACHE_PREFIX = 'cost-app-cache-';
@@ -160,8 +161,18 @@ export function clearDraftQueue() {
     }
 }
 
-export function removeDraft(projectId, date, workerName) {
-    const queue = removeFromQueue(getDraftQueue(), projectId, date, workerName);
+/**
+ * 1人の作業員の下書きだけを消す（作業員の個人アカウントのログアウト。docs/specs/worker-login.md §4.2）。
+ * 同じ端末に残っている他の人の下書きは消さない（その人がログインし直せば送れる）。
+ */
+export function removeWorkerDrafts(workerName, workerId) {
+    const queue = getDraftQueue().filter(d => !isWorkerDraft(d, workerName, workerId));
+    const saved = saveDraftQueue(queue);
+    return { queue, saved };
+}
+
+export function removeDraft(projectId, date, workerName, workerId) {
+    const queue = removeFromQueue(getDraftQueue(), projectId, date, workerName, workerId);
     const saved = saveDraftQueue(queue);
     return { queue, saved };
 }

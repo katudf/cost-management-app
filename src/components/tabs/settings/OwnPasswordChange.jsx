@@ -7,7 +7,8 @@ import { LOGIN_PASSWORD_MIN_LENGTH } from '../../../utils/loginId';
 
 /**
  * ログイン中の本人によるパスワード変更（docs/specs/login-id.md §4.3）。
- * 担当者設定（管理者・事務が開ける画面）に置く。作業員・閲覧者の共有アカウントはこの画面に入れない。
+ * 担当者設定（管理者・事務が開ける画面）と、作業日報アプリ（作業員の個人アカウントのとき。docs/specs/worker-login.md 決定 #9）に置く。
+ * 作業員・閲覧者の共有アカウントには出さない。
  */
 const OwnPasswordChange = () => {
     const { showToast } = useToast();

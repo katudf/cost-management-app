@@ -1,9 +1,35 @@
 # 作業員の個人ログイン（共有アカウント＋名前選択の廃止） 設計書
 
 - 作成日: 2026-11-07（同日、レビュー指摘を反映して改訂）
-- 状態: 設計確定（未実装）。実装は別PR。
+- 状態: フェーズAを実装済み・本番未反映（2026-11-07、ブランチ `feat/worker-login`）。
+  本番への反映はマイグレーション `20261107020000` → Edge Function `manage-staff-login` / `invite-staff` → 画面の順（画面を先に出すと
+  作業員アカウントの判定ができない。担当者の画面は `get_my_worker` が無くても動くようにしてある）。フェーズBは未着手。
   2026-11-07 にユーザー確認済み: §3.4 の残るリスクは共有アカウント廃止まで先送り／§5 `link_staff_account` の紐付け対象の限定／
   決定 #8 の「退職日を入れた時点で（未来日でも）BAN」は、いずれも現設計のまま
+- 実装: `supabase/migrations/20261107020000_worker_personal_login.sql`、`supabase/functions/manage-staff-login/handler.ts`、
+  `src/hooks/useAuth.jsx` / `useWorkerLogins.js`、`src/components/tabs/settings/WorkerLoginDialogs.jsx`、`src/WorkerApp.jsx` / `InventoryApp.jsx`。
+  テストは `scripts/test-worker-login-db.py`（`tests/db/worker-login-fixture.sql`）、`handler.test.ts`、
+  `src/utils/kanaToRomaji.test.js` / `resignation.test.js` / `draftQueueUtils.test.ts`
+- 実装で設計から変えた点:
+  - **`is_office_or_admin()` を NULL を返さないように直した**。ロールの無いログイン（退職した作業員など）で
+    `IF NOT (is_office_or_admin() OR current_staff_role() = 'worker')` が NULL になり、権限エラーを素通りして
+    日報を保存できた（DB テストで発見。見積 RPC で `20260910054306` が塞いだのと同じ問題）。§3.2 の RPC の作業員判定も
+    `COALESCE(... , false)` にした。さらに `current_staff_role()` 自体も、ロールが無いときは NULL ではなく `'none'` を返す
+    （使っている側はすべて `=` / `IN` の比較なので、どのロールにも一致せず「権限なし」になる）。作業員の判定は
+    `current_worker_id()` を重ねずに 1 つの問い合わせで引く
+  - 下書きの「同一性キー」（`draftKey`）は `workerId` があれば ID で作る（同姓同名・改名で別人の下書きと混ざらないように）。
+    以前の名前だけの下書きは、同じ現場・日付・本人なら同じものとして上書き・削除する（`isSameDraftTarget`。§4.2）
+  - 作業員の削除（ログインごと）は管理者だけでなく**事務以上**に許可する（ログインの無い作業員はもともと事務が削除できるため）。
+    ただし管理者と共有のIDを持つ作業員は、システム管理者だけが削除できる（`assert_can_delete_worker`）
+  - 担当者兼作業員が承認したときの承認者名は、作業員としての名前にする（自分の申請を承認したら確認済みにできるように）
+  - 担当者か作業員かを取得できず端末の記録も無いとき（通信不可の初回など）は、セッション種別を `UNKNOWN` とし、
+    共有アカウントと同じく作業員を選べる画面にする（オンラインに戻ったら取り直す）
+  - 作業日報・在庫アプリの「選んだ作業員・現場」の保存キーはログインしている人ごと（`cost-app-worker:<uid>` など）。
+    以前のキーの値はログイン時に移して消す
+  - 作業日報アプリの「工程表」リンク（決定 #11）は追加していない。作業日報アプリに既に「配置表」ボタン（同じ配置予定表の閲覧）があるため
+  - 承認者名・本人の決め方は RPC ごとに書かず、内部関数 `_effective_worker()` / `_approver_name()` にまとめた
+  - 作業員マスタの退職日の保存時は、ログインのある作業員で退職日が変わったときだけ `sync_ban` を呼ぶ
+  - 担当者の `create`（同じ人が作業員IDを持っている場合）は変えていない（§5.1 のとおり当面は運用で `link_staff_account`）
 - 前提: [`login-id.md`](login-id.md)（独自ログインID。フェーズ1公開済み）
 - 関連: [`security-permissions.md`](security-permissions.md)（§3.3 作業員認証の選択肢・§5 日報の本人性）
 

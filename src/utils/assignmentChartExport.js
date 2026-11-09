@@ -2,7 +2,7 @@ import * as xlsx from 'xlsx-js-style';
 import { SCHEDULE_TYPES } from './constants';
 
 /**
- * 配置表をExcelに出力する
+ * 配置表のワークシートを組み立てる（ダウンロードはしない。テストからも呼ぶ）
  * @param {Array} workers - 作業員リスト
  * @param {Array} dateColumns - 日付カラム配列 [{dateStr, day, month, dow, dowLabel}, ...]
  * @param {Object} assignmentLookup - workerId_dateStr → assignments のルックアップ
@@ -10,24 +10,26 @@ import { SCHEDULE_TYPES } from './constants';
  * @param {Array} barProjects - バーチャート用プロジェクト配列
  * @param {string} periodLabel - 期間ラベル文字列
  * @param {Function} getBarSpan - プロジェクトのバー範囲を取得する関数
+ * @param {Object} [ninkuLabelByProject] - projectId → 「消化人工/目標人工」の表示文字列（出力した日の時点）
  */
-export const exportAssignmentChartToExcel = (
-    workers, dateColumns, assignmentLookup, projectMap, barProjects, periodLabel, getBarSpan
+export const buildAssignmentChartSheet = (
+    workers, dateColumns, assignmentLookup, projectMap, barProjects, periodLabel, getBarSpan, ninkuLabelByProject = {}
 ) => {
-    const wb = xlsx.utils.book_new();
     const totalDays = dateColumns.length;
+    // 列0: 現場名・作業員名 / 列1: 人工 / 列2〜: 日付
+    const DATE_COL = 2;
 
     // --- シート1: 配置表 ---
     const sheetData = [];
 
     // 行0: タイトル
-    sheetData.push([`配置表: ${periodLabel}`, ...Array(totalDays).fill(null)]);
+    sheetData.push([`配置表: ${periodLabel}`, ...Array(totalDays + 1).fill(null)]);
 
     // 行1: 空行（セパレーター）
     sheetData.push([]);
 
     // 行2: ===案件バーチャート ヘッダー===
-    const barHeader = ['現場名'];
+    const barHeader = ['現場名', '人工'];
     dateColumns.forEach(col => {
         barHeader.push(`${col.label}(${col.dowLabel})`);
     });
@@ -36,7 +38,7 @@ export const exportAssignmentChartToExcel = (
     // 案件バーの行
     const barStartRow = sheetData.length;
     barProjects.forEach(proj => {
-        const row = [proj.name];
+        const row = [proj.name, ninkuLabelByProject[proj.id] || ''];
         const bar = getBarSpan(proj);
         dateColumns.forEach((col, i) => {
             const isInBar = bar && i >= bar.startIdx && i <= bar.endIdx;
@@ -45,13 +47,13 @@ export const exportAssignmentChartToExcel = (
         sheetData.push(row);
     });
     if (barProjects.length === 0) {
-        sheetData.push(['案件なし', ...Array(totalDays).fill('')]);
+        sheetData.push(['案件なし', '', ...Array(totalDays).fill('')]);
     }
     const barEndRow = sheetData.length - 1;
 
     // セパレーター行
     const sepRow = sheetData.length;
-    const sepHeader = ['作業員名'];
+    const sepHeader = ['作業員名', ''];
     dateColumns.forEach(col => {
         sepHeader.push(`${col.day}`);
     });
@@ -68,14 +70,13 @@ export const exportAssignmentChartToExcel = (
         const dayAssigns = dateColumns.map(col => assignmentLookup[`${worker.id}_${col.dateStr}`] || []);
         const subRowCount = Math.max(1, ...dayAssigns.map(a => a.length));
         const baseRow = sheetData.length;
-        const rows = Array.from({ length: subRowCount }, (_, s) => [s === 0 ? worker.name : '']);
+        const rows = Array.from({ length: subRowCount }, (_, s) => [s === 0 ? worker.name : '', '']);
 
-        if (subRowCount > 1) {
-            workerMerges.push({ s: { r: baseRow, c: 0 }, e: { r: baseRow + subRowCount - 1, c: 0 } });
-        }
+        // 作業員名は人工列まで横に広げる（現場数が多い日の分だけ縦にも結合）
+        workerMerges.push({ s: { r: baseRow, c: 0 }, e: { r: baseRow + subRowCount - 1, c: 1 } });
 
         dayAssigns.forEach((cellAssigns, i) => {
-            const C = i + 1;
+            const C = i + DATE_COL;
             rows.forEach(r => r.push(''));
             const segments = cellAssigns.length > 0 ? cellAssigns : [null];
             segments.forEach((a, k) => {
@@ -103,11 +104,12 @@ export const exportAssignmentChartToExcel = (
 
     // マージ: タイトル行 + 作業員配置行
     if (!ws['!merges']) ws['!merges'] = [];
-    ws['!merges'].push({ s: { r: 0, c: 0 }, e: { r: 0, c: Math.min(totalDays, 7) } });
+    ws['!merges'].push({ s: { r: 0, c: 0 }, e: { r: 0, c: Math.min(totalDays + 1, 7) } });
+    ws['!merges'].push({ s: { r: sepRow, c: 0 }, e: { r: sepRow, c: 1 } });
     ws['!merges'].push(...workerMerges);
 
     // 列幅
-    ws['!cols'] = [{ wch: 16 }];
+    ws['!cols'] = [{ wch: 16 }, { wch: 9 }];
     for (let i = 0; i < totalDays; i++) {
         ws['!cols'].push({ wch: 10 });
     }
@@ -150,16 +152,16 @@ export const exportAssignmentChartToExcel = (
 
             // バーチャートヘッダー / セパレーターヘッダー
             if (R === 2 || R === sepRow) {
-                const dow = C > 0 ? dateColumns[C - 1]?.dow : null;
+                const dow = C >= DATE_COL ? dateColumns[C - DATE_COL]?.dow : null;
                 cell.s = {
                     ...cell.s,
                     font: { bold: true, sz: 9, color: { rgb: 'FFFFFF' }, name: 'BIZ UDゴシック' },
                     fill: { fgColor: { rgb: '334155' } }
                 };
-                if (C > 0 && dow === 0) {
+                if (C >= DATE_COL && dow === 0) {
                     cell.s.fill = { fgColor: { rgb: 'FEE2E2' } };
                     cell.s.font = { ...cell.s.font, color: { rgb: 'DC2626' } };
-                } else if (C > 0 && dow === 6) {
+                } else if (C >= DATE_COL && dow === 6) {
                     cell.s.fill = { fgColor: { rgb: 'DBEAFE' } };
                     cell.s.font = { ...cell.s.font, color: { rgb: '2563EB' } };
                 }
@@ -175,7 +177,7 @@ export const exportAssignmentChartToExcel = (
             }
 
             // バーチャートのバー部分に色付け
-            if (R >= barStartRow && R <= barEndRow && C > 0) {
+            if (R >= barStartRow && R <= barEndRow && C >= DATE_COL) {
                 const projIdx = R - barStartRow;
                 const proj = barProjects[projIdx];
                 if (proj && cell.v === '■') {
@@ -189,7 +191,7 @@ export const exportAssignmentChartToExcel = (
             }
 
             // 作業員配置セル: 色付け
-            if (R >= workerStartRow && C > 0) {
+            if (R >= workerStartRow && C >= DATE_COL) {
                 const hexColor = workerCellColors[`${R}_${C}`];
                 if (hexColor) {
                     cell.s = {
@@ -199,7 +201,7 @@ export const exportAssignmentChartToExcel = (
                     };
                 } else {
                     // 土日の背景色
-                    const dateCol = dateColumns[C - 1];
+                    const dateCol = dateColumns[C - DATE_COL];
                     if (dateCol?.dow === 0) {
                         cell.s = { ...cell.s, fill: { fgColor: { rgb: 'FEE2E2' } } };
                     } else if (dateCol?.dow === 6) {
@@ -210,7 +212,15 @@ export const exportAssignmentChartToExcel = (
         }
     }
 
-    xlsx.utils.book_append_sheet(wb, ws, 'AssignmentChart');
+    return ws;
+};
+
+/**
+ * 配置表をExcelに出力する（引数は buildAssignmentChartSheet と同じ）
+ */
+export const exportAssignmentChartToExcel = (...args) => {
+    const wb = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(wb, buildAssignmentChartSheet(...args), 'AssignmentChart');
 
     // Blob + aタグ方式でダウンロード（日本語ファイル名対応）
     const today = new Date().toISOString().split('T')[0];
