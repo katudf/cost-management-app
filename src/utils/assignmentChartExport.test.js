@@ -31,6 +31,11 @@ describe('buildAssignmentChartSheet', () => {
         expect(cell(ws, 2, 5).v).toBe('11/9(月)');
     });
 
+    it('人工列の見出しに基準日を書ける', () => {
+        const withHeader = buildAssignmentChartSheet(workers, cols, lookup, projectMap, projects, '期間', spanFn, {}, '人工（11/9時点）');
+        expect(cell(withHeader, 2, 1).v).toBe('人工（11/9時点）');
+    });
+
     it('人工列に表示文字列を載せ、無い現場は空欄にする', () => {
         expect(cell(ws, 3, 1).v).toBe('12.5/400');
         expect(cell(ws, 4, 1).v).toBe('');
