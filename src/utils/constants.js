@@ -84,10 +84,11 @@ export const STAFF_ROLE_LABEL = {
     [STAFF_ROLE.VIEWER]: '閲覧者',
 };
 // 権限区分の選択肢。SYSTEM_ADMIN はシステムアカウント専用のため含めない。
+// WORKER（作業員の共通ID）は廃止した。作業員のログインIDは従業員画面の「ID発行」で作業員マスタに紐付けて発行する
+// （担当者として作業員ロールのIDを作っても、作業日報・在庫管理では本人を特定できず使えない）。
 export const STAFF_ROLE_LIST = [
     STAFF_ROLE.ADMIN,
     STAFF_ROLE.OFFICE,
-    STAFF_ROLE.WORKER,
     STAFF_ROLE.VIEWER,
 ];
 // 管理者権限の判定（業務管理者・システム管理者の両方）。DBの is_admin() と一致させること。
