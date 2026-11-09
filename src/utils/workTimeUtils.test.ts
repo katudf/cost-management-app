@@ -7,11 +7,13 @@ import {
   roundNinku,
   formatTimeDisplay,
   splitRecordOvertime,
+  getStandardBreakDurations,
+  resolveSavedBreakDurations,
 } from './workTimeUtils';
 
 describe('workTimeUtils', () => {
   describe('getSeasonConfig', () => {
-    it('夏季（3月〜10月）の設定を正しく取得できること', () => {
+    it('夏季（3月〜11月）の設定を正しく取得できること', () => {
       // 8月は夏季
       const config = getSeasonConfig('2026-08-15');
       expect(config.label).toBe('夏季');
@@ -19,12 +21,39 @@ describe('workTimeUtils', () => {
       expect(config.totalBreakMinutes).toBe(120);
     });
 
-    it('冬季（11月〜2月）の設定を正しく取得できること', () => {
+    it('冬季（12月〜2月）の設定を正しく取得できること', () => {
       // 12月は冬季
       const config = getSeasonConfig('2026-12-15');
       expect(config.label).toBe('冬季');
       expect(config.scheduledWorkHours).toBe(7.5);
       expect(config.totalBreakMinutes).toBe(90);
+    });
+
+    it('季節の境目: 11月は夏季、12月〜2月は冬季、3月は夏季であること', () => {
+      expect(getSeasonConfig('2026-10-31').label).toBe('夏季');
+      expect(getSeasonConfig('2026-11-01').label).toBe('夏季');
+      expect(getSeasonConfig('2026-11-30').label).toBe('夏季');
+      expect(getSeasonConfig('2026-12-01').label).toBe('冬季');
+      expect(getSeasonConfig('2027-01-15').label).toBe('冬季');
+      expect(getSeasonConfig('2027-02-28').label).toBe('冬季');
+      expect(getSeasonConfig('2027-03-01').label).toBe('夏季');
+    });
+
+    it('就業規則の変更（2026-11-01）より前の11月は冬季のままであること', () => {
+      expect(getSeasonConfig('2025-11-15').label).toBe('冬季');
+      expect(getSeasonConfig('2025-10-31').label).toBe('夏季');
+      expect(getSeasonConfig('2026-02-28').label).toBe('冬季');
+      expect(getSeasonConfig('2026-03-01').label).toBe('夏季');
+    });
+
+    it('時刻付きの日付も日付の部分だけで判定すること（タイムゾーンに依存しない）', () => {
+      expect(getSeasonConfig('2026-12-01T00:00:00').label).toBe('冬季');
+      expect(getSeasonConfig('2026-12-01T23:59:59+09:00').label).toBe('冬季');
+      expect(getSeasonConfig('2027-03-01T00:00:00Z').label).toBe('夏季');
+    });
+
+    it('日付が読めない場合はデフォルト（夏季）を返すこと', () => {
+      expect(getSeasonConfig('not-a-date').label).toBe('夏季');
     });
 
     it('日付が未指定の場合はデフォルト（夏季）を返すこと', () => {
@@ -33,7 +62,50 @@ describe('workTimeUtils', () => {
     });
   });
 
+  describe('resolveSavedBreakDurations', () => {
+    it('保存が無い・形が合わない値は、その日の季節の標準値にすること', () => {
+      expect(getStandardBreakDurations('2026-11-16')).toEqual([30, 60, 30]);
+      expect(getStandardBreakDurations('2026-12-16')).toEqual([15, 60, 15]);
+      expect(resolveSavedBreakDurations(null, '2026-11-16')).toEqual([30, 60, 30]);
+      expect(resolveSavedBreakDurations([30, 60], '2026-11-16')).toEqual([30, 60, 30]);
+      expect(resolveSavedBreakDurations([30, 'x', 30], '2026-11-16')).toEqual([30, 60, 30]);
+    });
+
+    it('規則の変更で夏季になった2026年11月の日に、冬季の標準値が残っていたら夏季の標準値に読み替えること', () => {
+      expect(resolveSavedBreakDurations([15, 60, 15], '2026-11-05')).toEqual([30, 60, 30]);
+      // 冬季の標準値でなければ、作業員が変えた値としてそのまま使う
+      expect(resolveSavedBreakDurations([0, 60, 30], '2026-11-05')).toEqual([0, 60, 30]);
+    });
+
+    it('季節が変わっていない日は、保存値をそのまま使うこと', () => {
+      expect(resolveSavedBreakDurations([15, 60, 15], '2026-12-05')).toEqual([15, 60, 15]);
+      expect(resolveSavedBreakDurations([15, 60, 15], '2026-08-05')).toEqual([15, 60, 15]);
+      expect(resolveSavedBreakDurations([15, 60, 15], '2025-11-05')).toEqual([15, 60, 15]);
+    });
+
+    it('読み替えた休憩で、11月の 08:00-17:30 は残業なしの 7.5h になること', () => {
+      const durations = resolveSavedBreakDurations([15, 60, 15], '2026-11-05');
+      const result = calculateWorkHours('08:00', '17:30', '2026-11-05', false, durations);
+      expect(result.netWorkHours).toBe(7.5);
+      expect(result.overtimeHours).toBe(0);
+    });
+  });
+
   describe('calculateWorkHours', () => {
+    it('11月は夏季の定時（08:00 - 17:30）・休憩で計算すること', () => {
+      const regular = calculateWorkHours('08:00', '17:30', '2026-11-16');
+      expect(regular.breakMinutes).toBe(120);
+      expect(regular.netWorkHours).toBe(7.5);
+      expect(regular.overtimeHours).toBe(0);
+      // 17:00 終了は定時前の退勤（冬季なら 7.5h だったが、夏季では 7h）
+      const early = calculateWorkHours('08:00', '17:00', '2026-11-16');
+      expect(early.netWorkHours).toBe(7);
+      expect(early.overtimeHours).toBe(0);
+      // 残業は 17:30 から
+      const late = calculateWorkHours('08:00', '18:00', '2026-11-16');
+      expect(late.lateOvertimeHours).toBe(0.5);
+    });
+
     it('入力値が欠損している場合はすべて0を返すこと', () => {
       const emptyResult = {
         grossMinutes: 0,

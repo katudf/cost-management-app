@@ -26,7 +26,7 @@ import LoginScreen from './components/auth/LoginScreen';
 import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
 import { useToast } from './components/Toast';
 import { useConfirm } from './components/ConfirmProvider';
-import { calculateWorkHours, calculateNinku, getSeasonConfig, formatTimeDisplay, splitRecordOvertime } from './utils/workTimeUtils';
+import { calculateWorkHours, calculateNinku, getSeasonConfig, formatTimeDisplay, splitRecordOvertime, getStandardBreakDurations, resolveSavedBreakDurations } from './utils/workTimeUtils';
 import { PROJECT_STATUS, WORKER_TYPE, SESSION_KIND } from './utils/constants';
 import { isResigned } from './utils/resignation';
 import { readStorage, writeStorage, removeStorage, readJson, workerStorageKey as workerKeyFor, projectStorageKey as projectKeyFor } from './utils/safeStorage';
@@ -273,14 +273,12 @@ const WorkerApp = () => {
         ).then(({ data }) => {
             if (!active) return;
             if (restoreSeqRef.current !== startSeq) return;
-            const standard = getSeasonConfig(selectedDate).breaks.map(brk => brk.e - brk.s);
-            const saved = Array.isArray(data?.break_durations) ? data.break_durations : standard;
+            const saved = resolveSavedBreakDurations(data?.break_durations, selectedDate);
             setDailyBreakSettings({ workerName: loggedInWorker.name, date: selectedDate, durations: saved });
         }).catch(error => {
             console.error('Daily break settings load error:', error);
             if (active) {
-                const standard = getSeasonConfig(selectedDate).breaks.map(brk => brk.e - brk.s);
-                setDailyBreakSettings({ workerName: loggedInWorker.name, date: selectedDate, durations: standard });
+                setDailyBreakSettings({ workerName: loggedInWorker.name, date: selectedDate, durations: getStandardBreakDurations(selectedDate) });
                 showToast('休憩設定を読み込めませんでした。通信状態を確認してください。', 'error');
             }
         }).finally(() => { if (active) setIsLoadingBreakSettings(false); });
@@ -972,7 +970,7 @@ const WorkerApp = () => {
     }, [tasks, subcontractors, deletedSubcontractorIds, dailyBreakSettings, overtimeReason, hasUnsavedChanges, selectedProjectId, selectedDate, loggedInWorker]);
 
     // ========== 時間自動計算 (各タスク×各スロット) ==========
-    const defaultBreakDurations = getSeasonConfig(selectedDate).breaks.map(brk => brk.e - brk.s);
+    const defaultBreakDurations = getStandardBreakDurations(selectedDate);
     const effectiveBreakDurations = dailyBreakSettings?.workerName === loggedInWorker?.name && dailyBreakSettings?.date === selectedDate
         ? dailyBreakSettings.durations
         : defaultBreakDurations;
@@ -1049,9 +1047,7 @@ const WorkerApp = () => {
         setDailyBreakSettings({
             workerName: loggedInWorker.name,
             date: draft.selectedDate,
-            durations: Array.isArray(draft.breakDurations)
-                ? draft.breakDurations
-                : getSeasonConfig(draft.selectedDate).breaks.map(brk => brk.e - brk.s),
+            durations: resolveSavedBreakDurations(draft.breakDurations, draft.selectedDate),
         });
         setSubcontractors(draft.subcontractors || []);
         setDeletedSubcontractorIds(draft.deletedSubcontractorIds || []);
@@ -1079,7 +1075,7 @@ const WorkerApp = () => {
         setDailyBreakSettings(current => {
             const currentDurations = current?.workerName === loggedInWorker.name && current?.date === selectedDate
                 ? current.durations
-                : getSeasonConfig(selectedDate).breaks.map(brk => brk.e - brk.s);
+                : getStandardBreakDurations(selectedDate);
             return {
                 workerName: loggedInWorker.name,
                 date: selectedDate,
