@@ -1,5 +1,5 @@
 // src/components/assignment/ExportPeriodDialog.jsx
-// 配置表Excel出力時の期間指定ダイアログ。開くたびに既定値（現在の表示範囲）へリセットする。
+// 配置表Excel出力時の期間指定ダイアログ。開くたびに既定値（表示開始日から4週間）へリセットする。
 
 import React, { useState, useEffect } from 'react';
 import { X, Download } from 'lucide-react';
