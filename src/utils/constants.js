@@ -84,10 +84,11 @@ export const STAFF_ROLE_LABEL = {
     [STAFF_ROLE.VIEWER]: '閲覧者',
 };
 // 権限区分の選択肢。SYSTEM_ADMIN はシステムアカウント専用のため含めない。
+// WORKER（作業員の共通ID）は廃止した。作業員のログインIDは従業員画面の「ID発行」で作業員マスタに紐付けて発行する
+// （担当者として作業員ロールのIDを作っても、作業日報・在庫管理では本人を特定できず使えない）。
 export const STAFF_ROLE_LIST = [
     STAFF_ROLE.ADMIN,
     STAFF_ROLE.OFFICE,
-    STAFF_ROLE.WORKER,
     STAFF_ROLE.VIEWER,
 ];
 // 管理者権限の判定（業務管理者・システム管理者の両方）。DBの is_admin() と一致させること。
@@ -102,19 +103,18 @@ export const isSystemAdminRole = (role) => role === STAFF_ROLE.SYSTEM_ADMIN;
 
 // === ログインの区分（作業日報・在庫アプリの分岐。docs/specs/worker-login.md §4.1）===
 export const SESSION_KIND = {
-    STAFF: 'staff',                     // 担当者（事務以上）。作業員アプリでは代理モード
-    SHARED_WORKER: 'shared_worker',     // 作業員の共有アカウント（移行期間）。名前を選ぶ
+    STAFF: 'staff',                     // 担当者（事務以上）。作業員アプリでは入力画面で作業員を切り替えて代理入力する
     PERSONAL_WORKER: 'personal_worker', // 作業員の個人アカウント。本人に固定
-    OTHER: 'other',                     // それ以外（閲覧用の共有アカウント・退職者・どこにも紐付かない）
-    UNKNOWN: 'unknown',                 // 初めてのオフライン起動で、まだ誰か分からない。名前を選んで入力でき、通信が戻ったら判定し直す
+    OTHER: 'other',                     // それ以外（閲覧用の共有アカウント・作業員の共通ID・退職者・どこにも紐付かない）
+    UNKNOWN: 'unknown',                 // 初めてのオフライン起動で、まだ誰か分からない。使えない旨を出し、通信が戻ったら判定し直す
 };
 // currentStaff（office_staff の行）と currentWorker（get_my_worker）から区分を決める。
 // 担当者の行があれば担当者を優先する（担当者兼作業員は STAFF。DB の current_staff_role() と同じ）。
+// 作業員の共通ID（office_staff の role が worker）は廃止したので、残っていても使えない（OTHER）。
 export const getSessionKind = (currentStaff, currentWorker, isIdentityUnknown = false) => {
     if (isIdentityUnknown) return SESSION_KIND.UNKNOWN;
     if (currentStaff) {
         if (canUseAdminApp(currentStaff.role)) return SESSION_KIND.STAFF;
-        if (currentStaff.role === STAFF_ROLE.WORKER) return SESSION_KIND.SHARED_WORKER;
         return SESSION_KIND.OTHER;
     }
     return currentWorker ? SESSION_KIND.PERSONAL_WORKER : SESSION_KIND.OTHER;

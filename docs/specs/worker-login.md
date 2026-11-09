@@ -3,7 +3,9 @@
 - 作成日: 2026-11-07（同日、レビュー指摘を反映して改訂）
 - 状態: フェーズAを実装済み・本番未反映（2026-11-07、ブランチ `feat/worker-login`）。
   本番への反映はマイグレーション `20261107020000` → Edge Function `manage-staff-login` / `invite-staff` → 画面の順（画面を先に出すと
-  作業員アカウントの判定ができない。担当者の画面は `get_my_worker` が無くても動くようにしてある）。フェーズBは未着手。
+  作業員アカウントの判定ができない。担当者の画面は `get_my_worker` が無くても動くようにしてある）。
+  2026-11-09 に本番反映済み。同日、フェーズBの 1・2 を実施（共通IDはユーザーが削除済み。作業員アプリ・在庫アプリの名前選択と
+  `shared_worker` の区分を削除し、担当者は入力画面の帯で作業員を切り替える。§4.2）。フェーズBの 3・4 は未着手。
   2026-11-07 にユーザー確認済み: §3.4 の残るリスクは共有アカウント廃止まで先送り／§5 `link_staff_account` の紐付け対象の限定／
   決定 #8 の「退職日を入れた時点で（未来日でも）BAN」は、いずれも現設計のまま
 - 実装: `supabase/migrations/20261107020000_worker_personal_login.sql`、`supabase/functions/manage-staff-login/handler.ts`、
@@ -125,7 +127,8 @@ RLS の本人限定（§8）まで残る（§3.4）。
   今は `cost-app-worker` から復元してオフラインでも起動できており、これを失わないようにする。
 - 画面で扱う区分（`sessionKind`）:
   - `staff`: `currentStaff` があり role が office / admin / system_admin
-  - `shared_worker`: `currentStaff?.role === 'worker'`（共有アカウント）
+  - ~~`shared_worker`: `currentStaff?.role === 'worker'`（共有アカウント）~~ フェーズBで削除。role が worker の担当者行が残っていても `other`
+  - `unknown`: 初めてのオフライン起動で、まだ誰か分からない。使えない旨と「再読み込み」を出し、通信が戻ったら判定し直す
   - `personal_worker`: `currentStaff` が無く `currentWorker` がある
   - `other`: それ以外（viewer 共有アカウント、退職者、どこにも紐付かない Auth ユーザー）
 - AdminApp は今の `canUseAdminApp(currentStaff?.role)` のままでよい。`NoPermissionScreen.jsx` は `currentStaff` で案内文を出しているので、
@@ -138,8 +141,8 @@ RLS の本人限定（§8）まで残る（§3.4）。
 | sessionKind | 作業員の決め方 | 名前選択 |
 |-------------|---------------|---------|
 | `personal_worker` | `currentWorker` に固定。`?workerId=` は無視 | 出さない |
-| `staff` | `?workerId=` があればその作業員（代理モード）。無ければ名前選択 | 出す |
-| `shared_worker`（移行期間） | 今と同じ | 出す |
+| `staff` | `?workerId=` → この端末で前回選んだ作業員 → 担当者兼作業員なら本人 → 名簿の先頭、の順で決める。入力画面の上の帯のプルダウンで切り替える（本人以外なら「代理入力中」の帯） | 出さない（フェーズBで削除） |
+| `unknown` | 使えない旨と「再読み込み」 | ― |
 | `other` | 権限なし画面（ログアウトボタンつき） | ― |
 
 - `personal_worker` では `localStorage` の `cost-app-worker` を読まない・書かない。
@@ -160,7 +163,7 @@ RLS の本人限定（§8）まで残る（§3.4）。
 |-------------|--------------------------------------|---------|
 | `personal_worker` | 本人の名前 / 本人の id | 出さない |
 | `staff` | 担当者の名前 / NULL | 出さない |
-| `shared_worker`（移行期間） | 今と同じ | 出す |
+| `unknown` | 使えない旨と「再読み込み」 | ― |
 | `other` | 権限なし画面 | ― |
 
 - `cost-app-worker` を日報アプリと共用するのをやめる。
@@ -231,8 +234,8 @@ RLS の本人限定（§8）まで残る（§3.4）。
 （ログインを保持するため、共有アカウントの端末はリフレッシュトークンで使い続けており、`last_sign_in_at` では使われているかどうか分からない。
 参考として `auth.sessions` の更新日時を見る。）
 
-1. 共有アカウント（`office_staff.id=18`）を BAN → 削除する
-2. 作業員アプリ・在庫アプリから、`shared_worker` 向けの名前選択と `cost-app-worker` の処理を削除する
+1. 共有アカウント（`office_staff.id=18`）を BAN → 削除する（2026-11-09 ユーザーが削除済み）
+2. 作業員アプリ・在庫アプリから、`shared_worker` 向けの名前選択と `cost-app-worker` の処理を削除する（2026-11-09 実施。担当者が日報アプリで選んだ作業員の保存 `cost-app-worker:<uid>` は代理入力用に残す）
 3. §3.2 のRPCで、共有アカウント向けの分岐を消す（引数は `DEFAULT NULL` で残して無視）
 4. `security-permissions.md` の作業員認証を案Aに更新し、パスワードが平文で載っている記述があれば削除する
 

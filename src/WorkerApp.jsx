@@ -69,10 +69,8 @@ const WorkerApp = () => {
     const { isAuthenticated, isLoading: isAuthLoading, isPasswordRecovery, signOut, session, currentWorker, sessionKind } = useAuth();
     // 作業員の個人アカウントは本人に固定し、名前選択を出さない（docs/specs/worker-login.md §4.2）
     const isPersonalWorker = sessionKind === SESSION_KIND.PERSONAL_WORKER;
-    // 名前選択を出すのは担当者（代理入力）と共有アカウント（移行期間）だけ。
-    // 初めてのオフライン起動でまだ誰か分からないときも、名前を選んで入力できるようにする（保存時の本人は DB が決める）
-    const canChooseWorker = sessionKind === SESSION_KIND.STAFF || sessionKind === SESSION_KIND.SHARED_WORKER
-        || sessionKind === SESSION_KIND.UNKNOWN;
+    // 担当者は代理入力。名前選択画面は出さず、入力画面の上の帯で入力する作業員を切り替える
+    const isStaff = sessionKind === SESSION_KIND.STAFF;
     // 選んだ作業員・現場の端末保存は、ログインしている人ごとに分ける（別の人のログインに持ち越さない）
     const authUserId = session?.user?.id || '';
     const workerStorageKey = workerKeyFor(authUserId);
@@ -171,7 +169,10 @@ const WorkerApp = () => {
 
                 const { data: wData } = await fetchWithCache('workers', fetchWorkersDirectoryResult);
                 // 退職の判定は DB と同じく「退職日が今日以前」（退職予定日の前日までは在籍）
-                if (wData) setWorkers(wData.filter(w => w.name && w.name.trim() !== '' && !isResigned(w.resignation_date) && w.worker_type !== WORKER_TYPE.OFFICE));
+                const selectableWorkers = wData
+                    ? wData.filter(w => w.name && w.name.trim() !== '' && !isResigned(w.resignation_date) && w.worker_type !== WORKER_TYPE.OFFICE)
+                    : null;
+                if (selectableWorkers) setWorkers(selectableWorkers);
                 if (wData) setAssignmentWorkers(wData.filter(w => w.name && w.name.trim() !== '' && !isResigned(w.resignation_date) && w.show_in_assignment !== false));
                 // 管理者が名前を直していることがあるので、名簿の最新の内容に差し替える。
                 // 古い名前のままだと日報が旧名で保存され、職長の判定（名前と ID の照合）にも通らない
@@ -180,16 +181,19 @@ const WorkerApp = () => {
                 if (isPersonalWorker) {
                     // 作業員の個人アカウントは本人に固定（?workerId= は無視する）
                     setLoggedInWorker(fresh(currentWorker));
-                } else if (canChooseWorker) {
-                    // 管理画面の「日報編集」リンクから ?workerId=<id> 付きで開かれた場合はその作業員（担当者なら代理入力）
+                } else if (isStaff) {
+                    // 担当者（代理入力）は名前選択画面を出さず、次の順で入力する作業員を決める:
+                    // 管理画面の「日報編集」リンクの ?workerId=<id> → この端末で前回選んだ作業員 → 担当者兼作業員なら本人 → 名簿の先頭
                     const workerIdParam = new URLSearchParams(window.location.search).get('workerId');
                     const targetWorker = workerIdParam && wData
                         ? wData.find(w => String(w.id) === workerIdParam)
                         : null;
                     const savedWorker = readJson(workerStorageKey);
-                    // 担当者兼作業員は、何も指定が無ければ本人
-                    const chosen = targetWorker || (savedWorker && fresh(savedWorker))
-                        || (sessionKind === SESSION_KIND.STAFF && currentWorker ? fresh(currentWorker) : null);
+                    // 前回の作業員が退職・削除されていたら使わない
+                    const savedInList = savedWorker && selectableWorkers?.find(w => String(w.id) === String(savedWorker.id));
+                    const chosen = targetWorker || savedInList
+                        || (currentWorker ? fresh(currentWorker) : null)
+                        || selectableWorkers?.[0] || null;
                     if (chosen) {
                         setLoggedInWorker(chosen);
                         writeStorage(workerStorageKey, JSON.stringify(chosen));
@@ -518,7 +522,23 @@ const WorkerApp = () => {
         }
     };
 
-    const handleLogin = (worker) => { setLoggedInWorker(worker); writeStorage(workerStorageKey, JSON.stringify(worker)); };
+    // 担当者（代理入力）: 入力する作業員を切り替える
+    const handleSwitchWorker = async (workerId) => {
+        const next = workers.find(w => String(w.id) === String(workerId));
+        if (!next || String(next.id) === String(loggedInWorker?.id)) return;
+        if (hasUnsavedChanges && !(await confirm({
+            title: '作業員の切り替え',
+            message: `未送信の入力データがあります。入力内容を破棄して${next.name}さんに切り替えますか？`,
+            confirmText: '破棄して切替',
+            variant: 'danger',
+        }))) return;
+        // 切り替え前に予約された自動保存が、切り替え後の作業員の下書きとして書かれないようにする
+        autosaveEpochRef.current += 1;
+        setHasUnsavedChanges(false);
+        setTasks([]); setSubcontractors([]); setDeletedSubcontractorIds([]);
+        setLoggedInWorker(next);
+        writeStorage(workerStorageKey, JSON.stringify(next));
+    };
 
     // 作業員の個人アカウントのログアウト。消すのは自分の未送信の下書きだけ（docs/specs/worker-login.md §4.2）
     const handlePersonalLogout = async () => {
@@ -539,21 +559,28 @@ const WorkerApp = () => {
         await signOut();
     };
 
-    const handleLogout = async () => {
-        if (isPersonalWorker) return handlePersonalLogout();
-        const message = hasUnsavedChanges ? "未送信の入力データがあります。破棄して選択画面に戻りますか？" : "選択画面に戻りますか？";
+    // 担当者のログアウト。代理入力で作った下書きは複数の作業員にまたがるので、この端末の下書きをすべて消す
+    // （共有端末でログアウト後に他人の下書きが残らないように）
+    const handleStaffLogout = async () => {
+        const pendingDrafts = getDraftQueue().length;
         const ok = await confirm({
-            title: '選択画面に戻る',
-            message,
-            confirmText: '戻る',
-            variant: hasUnsavedChanges ? 'danger' : 'primary',
+            title: 'ログアウト',
+            message: pendingDrafts > 0
+                ? `この端末に未送信の下書きが${pendingDrafts}件あります。ログアウトすると下書きは削除されます。ログアウトしますか？`
+                : (hasUnsavedChanges ? '未送信の入力データがあります。破棄してログアウトしますか？' : 'ログアウトしますか？'),
+            confirmText: 'ログアウト',
+            variant: pendingDrafts > 0 || hasUnsavedChanges ? 'danger' : 'primary',
         });
-        if (ok) {
-            setHasUnsavedChanges(false);
-            setLoggedInWorker(null); setSelectedProjectId(''); setTasks([]); setSubcontractors([]); setDeletedSubcontractorIds([]);
-            removeStorage(workerStorageKey); removeStorage(projectStorageKey);
-        }
+        if (!ok) return;
+        setHasUnsavedChanges(false);
+        removeStorage(projectStorageKey);
+        clearDraftQueue();
+        setDraftQueue([]);
+        setLoggedInWorker(null);
+        await signOut();
     };
+
+    const handleLogout = () => (isPersonalWorker ? handlePersonalLogout() : handleStaffLogout());
 
     // 日報PDF出力（選択中の日付を含む月〜日の週で出力）
     const handleExportReportPDF = async () => {
@@ -1474,57 +1501,29 @@ const WorkerApp = () => {
         return <WorkerNoAccessScreen title="作業日報システム" onSignOut={signOut} />;
     }
 
-    if ((isLoading || isPersonalWorker) && !loggedInWorker) {
-        return <div className="min-h-screen flex items-center justify-center bg-slate-100"><Loader2 className="w-12 h-12 text-blue-500 animate-spin" /></div>;
+    // 初めてのオフライン起動で、まだ誰のログインか分からない。本人を決められないので入力させない
+    if (sessionKind === SESSION_KIND.UNKNOWN) {
+        return (
+            <WorkerNoAccessScreen
+                title="作業日報システム"
+                onSignOut={signOut}
+                message="初めて開くときは、通信がつながっている必要があります。通信のよい場所で開き直してください。"
+                onRetry={() => window.location.reload()}
+            />
+        );
     }
 
-    // ========== 作業員選択画面 ==========
     if (!loggedInWorker) {
-        const handleSystemLogout = async () => {
-            // 未送信の下書き（全作業員分）があれば、ログアウトで消えることを伝えて確認する。
-            // 共有端末でログアウト後に他人の下書きが残らないよう、ログアウトするときは消す。
-            const pendingDrafts = getDraftQueue().length;
-            const ok = await confirm({
-                title: 'ログアウト',
-                message: pendingDrafts > 0
-                    ? `この端末に未送信の下書きが${pendingDrafts}件あります。ログアウトすると下書きは削除されます。ログアウトしますか？`
-                    : 'システムからログアウトしますか？',
-                confirmText: 'ログアウト',
-                variant: 'danger',
-            });
-            if (ok) {
-                await signOut();
-                clearDraftQueue();
-                setDraftQueue([]);
-            }
-        };
+        if (isLoading || isPersonalWorker) {
+            return <div className="min-h-screen flex items-center justify-center bg-slate-100"><Loader2 className="w-12 h-12 text-blue-500 animate-spin" /></div>;
+        }
+        // 担当者で、日報を入力できる作業員が名簿に1人もいない
         return (
-            <div className="min-h-screen bg-slate-100 flex flex-col items-center p-4">
-                <div className="w-full max-w-sm mt-10">
-                    <div className="flex justify-end mb-2">
-                        <button
-                            onClick={handleSystemLogout}
-                            aria-label="ログアウト"
-                            title="ログアウト"
-                            className="flex items-center gap-1 bg-white border border-slate-200 hover:bg-slate-50 text-slate-500 hover:text-red-600 px-3 py-1.5 rounded-lg text-sm font-bold transition shadow-sm"
-                        >
-                            <LogOut size={16} /> ログアウト
-                        </button>
-                    </div>
-                    <div className="bg-white rounded-2xl shadow-lg p-6 text-center border-t-4 border-blue-600">
-                        <HardHat className="w-16 h-16 text-blue-600 mx-auto mb-4" />
-                        <h1 className="text-2xl font-black text-slate-800 mb-2">作業日報システム</h1>
-                        <p className="text-sm font-bold text-slate-500 mb-8">名前を選んでください</p>
-                        <div className="flex flex-col gap-3 max-h-[60vh] overflow-y-auto px-1 pb-4">
-                            {workers.map(w => (
-                                <button key={w.id} onClick={() => handleLogin(w)}
-                                    className="w-full bg-slate-50 border-2 border-slate-200 p-4 rounded-xl text-lg font-bold text-slate-700 hover:bg-blue-50 hover:border-blue-400 hover:text-blue-700 transition active:scale-[0.98]"
-                                >{w.name}</button>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-            </div>
+            <WorkerNoAccessScreen
+                title="作業日報システム"
+                onSignOut={signOut}
+                message="日報を入力できる作業員が登録されていません。管理画面の従業員管理で作業員を登録してください。"
+            />
         );
     }
 
@@ -1655,16 +1654,27 @@ const WorkerApp = () => {
                             <span className="hidden sm:inline">パスワード</span>
                         </button>
                     )}
-                    {isPersonalWorker ? (
-                        <button onClick={handleLogout} aria-label="ログアウト" title="ログアウト" className="flex items-center justify-center gap-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 w-10 h-10 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 rounded-lg text-sm font-bold transition shrink-0"><LogOut size={18} /><span className="hidden sm:inline">ログアウト</span></button>
-                    ) : (
-                        <button onClick={handleLogout} aria-label="選択画面に戻る" title="選択画面に戻る" className="flex items-center justify-center gap-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 w-10 h-10 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 rounded-lg text-sm font-bold transition shrink-0"><LogOut size={18} /><span className="hidden sm:inline">戻る</span></button>
-                    )}
+                    <button onClick={handleLogout} aria-label="ログアウト" title="ログアウト" className="flex items-center justify-center gap-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 w-10 h-10 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 rounded-lg text-sm font-bold transition shrink-0"><LogOut size={18} /><span className="hidden sm:inline">ログアウト</span></button>
                 </div>
             </header>
-            {isProxyMode && (
-                <div role="status" className="bg-amber-400 text-amber-950 text-sm font-bold px-3 py-1.5 flex items-center justify-center gap-2">
-                    <UserCog size={16} aria-hidden="true" /> 代理入力中：{loggedInWorker.name}さん
+            {/* 担当者: 入力する作業員の切り替え（本人以外なら代理入力の帯として目立たせる） */}
+            {isStaff && (
+                <div className={`text-sm font-bold px-3 py-1.5 flex items-center justify-center gap-2 ${isProxyMode ? 'bg-amber-400 text-amber-950' : 'bg-slate-200 text-slate-700'}`}>
+                    <UserCog size={16} aria-hidden="true" />
+                    <span role="status">{isProxyMode ? '代理入力中：' : '入力する作業員：'}</span>
+                    <select
+                        value={String(loggedInWorker.id)}
+                        onChange={(e) => handleSwitchWorker(e.target.value)}
+                        aria-label="入力する作業員"
+                        title="入力する作業員を切り替える"
+                        className="bg-white/90 border border-black/10 rounded-md px-2 py-0.5 font-bold text-sm max-w-[60vw]"
+                    >
+                        {!workers.some(w => String(w.id) === String(loggedInWorker.id)) && (
+                            <option value={String(loggedInWorker.id)}>{loggedInWorker.name}</option>
+                        )}
+                        {workers.map(w => <option key={w.id} value={String(w.id)}>{w.name}</option>)}
+                    </select>
+                    {isProxyMode && <span>さん</span>}
                 </div>
             )}
             <div className="bg-slate-100 border-b border-slate-200">
