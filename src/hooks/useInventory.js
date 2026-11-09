@@ -12,26 +12,21 @@ export function useInventory({ showToast }) {
     const { confirm } = useConfirm();
     const [items, setItems] = useState([]);
     const [warehouses, setWarehouses] = useState([]);
-    const [workers, setWorkers] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
 
     const fetchAll = useCallback(async () => {
         setIsLoading(true);
         try {
-            const [whRes, itemRes, wkRes] = await Promise.all([
+            const [whRes, itemRes] = await Promise.all([
                 supabase.from('Warehouses').select('*')
                     .order('display_order', { ascending: true, nullsFirst: false }),
                 supabase.from('InventoryItems').select('*')
                     .order('updated_at', { ascending: false }),
-                // workerロールはWorkers基表を直接読めない（機微カラム遮蔽）ため安全カラムのみのビューを使う
-                supabase.from('workers_directory').select('id, name, resignation_date')
-                    .order('display_order', { ascending: true, nullsFirst: false }),
             ]);
             // 一部のテーブルが未作成でも、取得できたデータは反映する
             setWarehouses(whRes.data || []);
             setItems(itemRes.data || []);
-            setWorkers((wkRes.data || []).filter(w => w.name && w.name.trim() !== '' && !w.resignation_date));
-            const firstError = whRes.error || itemRes.error || wkRes.error;
+            const firstError = whRes.error || itemRes.error;
             if (firstError) throw firstError;
         } catch (e) {
             console.error('在庫データ取得エラー:', e);
@@ -138,7 +133,6 @@ export function useInventory({ showToast }) {
     return {
         items,
         warehouses,
-        workers,
         isLoading,
         fetchAll,
         saveItem,

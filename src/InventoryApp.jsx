@@ -10,7 +10,6 @@ import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
 import { useInventory } from './hooks/useInventory';
 import { INVENTORY_CATEGORY_LIST, INVENTORY_CATEGORY_COLOR, SESSION_KIND } from './utils/constants';
 import WorkerNoAccessScreen from './components/auth/WorkerNoAccessScreen';
-import { readJson, writeJson, removeStorage, workerStorageKey as workerKeyFor } from './utils/safeStorage';
 // ローカルタイムゾーンでの 'YYYY-MM-DD' 生成は dateUtils が持ち主
 import { toDateStr } from './utils/dateUtils';
 
@@ -32,35 +31,22 @@ const emptyForm = () => ({
 
 const InventoryApp = () => {
     const { showToast } = useToast();
-    const { isAuthenticated, isLoading: isAuthLoading, isPasswordRecovery, signOut, session, currentStaff, currentWorker, sessionKind } = useAuth();
-    // 名前を選ぶのは作業員の共有アカウント（移行期間）だけ。作業員の個人アカウントは本人、担当者は担当者名で記録する
-    // （docs/specs/worker-login.md §4.3）
-    // 初めてのオフライン起動でまだ誰か分からないときも、共有アカウントと同じく名前を選んで使える
-    const isSharedWorker = sessionKind === SESSION_KIND.SHARED_WORKER || sessionKind === SESSION_KIND.UNKNOWN;
+    const { isAuthenticated, isLoading: isAuthLoading, isPasswordRecovery, signOut, currentStaff, currentWorker, sessionKind } = useAuth();
+    // 作業員の個人アカウントは本人、担当者は担当者名で記録する（docs/specs/worker-login.md §4.3）。
+    // 作業員の共通IDは廃止したので、名前を選ぶ画面は無い
     const isPersonalWorker = sessionKind === SESSION_KIND.PERSONAL_WORKER;
     const isStaff = sessionKind === SESSION_KIND.STAFF;
-    // 作業日報アプリと同じ保存キー（ログインしている人ごと）。共有アカウントで日報アプリで選んだ名前をそのまま使う
-    const workerStorageKey = workerKeyFor(session?.user?.id);
     const {
-        items, warehouses, workers, isLoading,
+        items, warehouses, isLoading,
         saveItem, deleteItem, updateQuantity, uploadWarehouseMap,
     } = useInventory({ showToast });
 
-    // 共有アカウントで選んだ名前。描画のたびに端末の保存から読む（読み込みを待つ間に名前選択が一瞬出ないように）。
-    // 選び直したときは storageVersion を進めて読み直す
-    const [storageVersion, setStorageVersion] = useState(0);
-    // 端末に保存できない（プライベートモードなど）ときに選んだ名前
-    const [pickedWorker, setPickedWorker] = useState(null);
-    const chosenWorker = useMemo(
-        () => (isSharedWorker ? (readJson(workerStorageKey) ?? pickedWorker) : null),
-        [isSharedWorker, workerStorageKey, storageVersion, pickedWorker],
-    );
     // 記録者。担当者は worker_id を持たない（作業員ではないため）
     const loggedInWorker = isPersonalWorker
         ? currentWorker
         : isStaff
             ? (currentStaff ? { id: null, name: currentStaff.name } : null)
-            : isSharedWorker ? chosenWorker : null;
+            : null;
     const [tab, setTab] = useState('home');
     const [searchText, setSearchText] = useState('');
     const [filterWarehouse, setFilterWarehouse] = useState('');
@@ -75,20 +61,8 @@ const InventoryApp = () => {
     const [isSaving, setIsSaving] = useState(false);
     const [uploadingMapId, setUploadingMapId] = useState(null);
 
-    // 共有アカウント: WorkerApp と同じ保存キーを共用（日報アプリで名前を選んでいればそのまま使える）
-    const handleLogin = (worker) => {
-        if (!writeJson(workerStorageKey, worker)) setPickedWorker(worker);
-        setStorageVersion(v => v + 1);
-    };
-
-    // ヘッダーの「ログアウト」: 共有アカウントは名前選択に戻る、作業員の個人アカウントはログアウトする
+    // ヘッダーの「ログアウト」（作業員の個人アカウント）
     const handleLogout = async () => {
-        if (isSharedWorker) {
-            removeStorage(workerStorageKey);
-            setPickedWorker(null);
-            setStorageVersion(v => v + 1);
-            return;
-        }
         await signOut();
     };
 
@@ -247,36 +221,23 @@ const InventoryApp = () => {
         return <WorkerNoAccessScreen title="在庫管理システム" onSignOut={signOut} accentClass="border-emerald-600" />;
     }
 
-    if (isLoading && !loggedInWorker) {
+    // 初めてのオフライン起動で、まだ誰のログインか分からない。記録者を決められないので使わせない
+    if (sessionKind === SESSION_KIND.UNKNOWN) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-slate-100">
-                <Loader2 className="w-12 h-12 text-emerald-500 animate-spin" />
-            </div>
+            <WorkerNoAccessScreen
+                title="在庫管理システム"
+                onSignOut={signOut}
+                message="初めて開くときは、通信がつながっている必要があります。通信のよい場所で開き直してください。"
+                onRetry={() => window.location.reload()}
+                accentClass="border-emerald-600"
+            />
         );
     }
 
-    // ========== 作業員選択画面 ==========
     if (!loggedInWorker) {
         return (
-            <div className="min-h-screen bg-slate-100 flex flex-col items-center p-4">
-                <div className="w-full max-w-sm mt-10">
-                    <div className="bg-white rounded-2xl shadow-lg p-6 text-center border-t-4 border-emerald-600 relative">
-                        <button onClick={signOut} aria-label="ログアウト" title="ログアウト"
-                            className="absolute top-3 right-3 p-2 rounded-full text-slate-400 hover:text-red-600 hover:bg-red-50 transition">
-                            <LogOut size={18} />
-                        </button>
-                        <Package className="w-16 h-16 text-emerald-600 mx-auto mb-4" />
-                        <h1 className="text-2xl font-black text-slate-800 mb-2">在庫管理システム</h1>
-                        <p className="text-sm font-bold text-slate-500 mb-8">名前を選んでください</p>
-                        <div className="flex flex-col gap-3 max-h-[60vh] overflow-y-auto px-1 pb-4">
-                            {workers.map(w => (
-                                <button key={w.id} onClick={() => handleLogin(w)}
-                                    className="w-full bg-slate-50 border-2 border-slate-200 p-4 rounded-xl text-lg font-bold text-slate-700 hover:bg-emerald-50 hover:border-emerald-400 hover:text-emerald-700 transition active:scale-[0.98]"
-                                >{w.name}</button>
-                            ))}
-                        </div>
-                    </div>
-                </div>
+            <div className="min-h-screen flex items-center justify-center bg-slate-100">
+                <Loader2 className="w-12 h-12 text-emerald-500 animate-spin" />
             </div>
         );
     }
@@ -295,8 +256,8 @@ const InventoryApp = () => {
                         {/* 担当者は管理画面から開いているので、ここではログアウトさせない */}
                         {!isStaff && (
                             <button onClick={handleLogout}
-                                aria-label={isSharedWorker ? '名前の選択に戻る' : 'ログアウト'}
-                                title={isSharedWorker ? '名前の選択に戻る' : 'ログアウト'}
+                                aria-label="ログアウト"
+                                title="ログアウト"
                                 className="p-2 rounded-full hover:bg-emerald-600 transition">
                                 <LogOut size={18} />
                             </button>
