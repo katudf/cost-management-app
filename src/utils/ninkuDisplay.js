@@ -1,7 +1,21 @@
 import { roundNinku } from './workTimeUtils';
 
 /** 配置表・作業員画面の人工表示に添える説明（日報ベースへ切り替えたら文言も変える） */
-export const NINKU_SOURCE_NOTE = '消化人工は配置表の今日までの配置実績から算出（仮）。目標人工は配置表で現場ごとに入力';
+export const NINKU_SOURCE_NOTE = '消化人工は配置表の配置実績から算出（仮。作業日報は今日まで、配置表は基準日まで）。目標人工は配置表で現場ごとに入力';
+
+/**
+ * 人工の基準日の表示（配置表の人工列の見出し・Excel出力の見出し）。
+ * @param {string} dateStr 'YYYY-MM-DD'
+ * @param {string} [todayStr] 'YYYY-MM-DD'。年が違うときだけ年を付ける
+ * @returns {string} 例: '11/12時点'（年が今年と違うときは '2025/11/12時点'）
+ */
+export function formatNinkuAsOfLabel(dateStr, todayStr = '') {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr || ''));
+    if (!m) return '';
+    const md = `${Number(m[2])}/${Number(m[3])}`;
+    const sameYear = !todayStr || String(todayStr).slice(0, 4) === m[1];
+    return `${sameYear ? md : `${m[1]}/${md}`}時点`;
+}
 
 /**
  * 現場の「消化人工/目標人工」の表示文字列を作る。

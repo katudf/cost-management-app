@@ -16,7 +16,7 @@ import WorkerRow from '../assignment/WorkerRow';
 import ExportPeriodDialog from '../assignment/ExportPeriodDialog';
 import { isNonWorkingDay, getHolidayStyle } from '../../utils/holidayUtils';
 import { useProjectNinku, fetchProjectNinkuSummary } from '../../hooks/useProjectNinku';
-import { formatNinkuLabels, parseTargetNinkuInput, NINKU_SOURCE_NOTE } from '../../utils/ninkuDisplay';
+import { formatNinkuLabels, formatNinkuAsOfLabel, parseTargetNinkuInput, NINKU_SOURCE_NOTE } from '../../utils/ninkuDisplay';
 
 // メモ化した行コンポーネントに「変化なし」を安定した参照で伝えるための定数
 const EMPTY_ARRAY = [];
@@ -28,6 +28,8 @@ const WEEK_BORDER = '2px solid #64748B';
 // 左に固定する列の幅（現場名・人工）
 const NAME_COL_WIDTH = 140;
 const NINKU_COL_WIDTH = 64;
+// 人工の基準日の日付見出しに付ける印（下辺の橙線）
+const NINKU_AS_OF_MARK = 'inset 0 -4px 0 #F59E0B';
 
 const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTab, setActiveProjectId, setProjects, customers }) => {
     const { showToast } = useToast();
@@ -134,8 +136,35 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
     const handleNinkuLoadError = useCallback(() => {
         showToast('人工の集計を取得できませんでした（人工列は空欄になります）', 'error');
     }, [showToast]);
-    const { ninkuByProject, loadError: ninkuLoadError, updateTargetNinku } = useProjectNinku({
+    // 人工の基準日。日付見出し（上の日付行・「作業員名」の行）を押すとその日になる。null は今日（タブを開き直すと今日に戻る）
+    const [ninkuAsOf, setNinkuAsOf] = useState(null);
+    const ninkuAsOfStr = ninkuAsOf || todayStr;
+    const isNinkuAsOfToday = ninkuAsOfStr === todayStr;
+    const ninkuAsOfLabel = formatNinkuAsOfLabel(ninkuAsOfStr, todayStr);
+    const handleNinkuDatePick = useCallback((dateStr) => setNinkuAsOf(dateStr), []);
+    // 日付見出しのセルを、押すと基準日を切り替えるボタンにする（キーボードでも Enter/Space で切り替える）
+    const ninkuDateHeaderProps = (col) => {
+        const isAsOf = col.dateStr === ninkuAsOfStr;
+        const label = formatNinkuAsOfLabel(col.dateStr, todayStr);
+        return {
+            role: 'button',
+            tabIndex: 0,
+            'aria-pressed': isAsOf,
+            'aria-label': `${label}の人工を表示`,
+            title: isAsOf ? `人工の基準日（${label}）` : `クリックで${label}の人工を表示`,
+            onClick: () => handleNinkuDatePick(col.dateStr),
+            onKeyDown: (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleNinkuDatePick(col.dateStr);
+                }
+            }
+        };
+    };
+    const resetNinkuAsOf = useCallback(() => setNinkuAsOf(null), []);
+    const { ninkuByProject, loadError: ninkuLoadError, loadedAsOf: ninkuLoadedAsOf, updateTargetNinku } = useProjectNinku({
         projectIds: barProjectIds,
+        asOf: ninkuAsOfStr,
         refreshKey: assignmentEditCount,
         enabled: barProjectIds.length > 0,
         onError: handleNinkuLoadError
@@ -235,10 +264,10 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         setIsExporting(true);
         try {
             const lookup = await fetchAssignmentLookupForRange(startStr, endStr);
-            // 人工列は出力した時点の値を載せる。取れなければ空欄で出すことを知らせる
+            // 人工列は画面の基準日時点の値を出力時に取り直して載せる。取れなければ空欄で出すことを知らせる
             let exportNinkuLabels = {};
             try {
-                exportNinkuLabels = formatNinkuLabels(await fetchProjectNinkuSummary(barProjects.map(p => p.id)));
+                exportNinkuLabels = formatNinkuLabels(await fetchProjectNinkuSummary(barProjects.map(p => p.id), ninkuAsOfStr));
             } catch (ninkuErr) {
                 console.error('Excel出力用の人工集計の取得に失敗しました:', ninkuErr);
                 showToast('人工の集計を取得できなかったため、人工列は空欄で出力します', 'error');
@@ -255,7 +284,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                 return { startIdx, endIdx, span: endIdx - startIdx + 1 };
             };
             const label = `${s.getFullYear()}/${s.getMonth() + 1}/${s.getDate()} 〜 ${e.getFullYear()}/${e.getMonth() + 1}/${e.getDate()}`;
-            exportAssignmentChartToExcel(activeWorkers, cols, lookup, projectMap, barProjects, label, spanFn, exportNinkuLabels);
+            exportAssignmentChartToExcel(activeWorkers, cols, lookup, projectMap, barProjects, label, spanFn, exportNinkuLabels, `人工（${ninkuAsOfLabel}）`);
             setShowExportDialog(false);
         } catch (err) {
             console.error('配置表のExcel出力に失敗しました:', err);
@@ -378,20 +407,41 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                 className="sticky z-20 bg-slate-700 text-white text-xs font-bold p-1 border border-slate-600"
                                 style={{ left: `${nameColWidth}px` }}
                                 rowSpan={2}
-                                title={`消化人工/目標人工（セルをクリックで目標人工を入力）\n${NINKU_SOURCE_NOTE}${ninkuLoadError ? '\n※ 集計を取得できませんでした。空欄は未設定とは限りません' : ''}`}
+                                title={`${ninkuAsOfLabel}の消化人工/目標人工（セルをクリックで目標人工を入力）\n日付の見出しを押すと、その日時点の消化人工に切り替わります\n${NINKU_SOURCE_NOTE}${ninkuLoadError ? '\n※ 集計を取得できませんでした。空欄は未設定とは限りません' : ''}`}
                             >
-                                人工{ninkuLoadError && <span className="ml-0.5 text-amber-300" aria-label="集計を取得できませんでした">!</span>}
+                                <div>
+                                    人工{ninkuLoadError && <span className="ml-0.5 text-amber-300" aria-label="集計を取得できませんでした">!</span>}
+                                </div>
+                                <div
+                                    className={`text-[10px] whitespace-nowrap ${isNinkuAsOfToday ? 'font-normal text-slate-300' : 'font-bold text-amber-300'}`}
+                                    aria-live="polite"
+                                >
+                                    {ninkuAsOfLabel}{ninkuLoadedAsOf !== ninkuAsOfStr && <span aria-label="集計中">…</span>}
+                                </div>
+                                {!isNinkuAsOfToday && (
+                                    <button
+                                        type="button"
+                                        onClick={resetNinkuAsOf}
+                                        aria-label="人工を今日時点に戻す"
+                                        title="人工を今日時点に戻す"
+                                        className="mt-0.5 text-[10px] font-bold bg-white/15 hover:bg-white/30 rounded px-1 leading-4 whitespace-nowrap"
+                                    >
+                                        今日に戻す
+                                    </button>
+                                )}
                             </th>
                             {dateColumns.map((col, i) => {
                                 const info = dayHeaderInfo[i];
                                 return (
                                     <th
                                         key={i}
-                                        className="text-[10px] font-bold p-1 border border-slate-300 text-center"
+                                        className="text-[10px] font-bold p-1 border border-slate-300 text-center cursor-pointer hover:brightness-95"
+                                        {...ninkuDateHeaderProps(col)}
                                         style={{
                                             backgroundColor: info.isToday ? '#2563EB' : (info.bg || '#F8FAFC'),
                                             color: info.isToday ? 'white' : undefined,
-                                            ...(info.isWeekStart ? { borderLeft: WEEK_BORDER } : {})
+                                            ...(info.isWeekStart ? { borderLeft: WEEK_BORDER } : {}),
+                                            ...(col.dateStr === ninkuAsOfStr ? { boxShadow: NINKU_AS_OF_MARK } : {})
                                         }}
                                     >
                                         <div className="whitespace-nowrap" style={{ color: info.isToday ? 'white' : (info.color || undefined) }}>{col.label}</div>
@@ -488,11 +538,13 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                 return (
                                     <td
                                         key={i}
-                                        className="text-[10px] font-bold p-1 border border-slate-600 text-center whitespace-nowrap"
+                                        className="text-[10px] font-bold p-1 border border-slate-600 text-center whitespace-nowrap cursor-pointer hover:brightness-110"
+                                        {...ninkuDateHeaderProps(col)}
                                         style={{
                                             backgroundColor: info.isToday ? '#2563EB' : (info.bg || '#334155'),
                                             color: info.isToday ? 'white' : (info.color || 'white'),
-                                            ...(info.isWeekStart ? { borderLeft: WEEK_BORDER } : {})
+                                            ...(info.isWeekStart ? { borderLeft: WEEK_BORDER } : {}),
+                                            ...(col.dateStr === ninkuAsOfStr ? { boxShadow: NINKU_AS_OF_MARK } : {})
                                         }}
                                     >
                                         {col.label}

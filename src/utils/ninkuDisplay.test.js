@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatNinkuRatio, formatNinkuLabels, parseTargetNinkuInput, INVALID_NINKU_INPUT } from './ninkuDisplay';
+import { formatNinkuRatio, formatNinkuLabels, formatNinkuAsOfLabel, parseTargetNinkuInput, INVALID_NINKU_INPUT } from './ninkuDisplay';
 
 describe('formatNinkuRatio', () => {
     it('消化が整数なら整数で、目標は入力した整数で表示する', () => {
@@ -63,5 +63,23 @@ describe('formatNinkuLabels', () => {
             3: { consumedNinku: 0, targetNinku: null }
         })).toEqual({ 1: '12.5/400', 2: '3/－', 3: '' });
         expect(formatNinkuLabels(null)).toEqual({});
+    });
+});
+
+describe('formatNinkuAsOfLabel', () => {
+    it('月/日に「時点」を付ける（先頭の0は付けない）', () => {
+        expect(formatNinkuAsOfLabel('2026-11-09', '2026-11-10')).toBe('11/9時点');
+        expect(formatNinkuAsOfLabel('2026-01-05')).toBe('1/5時点');
+    });
+
+    it('今日と年が違うときは年も付ける', () => {
+        expect(formatNinkuAsOfLabel('2027-01-05', '2026-12-28')).toBe('2027/1/5時点');
+        expect(formatNinkuAsOfLabel('2025-12-28', '2026-01-05')).toBe('2025/12/28時点');
+    });
+
+    it('日付として読めなければ空文字', () => {
+        expect(formatNinkuAsOfLabel('')).toBe('');
+        expect(formatNinkuAsOfLabel(null)).toBe('');
+        expect(formatNinkuAsOfLabel('2026/11/09')).toBe('');
     });
 });

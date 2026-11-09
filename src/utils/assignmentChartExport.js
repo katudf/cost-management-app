@@ -10,10 +10,12 @@ import { SCHEDULE_TYPES } from './constants';
  * @param {Array} barProjects - バーチャート用プロジェクト配列
  * @param {string} periodLabel - 期間ラベル文字列
  * @param {Function} getBarSpan - プロジェクトのバー範囲を取得する関数
- * @param {Object} [ninkuLabelByProject] - projectId → 「消化人工/目標人工」の表示文字列（出力した日の時点）
+ * @param {Object} [ninkuLabelByProject] - projectId → 「消化人工/目標人工」の表示文字列（画面の基準日時点）
+ * @param {string} [ninkuHeader] - 人工列の見出し（例: '人工（11/12時点）'）
  */
 export const buildAssignmentChartSheet = (
-    workers, dateColumns, assignmentLookup, projectMap, barProjects, periodLabel, getBarSpan, ninkuLabelByProject = {}
+    workers, dateColumns, assignmentLookup, projectMap, barProjects, periodLabel, getBarSpan, ninkuLabelByProject = {},
+    ninkuHeader = '人工'
 ) => {
     const totalDays = dateColumns.length;
     // 列0: 現場名・作業員名 / 列1: 人工 / 列2〜: 日付
@@ -29,7 +31,7 @@ export const buildAssignmentChartSheet = (
     sheetData.push([]);
 
     // 行2: ===案件バーチャート ヘッダー===
-    const barHeader = ['現場名', '人工'];
+    const barHeader = ['現場名', ninkuHeader];
     dateColumns.forEach(col => {
         barHeader.push(`${col.label}(${col.dowLabel})`);
     });
@@ -109,7 +111,7 @@ export const buildAssignmentChartSheet = (
     ws['!merges'].push(...workerMerges);
 
     // 列幅
-    ws['!cols'] = [{ wch: 16 }, { wch: 9 }];
+    ws['!cols'] = [{ wch: 16 }, { wch: 16 }]; // 人工列は見出し「人工（11/12時点）」が収まる幅
     for (let i = 0; i < totalDays; i++) {
         ws['!cols'].push({ wch: 10 });
     }
