@@ -9,7 +9,13 @@
 //   assign_login_id … 移行用。メールでログインしていた担当者にIDを割り当てる（パスワードは任意）
 //   reset_password  … パスワードを管理者が決めた値に変える（対象者は全端末でログアウトされる）
 //   change_login_id … IDを変える
-//   delete          … 担当者の行と Auth ユーザーを削除する
+//   delete          … 担当者の行と Auth ユーザーを削除する（作業員にも紐付いたログインは残す）
+//
+// target: 'worker' のときは作業員のログイン（設計: docs/specs/worker-login.md §5）。workerId を受け取る。
+//   create / reset_password / change_login_id … 担当者と同じ
+//   link_staff_account … 担当者（office 以上・ログインIDあり）のログインを作業員にも紐付ける
+//   unlink / delete    … 紐付けを外す／作業員の行を消す（担当者と共有でなければ Auth ユーザーも消す）
+//   sync_ban           … 退職日に合わせて BAN / 解除する（事務も呼べる。BAN するかは DB の退職日で決める）
 //
 // ここは HTTP の受け口と呼び出し元の認証だけ。処理本体は handler.ts（Vitest でテストしている）。
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"

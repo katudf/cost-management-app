@@ -96,7 +96,8 @@ AdminApp
 │   ├── 作業員マスタ
 │   └── 資格情報
 ├── 配置表 (AssignmentChartTab)
-│   └── ガントチャート形式アサイン管理
+│   ├── ガントチャート形式アサイン管理
+│   └── 現場名の右に「人工」列（消化人工/目標人工。目標はセルをクリックして入力。下記「人工の表示」参照。Excel出力にも載る）
 ├── 日報 (DailyReportTab)
 │   └── 作業員提出日報の一覧（残業・作業手当の承認は作業員画面で職長が行う）
 ├── 見積 (EstimateList → EstimateForm)
@@ -118,13 +119,27 @@ AdminApp
 ### WorkerApp 機能
 
 - Supabase Auth によるログインID＋パスワードログイン（`LoginScreen`。移行期間中はメールアドレスも可。[`specs/login-id.md`](specs/login-id.md)）
-- プロジェクト選択（施工中のみ表示）
+- プロジェクト選択（施工中のみ表示）。選んだ現場の「消化人工 / 目標人工」を全員に表示する
 - 工種タスク別の作業時間・内容入力
 - 協力業者作業記録の追加
 - 残業・作業手当の申請（早出は申請不要）。承認は作業員画面で現場の職長が行う
 - 承認された残業・作業手当のお知らせ（本人が「確認した」を押すまで画面上部に表示。`lib/approvalNotices.js`）
 - 配置表（工程表）の参照
 - オフラインキャッシュ（`utils/offlineCache.js`）による通信断時の入力保持
+
+### 人工の表示（配置表・作業員画面）
+
+- 表示は「消化人工/目標人工」（`utils/ninkuDisplay.js` の `formatNinkuRatio`）。
+  - 消化人工は小数第1位まで（端数がなければ整数）。
+  - 目標人工は管理シート（工種の目標時間）とは**別管理**。配置表の人工セルをクリックしてその場で入力する（0以上の整数、空欄で未設定。Enter/フォーカス外しで保存、Escで取り消し）。`Projects.assignment_target_ninku` に保存し、更新できるのは管理者・事務だけ（Projects の RLS）。
+  - 目標未設定で消化があれば「12/－」、どちらも無ければ空欄。
+- 消化人工は本来は日報から求めるが、日報の運用開始までの仮の算出として、配置表（`Assignments`）の**今日（当日を含む）まで**の配置から求める（DB関数 `get_project_ninku_summary`、マイグレーション `20261109000000_project_ninku_summary.sql`）。
+  - 作業員区分に関係なく、現場に配置された人を数える。
+  - 1人が同じ日に複数の現場にいるときは現場数で均等に分ける（2現場なら 0.5 人工ずつ）。
+  - 有給などの予定（現場なし）は数えない。土日・祝日・休工日でも配置があれば数える。
+- 集計はバーに出す現場（作業員画面は選んだ1現場）に絞って取得する。配置の追加・削除・移動と他の人の編集（realtime）のときだけ取り直し、表示期間の移動では取り直さない。取得に失敗したらトーストで知らせ、配置表の見出しに「!」を付ける。Excel出力は出力時に取り直す。
+- 日報ベースに切り替えるときは、DB関数と `fetchProjectNinkuSummary` の中身だけを差し替える。
+- 認証なしの工程表閲覧（共有URL）には表示しない。
 
 ### InventoryApp 機能
 
@@ -370,6 +385,7 @@ AdminApp.jsx
 | `useAuth.jsx` | Supabase Auth セッション・ロール判定（`AuthProvider` / `useAuth()`） |
 | `useDashboardStats.js` | ダッシュボードの原価・利益集計 |
 | `useAssignmentState.js` | 配置表の編集状態管理 |
+| `useProjectNinku.js` | 現場ごとの消化人工・目標人工の取得（DB関数 `get_project_ninku_summary`）と目標人工の保存 |
 | `useWorkerAssignments.js` | 作業員別アサインの取得 |
 | `useInventory.js` | 在庫アイテム・倉庫の取得と入出庫 |
 
@@ -424,27 +440,58 @@ window.addEventListener('beforeunload', (e) => {
 
 ## 6. 主要ビジネスロジック
 
-### 人工（にんく）計算
+### 人工（にんく）・労働時間の計算
 
-`src/utils/workTimeUtils.js` にて計算。
+`src/utils/workTimeUtils.ts` にて計算。季節の判定は `getSeasonConfig(dateStr)` に集約している（人工の換算・労働時間の計算・作業員画面の定時表示はすべてここを使う）。
 
-- **1人工** = 8時間労働
-- **実人工数** = 合計作業時間 ÷ 8
+**季節区分**（`SEASON_RULES`。就業規則の変更ごとに先頭へ規則を足す）
+
+| 適用期間 | 夏季 | 冬季 |
+|---|---|---|
+| 2026-11-01 以降 | 3月〜11月 | 12月〜2月 |
+| 2026-10-31 以前 | 3月〜10月 | 11月〜2月 |
+
+- 規則が変わる前の日報を編集し直しても、当時の規則の季節で計算する。
+- 日付は `"YYYY-MM-DD"` の文字列から年月日を読む（タイムゾーンに依存しない）。日付が無い・読めないときは夏季。
+
+| 季節 | 定時 | 休憩 | 定時実働 |
+|---|---|---|---|
+| 夏季 | 08:00〜17:30 | 10:00〜10:30 / 12:00〜13:00 / 15:00〜15:30（計120分） | 7.5時間 |
+| 冬季 | 08:00〜17:00 | 10:00〜10:15 / 12:00〜13:00 / 15:00〜15:15（計90分） | 7.5時間 |
+
+- **1人工** = その日の季節の定時実働（夏季・冬季とも 7.5時間）
+- **人工数** = 実労働時間 ÷ 7.5（`calculateNinkuExact`）。複数の日報は丸めずに足してから小数第1位に丸める（`roundNinku`）
+- **実労働時間** = 終了 − 開始 − 勤務時間帯と重なる休憩
 - **時間外** = 早出（定時開始 08:00 より前）+ 残業（定時終了後。夏季 17:30・冬季 17:00。日をまたいだ分を含む）
 - **早出**は職長の承認不要。**残業**は職長の承認が必要（`OvertimeApprovals` に残業だけの時間で起票）
-- **人件費** = 実人工数 × 1日換算単価（人工単価 × 8）
+- 作業員は日ごとに休憩の長さを縮められる（`WorkerDailyBreakSettings`。休憩の時刻は動かさない）。日報を送るたびに保存され、保存が無い日はその季節の標準の長さを使う。
+  - 規則の変更で季節が変わった日（2026年11月）に旧規則の季節の標準の長さ（15分・60分・15分）が残っていれば、新しい季節の標準の長さに読み替える（`resolveSavedBreakDurations`）。
+- 保存済みの日報（`TaskRecords.hours` / `overtime_hours`）は保存時の値のまま。季節の規則を変えても自動では計算し直さず、作業員画面で編集して保存し直したときに計算し直す。
+- 早出（`TaskRecords.early_overtime_hours`）は DB のトリガーが開始・終了時刻と時間外の合計から求める（季節によらず 08:00 より前の分。マイグレーション `20261105040000_compute_early_overtime_in_db.sql`）。
+- **労務費の損益**は時間 × 人工単価（円/時間）で求める（`utils/projectUtils.js` の `calcPredictedProfitLoss`）。
 
 ### 原価集計（DashboardTab / useDashboardStats）
 
-```
-プロジェクト原価
-  = 労務費（作業員工数 × 人工単価 × 時間）
-  + 協力業者費（SubcontractorRecords.amount の合計）
-  + 購買費（PurchaseRecords.amount の合計）
+計算の本体は `src/utils/projectUtils.js` の `summarizeTaskCosts`（管理画面と作業員画面で共通）。金額は「目標時間との差 × 人工単価（円/時間。`system_settings` の基本設定）」で出す予測損益で、見積金額から原価を引く形ではない。
 
-純利益
-  = 見積金額 - プロジェクト原価（調整率適用後）
 ```
+工種ごと（ProjectTasks）
+  目標時間   = target_hours（工事設定で見積金額を入れると 見積金額 ÷ 人工単価 を丸めた値が入る）
+  実績時間   = その工種の日報（TaskRecords.hours）の合計
+  予測着地   = 実績時間 ÷ (進捗率 / 100)          … 進捗0%のときは 0
+  予測損益   = (目標時間 − 予測着地) × 人工単価    … 進捗0%のときは 0
+  工数差異   = 進捗率 − (実績時間 ÷ 目標時間 × 100) … −5 未満は危険、0 未満は注意
+
+現場全体
+  協力業者費 = Σ(SubcontractorRecords.worker_count × unit_price)
+  予測損益   = Σ工種の予測損益 − 協力業者費
+  全体進捗   = Σ(進捗率 × 目標時間) ÷ Σ目標時間
+```
+
+- 購買費（`PurchaseRecords`）は損益の計算に入れていない。
+- 見積金額（`ProjectTasks.estimated_amount`）は管理シートに表示するだけで、損益の計算には使わない。
+- 明細（工種・日報）をまだ読み込んでいない現場は、損益を 0 ではなく「未集計」と表示する（`predictedProfitLoss: null`）。
+- 人工の表示は、実績は日報ごとの日付の季節で換算して足し、目標は日付を持たないので夏季（7.5時間）で換算する。
 
 ### 見積書明細の行タイプ
 
@@ -493,7 +540,7 @@ window.addEventListener('beforeunload', (e) => {
 | Function | 役割 |
 |----------|------|
 | `gemini-optimize` | Gemini API のプロキシ（APIキーをサーバー側で秘匿） |
-| `manage-staff-login` | 担当者のログインID発行・割り当て・パスワードリセット・ID変更・削除（Service Role キー使用） |
+| `manage-staff-login` | 担当者・作業員（`target: 'worker'`）のログインID発行・割り当て・パスワードリセット・ID変更・削除、作業員の退職日に合わせた BAN（Service Role キー使用。作業員は [`specs/worker-login.md`](specs/worker-login.md)） |
 | `invite-staff` | 担当者の招待メール送信（移行期間のみ。画面からは呼ばない。フェーズ2で削除） |
 
 ### Google Generative AI (Gemini)
@@ -629,7 +676,7 @@ if (project.status === PROJECT_STATUS.IN_PROGRESS) { ... }
 
 - **影響範囲**: `useSupabaseData.js`（取得・成形）、`WorkerApp.jsx`（入力UI）、
   `DailyReportTab.jsx`（承認）、`DashboardTab.jsx` / `useDashboardStats.js`（原価集計）、
-  `workTimeUtils.js`（労働・残業時間の計算）
+  `workTimeUtils.ts`（労働・残業時間の計算）
 - **注意点**: カラム追加・削除時は計算ロジックまで追従させること。集計ズレは画面上で気づきにくい。
 
 ### 2. プロジェクトスキーマ（`Projects`）の変更

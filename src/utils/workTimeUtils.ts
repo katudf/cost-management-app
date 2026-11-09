@@ -74,21 +74,90 @@ const SEASON_CONFIGS: { summer: SeasonConfig; winter: SeasonConfig } = {
 const round2 = (value: number): number => Math.round(value * 100) / 100;
 
 // ============================================================
+// 季節の対象月（就業規則）
+// ============================================================
+
+export interface SeasonRule {
+    /** この規則を適用する最初の日 "YYYY-MM-DD"。null は最初の規則（期限なし） */
+    from: string | null;
+    /** 冬季の月（1-12）。それ以外の月は夏季 */
+    winterMonths: number[];
+}
+
+/**
+ * 就業規則の季節区分。新しい規則を先頭に置く。
+ * 規則が変わる前の日報を編集し直しても、当時の季節で計算されるように古い規則も残す。
+ */
+export const SEASON_RULES: SeasonRule[] = [
+    { from: '2026-11-01', winterMonths: [12, 1, 2] },
+    { from: null, winterMonths: [11, 12, 1, 2] },
+];
+
+/** "YYYY-MM-DD"（後ろに時刻が付いていてもよい）を年月日に分ける。タイムゾーンに依存しないよう文字列から読む */
+const parseDateParts = (dateStr: string): { ymd: string; month: number } | null => {
+    const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr);
+    if (match) return { ymd: match[0], month: Number(match[2]) };
+    const date = new Date(dateStr);
+    if (Number.isNaN(date.getTime())) return null;
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const month = date.getMonth() + 1;
+    return { ymd: `${date.getFullYear()}-${pad(month)}-${pad(date.getDate())}`, month };
+};
+
+const findSeasonRule = (ymd: string): SeasonRule =>
+    SEASON_RULES.find(rule => rule.from === null || rule.from <= ymd) as SeasonRule;
+
+const seasonOf = (rule: SeasonRule, month: number): SeasonConfig =>
+    rule.winterMonths.includes(month) ? SEASON_CONFIGS.winter : SEASON_CONFIGS.summer;
+
+// ============================================================
 // getSeasonConfig: 日付から夏季/冬季の設定を取得
 // ============================================================
 
 /**
  * @param {string} dateStr - "YYYY-MM-DD"
- * @returns {SeasonConfig} シーズン設定
+ * @returns {SeasonConfig} シーズン設定（日付が無い・読めないときは夏季）
  */
 export const getSeasonConfig = (dateStr: string | null | undefined): SeasonConfig => {
-    if (!dateStr) return SEASON_CONFIGS.summer;
-    const month = new Date(dateStr).getMonth() + 1; // 1-12
-    // 夏季: 3月〜10月, 冬季: 11月〜2月
-    if (month >= 3 && month <= 10) {
-        return SEASON_CONFIGS.summer;
+    const parts = dateStr ? parseDateParts(dateStr) : null;
+    if (!parts) return SEASON_CONFIGS.summer;
+    return seasonOf(findSeasonRule(parts.ymd), parts.month);
+};
+
+/** その日の季節の標準の休憩の長さ（分）。休憩設定を保存していない日に使う */
+export const getStandardBreakDurations = (dateStr: string | null | undefined): number[] =>
+    getSeasonConfig(dateStr).breaks.map(brk => brk.e - brk.s);
+
+/**
+ * 保存済みの休憩の長さを、その日の季節に合わせて読み直す。
+ *
+ * 休憩の長さは日報を送るたびに保存される。就業規則が変わって季節が入れ替わった日
+ * （2026年11月: 冬季 → 夏季）には、旧規則の季節の標準値がそのまま保存されている。
+ * それを新しい季節の休憩時刻に当てると、夏季の終業 17:30 に冬季の短い休憩が混ざるので、
+ * 「旧規則の季節の標準値と同じ値」は新しい季節の標準値に読み替える。
+ * 配列でない・休憩の数が合わない値も標準値にする。
+ */
+export const resolveSavedBreakDurations = (
+    saved: unknown,
+    dateStr: string | null | undefined
+): number[] => {
+    const standard = getStandardBreakDurations(dateStr);
+    if (!Array.isArray(saved) || saved.length !== standard.length) return standard;
+    const durations = saved.map(value => Number(value));
+    if (durations.some(value => !Number.isFinite(value))) return standard;
+    const parts = dateStr ? parseDateParts(dateStr) : null;
+    if (parts) {
+        const ruleIndex = SEASON_RULES.indexOf(findSeasonRule(parts.ymd));
+        const previousRule = SEASON_RULES[ruleIndex + 1];
+        if (previousRule) {
+            const previousSeason = seasonOf(previousRule, parts.month);
+            if (previousSeason !== getSeasonConfig(dateStr)) {
+                const previousStandard = previousSeason.breaks.map(brk => brk.e - brk.s);
+                if (previousStandard.every((value, i) => value === durations[i])) return standard;
+            }
+        }
     }
-    return SEASON_CONFIGS.winter;
+    return durations;
 };
 
 // ============================================================

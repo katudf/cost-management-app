@@ -14,7 +14,7 @@ import HomeLanding from './components/HomeLanding';
 import logoUrl from './img/kimura-logo.svg';
 import { Clipboard, BarChart3, Settings, Home, TrendingDown, TrendingUp, DollarSign, FolderGit2, PlusCircle, Loader2, User, Users, FileText, Calendar, Search, GripVertical, LogOut, Bell, Database, Upload, HelpCircle } from 'lucide-react';
 import { buildWeekDays, buildWeekPrefix, fetchWeeklyReportData } from './hooks/useWeeklyReportData';
-import { DEFAULT_MASTER_DATA, PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR, ITEM_TYPE, DASHBOARD_VIEW_MODE, DASHBOARD_VIEW_MODE_LIST, ESTIMATE_STATUS, isSystemAdminRole, canUseAdminApp } from './utils/constants';
+import { DEFAULT_MASTER_DATA, PROJECT_STATUS, PROJECT_STATUS_LIST, PROJECT_STATUS_COLOR, ITEM_TYPE, DASHBOARD_VIEW_MODE, DASHBOARD_VIEW_MODE_LIST, ESTIMATE_STATUS, isSystemAdminRole, isAdminRole, canUseAdminApp } from './utils/constants';
 import { calculateAge } from './utils/dateUtils';
 import { formatProfitLoss } from './utils/projectUtils';
 import { exportToExcel, generateWorkerReportExcel, generateMultipleWorkersReportExcel } from './utils/excelExportUtils';
@@ -50,7 +50,7 @@ const ImportExcelButton = ({ onClick, className, iconSize = 18 }) => (
 
 const App = () => {
     const { showToast } = useToast();
-    const { isAuthenticated, isLoading: isAuthLoading, currentStaff, signOut, isPasswordRecovery } = useAuth();
+    const { isAuthenticated, isLoading: isAuthLoading, currentStaff, currentWorker, signOut, isPasswordRecovery } = useAuth();
     // 作業員・閲覧者のアカウント（同一オリジンでセッション共有）で管理者画面に入れないようにする
     const hasAdminAccess = isAuthenticated && canUseAdminApp(currentStaff?.role);
     const [activeTab, setActiveTab] = useState('dashboard');
@@ -499,7 +499,7 @@ const App = () => {
     }
 
     if (!hasAdminAccess) {
-        return <NoPermissionScreen currentStaff={currentStaff} onSignOut={signOut} />;
+        return <NoPermissionScreen currentStaff={currentStaff} currentWorker={currentWorker} onSignOut={signOut} />;
     }
 
     if (isLoading && projects.length === 0) {
@@ -927,6 +927,9 @@ const App = () => {
                             handleWorkerReorder={workerOps.handleWorkerReorder}
                             openEditWorkerModal={workerOps.openEditWorkerModal}
                             removeWorker={workerOps.removeWorker}
+                            canManageLogins={isAdminRole(currentStaff?.role)}
+                            isSystemAdmin={isSystemAdminRole(currentStaff?.role)}
+                            markWorkerLoginLinked={workerOps.markWorkerLoginLinked}
                             toggleWorkerAssignmentVisibility={workerOps.toggleWorkerAssignmentVisibility}
                             showToast={showToast}
                         />

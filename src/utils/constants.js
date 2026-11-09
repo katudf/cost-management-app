@@ -100,6 +100,26 @@ export const isDisplayableStaff = (staff) => staff?.role !== STAFF_ROLE.SYSTEM_A
 // システム管理者のみ（パスワード変更履歴の閲覧など）。DBの RLS ポリシーと一致させること。
 export const isSystemAdminRole = (role) => role === STAFF_ROLE.SYSTEM_ADMIN;
 
+// === ログインの区分（作業日報・在庫アプリの分岐。docs/specs/worker-login.md §4.1）===
+export const SESSION_KIND = {
+    STAFF: 'staff',                     // 担当者（事務以上）。作業員アプリでは代理モード
+    SHARED_WORKER: 'shared_worker',     // 作業員の共有アカウント（移行期間）。名前を選ぶ
+    PERSONAL_WORKER: 'personal_worker', // 作業員の個人アカウント。本人に固定
+    OTHER: 'other',                     // それ以外（閲覧用の共有アカウント・退職者・どこにも紐付かない）
+    UNKNOWN: 'unknown',                 // 初めてのオフライン起動で、まだ誰か分からない。名前を選んで入力でき、通信が戻ったら判定し直す
+};
+// currentStaff（office_staff の行）と currentWorker（get_my_worker）から区分を決める。
+// 担当者の行があれば担当者を優先する（担当者兼作業員は STAFF。DB の current_staff_role() と同じ）。
+export const getSessionKind = (currentStaff, currentWorker, isIdentityUnknown = false) => {
+    if (isIdentityUnknown) return SESSION_KIND.UNKNOWN;
+    if (currentStaff) {
+        if (canUseAdminApp(currentStaff.role)) return SESSION_KIND.STAFF;
+        if (currentStaff.role === STAFF_ROLE.WORKER) return SESSION_KIND.SHARED_WORKER;
+        return SESSION_KIND.OTHER;
+    }
+    return currentWorker ? SESSION_KIND.PERSONAL_WORKER : SESSION_KIND.OTHER;
+};
+
 // === パスワード変更履歴の種別（password_change_logs.kind）===
 // DB の CHECK 制約・log_password_change の検証と一致させること。
 export const PASSWORD_CHANGE_KIND = {

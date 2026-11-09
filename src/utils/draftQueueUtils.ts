@@ -26,6 +26,11 @@ export interface DraftLike {
      * 2026-11 より前に保存された下書きには無い。
      */
     workerName?: string;
+    /**
+     * 下書きを書いた作業員の ID（docs/specs/worker-login.md §4.2）。名前の変更や同名の別人で
+     * 持ち主を取り違えないよう、絞り込みはこれを優先する。2026-11-07 より前に保存された下書きには無い。
+     */
+    workerId?: string | number | null;
     /** 入力中の自動保存で積まれたものだけ true */
     isAutoSaved?: boolean;
     [key: string]: unknown;
@@ -48,39 +53,66 @@ export interface DraftLike {
 export const draftKey = (
     projectId: string | number | null | undefined,
     date: string | null | undefined,
-    workerName?: string | null
-): string => `${String(projectId)}__${String(date)}${workerName ? `__${workerName}` : ''}`;
+    workerName?: string | null,
+    workerId?: string | number | null
+): string => {
+    // 作業員 ID があれば ID で持ち主を表す（同じ名前の別人の下書きを上書きしない。docs/specs/worker-login.md §4.2）
+    if (hasId(workerId)) return `${String(projectId)}__${String(date)}__#${String(workerId)}`;
+    return `${String(projectId)}__${String(date)}${workerName ? `__${workerName}` : ''}`;
+};
+
+const hasId = (id: unknown): boolean => id != null && id !== '';
 
 /** 下書き1件からキューの同一性キーを作る。 */
 export const draftKeyOf = (draft: DraftLike): string =>
-    draftKey(draft?.selectedProjectId, draft?.selectedDate, draft?.workerName);
+    draftKey(draft?.selectedProjectId, draft?.selectedDate, draft?.workerName, draft?.workerId);
+
+/**
+ * 下書きがこの作業員のものか。下書きと呼び出し側の両方に ID があれば ID で、なければ名前で比べる
+ * （ID の無い古い下書きは名前で。名前も無い下書き同士は同じ持ち主とみなす）。
+ */
+export const isWorkerDraft = (
+    draft: DraftLike,
+    workerName: string | null | undefined,
+    workerId?: string | number | null
+): boolean => {
+    if (hasId(draft?.workerId) && hasId(workerId)) return String(draft.workerId) === String(workerId);
+    return (draft?.workerName || '') === (workerName || '');
+};
 
 /** 下書きが指定の 作業員+現場+日付 のものか。 */
 export const isSameDraftTarget = (
     draft: DraftLike,
     projectId: string | number | null | undefined,
     date: string | null | undefined,
-    workerName?: string | null
-): boolean => draftKeyOf(draft) === draftKey(projectId, date, workerName);
+    workerName?: string | null,
+    workerId?: string | number | null
+): boolean => String(draft?.selectedProjectId) === String(projectId)
+    && String(draft?.selectedDate) === String(date)
+    && isWorkerDraft(draft, workerName, workerId);
 
 /**
  * 指定の作業員が書いた下書きだけに絞る。
  * 作業員名を持たない古い下書きは、誰のものか判別できないため誰にも見せない
  * （他人の日報として復元・送信される事故を防ぐ）。
+ * ID を持つ下書きは ID で比べる（名前を変えても自分の下書きが見え、同名の別人の下書きは見えない）。
  */
 export const selectWorkerDrafts = <T extends DraftLike>(
     queue: T[],
-    workerName: string | null | undefined
-): T[] => (workerName ? (queue || []).filter(d => d.workerName === workerName) : []);
+    workerName: string | null | undefined,
+    workerId?: string | number | null
+): T[] => (workerName || hasId(workerId)
+    ? (queue || []).filter(d => (d.workerName || hasId(d.workerId)) && isWorkerDraft(d, workerName, workerId))
+    : []);
 
 /**
- * キューに下書きを追加、または同一 現場+日付 のものを上書きする純粋関数。
+ * キューに下書きを追加、または同一 作業員+現場+日付 のものを上書きする純粋関数。
  * 元の配列は破壊しない。上書き時も**位置は元のまま**（通知の並びが飛ばないように）。
+ * ID の無い古い同じ人の下書き（名前が一致）も、ID 付きの新しい下書きで上書きする。
  */
 export const upsertIntoQueue = <T extends DraftLike>(queue: T[], entry: T): T[] => {
-    const key = draftKeyOf(entry);
     const list = queue || [];
-    const idx = list.findIndex(d => draftKeyOf(d) === key);
+    const idx = list.findIndex(d => isSameDraftTarget(d, entry?.selectedProjectId, entry?.selectedDate, entry?.workerName, entry?.workerId));
     if (idx < 0) return [...list, entry];
     const next = [...list];
     next[idx] = entry;
@@ -92,11 +124,9 @@ export const removeFromQueue = <T extends DraftLike>(
     queue: T[],
     projectId: string | number | null | undefined,
     date: string | null | undefined,
-    workerName?: string | null
-): T[] => {
-    const key = draftKey(projectId, date, workerName);
-    return (queue || []).filter(d => draftKeyOf(d) !== key);
-};
+    workerName?: string | null,
+    workerId?: string | number | null
+): T[] => (queue || []).filter(d => !isSameDraftTarget(d, projectId, date, workerName, workerId));
 
 /**
  * ユーザーに「未送信があります」と通知すべき下書きだけに絞る。
@@ -110,8 +140,6 @@ export const selectNotifiableDrafts = <T extends DraftLike>(
     queue: T[],
     selectedProjectId: string | number | null | undefined,
     selectedDate: string | null | undefined,
-    workerName?: string | null
-): T[] => {
-    const currentKey = draftKey(selectedProjectId, selectedDate, workerName);
-    return (queue || []).filter(d => !d.isAutoSaved || draftKeyOf(d) !== currentKey);
-};
+    workerName?: string | null,
+    workerId?: string | number | null
+): T[] => (queue || []).filter(d => !d.isAutoSaved || !isSameDraftTarget(d, selectedProjectId, selectedDate, workerName, workerId));

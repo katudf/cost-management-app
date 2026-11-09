@@ -78,29 +78,25 @@ export type RequestMeta = { userAgent: string | null; ipAddress: string | null; 
 
 type StaffRow = { id: number; name: string; role: string; auth_user_id: string | null }
 
-const assertCanManage = async (admin: AdminClient, callerId: string, staffId: number) => {
-  const { data, error } = await admin.rpc('assert_can_manage_staff_login', {
-    p_caller: callerId,
-    p_staff_id: staffId,
-    p_lock: false,
-  })
+// 権限確認の RPC を呼び、対象の行を返す（担当者: assert_can_manage_staff_login、作業員: assert_can_manage_worker_login など）
+const assertVia = async <T>(admin: AdminClient, fn: string, args: Record<string, unknown>) => {
+  const { data, error } = await admin.rpc(fn, { ...args, p_lock: false })
   if (error) throw rpcError(error)
-  return data as StaffRow
+  return data as T
 }
+
+const assertCanManage = (admin: AdminClient, callerId: string, staffId: number) =>
+  assertVia<StaffRow>(admin, 'assert_can_manage_staff_login', { p_caller: callerId, p_staff_id: staffId })
 
 /**
  * Auth を書き換えたあとに、権限をもう一度確かめる。確認から書き換えまでの間に対象の役割が変わった
  * （例: 事務が管理者に昇格した）場合に、業務管理者が管理者のログインを書き換えたままにしないため。
- * 失敗したら undo で Auth の変更を戻し、403 を返す。
+ * 失敗したら undo で Auth の変更を戻し、403 を返す。担当者・作業員で共通（fn に権限確認の RPC を渡す）。
  */
 const recheckOrUndo = async (
-  admin: AdminClient, callerId: string, staffId: number, undo: () => Promise<void>,
+  admin: AdminClient, fn: string, args: Record<string, unknown>, undo: () => Promise<void>,
 ) => {
-  const { error } = await admin.rpc('assert_can_manage_staff_login', {
-    p_caller: callerId,
-    p_staff_id: staffId,
-    p_lock: false,
-  })
+  const { error } = await admin.rpc(fn, { ...args, p_lock: false })
   if (!error) return
   try {
     await undo()
@@ -121,7 +117,32 @@ const logAdminPasswordReset = async (admin: AdminClient, meta: RequestMeta, call
   return error
 }
 
+/** body.target が 'worker' なら作業員（docs/specs/worker-login.md §5）、それ以外は担当者 */
 export async function handleAction(
+  admin: AdminClient,
+  callerId: string,
+  body: Record<string, unknown>,
+  meta: RequestMeta,
+): Promise<Record<string, unknown>> {
+  if (body?.target === 'worker') return handleWorkerAction(admin, callerId, body, meta)
+  return handleStaffAction(admin, callerId, body, meta)
+}
+
+// その Auth ユーザーが作業員にも紐付いているか（担当者兼作業員。worker-login.md 決定 #7）
+const linkedWorkerId = async (admin: AdminClient, authUserId: string) => {
+  const { data, error } = await admin.rpc('worker_id_for_auth_user', { p_auth_user_id: authUserId })
+  if (error) throw rpcError(error)
+  return (data as number | null) ?? null
+}
+
+// その Auth ユーザーが担当者にも紐付いているか
+const linkedStaffId = async (admin: AdminClient, authUserId: string) => {
+  const { data, error } = await admin.rpc('staff_id_for_auth_user', { p_auth_user_id: authUserId })
+  if (error) throw rpcError(error)
+  return (data as number | null) ?? null
+}
+
+async function handleStaffAction(
   admin: AdminClient,
   callerId: string,
   body: Record<string, unknown>,
@@ -186,7 +207,7 @@ export async function handleAction(
         email_confirm: true,
       })
       if (updateError) throw authError(updateError)
-      await recheckOrUndo(admin, callerId, staffId, async () => {
+      await recheckOrUndo(admin, 'assert_can_manage_staff_login', { p_caller: callerId, p_staff_id: staffId }, async () => {
         await admin.auth.admin.updateUserById(authUserId, { email: previousEmail, email_confirm: true })
       })
 
@@ -241,7 +262,7 @@ export async function handleAction(
         email_confirm: true,
       })
       if (updateError) throw authError(updateError)
-      await recheckOrUndo(admin, callerId, staffId, async () => {
+      await recheckOrUndo(admin, 'assert_can_manage_staff_login', { p_caller: callerId, p_staff_id: staffId }, async () => {
         await admin.auth.admin.updateUserById(authUserId, { email: previousEmail, email_confirm: true })
       })
       return { success: true, loginId }
@@ -251,6 +272,16 @@ export async function handleAction(
       const authUserId = target.auth_user_id
       // 自分自身は削除できない（RPC でも弾くが、その前に自分を BAN しないよう先に止める）
       if (authUserId && authUserId === callerId) throw new HttpError(403, "自分自身は削除できません。")
+      // 作業員にも紐付いたログイン（担当者兼作業員）は、作業員として使い続けるので止めも消しもしない。
+      // 担当者の行だけを消す（Auth を消すと作業員側のログインが黙って外れるため）。
+      if (authUserId && await linkedWorkerId(admin, authUserId)) {
+        const { error: deleteError } = await admin.rpc('delete_staff_with_login', {
+          p_caller: callerId,
+          p_staff_id: staffId,
+        })
+        if (deleteError) throw rpcError(deleteError)
+        return { success: true, keptWorkerLogin: true }
+      }
       // 先にログインを止める（BAN）。行を消したあとで Auth ユーザーの削除に失敗しても、
       // 担当者のいないログインが使える状態で残らないようにする。
       if (authUserId) {
@@ -280,6 +311,176 @@ export async function handleAction(
         }
       }
       return { success: true }
+    }
+
+    default:
+      throw new HttpError(400, "action が正しくありません。")
+  }
+}
+
+// ======================================================================
+// 作業員のログイン（docs/specs/worker-login.md §5）
+// ======================================================================
+
+type WorkerRow = { id: number; name: string; auth_user_id: string | null }
+
+const assertCanManageWorker = (admin: AdminClient, callerId: string, workerId: number) =>
+  assertVia<WorkerRow>(admin, 'assert_can_manage_worker_login', { p_caller: callerId, p_worker_id: workerId })
+
+const ban = async (admin: AdminClient, authUserId: string) => {
+  const { error } = await admin.auth.admin.updateUserById(authUserId, { ban_duration: BAN_FOREVER })
+  if (error) throw authError(error)
+}
+
+const unbanQuietly = async (admin: AdminClient, authUserId: string) => {
+  const { error } = await admin.auth.admin.updateUserById(authUserId, { ban_duration: 'none' })
+  if (error) console.error("unban failed:", error)
+}
+
+async function handleWorkerAction(
+  admin: AdminClient,
+  callerId: string,
+  body: Record<string, unknown>,
+  meta: RequestMeta,
+): Promise<Record<string, unknown>> {
+  const action = body?.action
+  const workerId = Number(body?.workerId)
+  if (!Number.isInteger(workerId) || workerId <= 0) throw new HttpError(400, "workerId が正しくありません。")
+
+  // 退職日に合わせた BAN は事務も呼べる（退職日は事務も保存できるため）。権限の確認は RPC の中。
+  // BAN するかどうかは呼び出し元から受け取らず、DB の退職日だけで決める。
+  if (action === 'sync_ban') {
+    const { data, error } = await admin.rpc('worker_ban_state', { p_caller: callerId, p_worker_id: workerId })
+    if (error) throw rpcError(error)
+    const state = (Array.isArray(data) ? data[0] : data) as
+      { auth_user_id: string | null; should_ban: boolean; shared: boolean } | undefined
+    // ログインが無い・担当者と共有（担当者としては使い続ける）なら何もしない
+    if (!state?.auth_user_id || state.shared) return { success: true, banned: null }
+    const { error: banError } = await admin.auth.admin.updateUserById(state.auth_user_id, {
+      ban_duration: state.should_ban ? BAN_FOREVER : 'none',
+    })
+    if (banError) throw authError(banError)
+    return { success: true, banned: state.should_ban }
+  }
+
+  // 作業員の削除は事務もできる（作業員マスタの削除と同じ）。それ以外の操作は管理者だけ
+  const target = action === 'delete'
+    ? await assertVia<WorkerRow>(admin, 'assert_can_delete_worker', { p_caller: callerId, p_worker_id: workerId })
+    : await assertCanManageWorker(admin, callerId, workerId)
+
+  switch (action) {
+    case 'create': {
+      if (target.auth_user_id) throw new HttpError(409, "この作業員には既にログインがあります。")
+      const loginId = parseLoginId(body.loginId)
+      const password = parsePassword(body.password)
+
+      const { data: created, error: createError } = await admin.auth.admin.createUser({
+        email: loginIdToEmail(loginId),
+        password,
+        email_confirm: true,
+        app_metadata: { worker_id: workerId },
+      })
+      if (createError || !created?.user) throw authError(createError)
+
+      const { error: linkError } = await admin.rpc('link_worker_login', {
+        p_caller: callerId,
+        p_worker_id: workerId,
+        p_auth_user_id: created.user.id,
+      })
+      if (linkError) {
+        const { error: rollbackError } = await admin.auth.admin.deleteUser(created.user.id)
+        if (rollbackError) console.error("rollback deleteUser failed:", rollbackError)
+        throw rpcError(linkError)
+      }
+      return { success: true, loginId }
+    }
+
+    case 'link_staff_account': {
+      const staffId = Number(body?.staffId)
+      if (!Number.isInteger(staffId) || staffId <= 0) throw new HttpError(400, "staffId が正しくありません。")
+      // 対象の担当者の制限（office 以上・ログインIDあり・未紐付け）は RPC の中で確かめる
+      const { error } = await admin.rpc('link_worker_to_staff_login', {
+        p_caller: callerId,
+        p_worker_id: workerId,
+        p_staff_id: staffId,
+      })
+      if (error) throw rpcError(error)
+      return { success: true }
+    }
+
+    case 'reset_password': {
+      if (!target.auth_user_id) throw new HttpError(400, "この作業員にはログインがありません。")
+      const password = parsePassword(body.password)
+
+      const { error: updateError } = await admin.auth.admin.updateUserById(target.auth_user_id, { password })
+      if (updateError) throw authError(updateError)
+
+      const { error: logError } = await admin.rpc('log_admin_worker_password_reset', {
+        p_caller: callerId,
+        p_worker_id: workerId,
+        p_user_agent: meta.userAgent,
+        p_ip_address: meta.ipAddress,
+        p_forwarded_for: meta.forwardedFor,
+      })
+      if (logError?.code === '42501') {
+        console.error("permission changed during worker reset_password:", logError)
+        throw new HttpError(403,
+          "操作中に対象の権限が変わりました。パスワードは変更されています。システム管理者がもう一度リセットしてください。")
+      }
+      if (logError) console.error("log_admin_worker_password_reset failed:", logError)
+      return { success: true, logged: !logError }
+    }
+
+    case 'change_login_id': {
+      if (!target.auth_user_id) throw new HttpError(400, "この作業員にはログインがありません。")
+      const authUserId = target.auth_user_id
+      const loginId = parseLoginId(body.loginId)
+
+      const { data: current, error: getError } = await admin.auth.admin.getUserById(authUserId)
+      if (getError || !current?.user) throw authError(getError)
+      const previousEmail = current.user.email
+
+      const { error: updateError } = await admin.auth.admin.updateUserById(authUserId, {
+        email: loginIdToEmail(loginId),
+        email_confirm: true,
+      })
+      if (updateError) throw authError(updateError)
+      await recheckOrUndo(admin, 'assert_can_manage_worker_login', { p_caller: callerId, p_worker_id: workerId }, async () => {
+        await admin.auth.admin.updateUserById(authUserId, { email: previousEmail, email_confirm: true })
+      })
+      return { success: true, loginId }
+    }
+
+    case 'unlink':
+    case 'delete': {
+      const authUserId = target.auth_user_id
+      if (action === 'unlink' && !authUserId) throw new HttpError(400, "この作業員にはログインがありません。")
+      if (authUserId && authUserId === callerId) {
+        throw new HttpError(403, action === 'delete' ? "自分自身は削除できません。" : "自分自身のログインは外せません。")
+      }
+      // 担当者と共有のログインは、担当者として使い続けるので止めも消しもしない（紐付けだけ外れる）
+      const shared = authUserId ? (await linkedStaffId(admin, authUserId)) !== null : false
+      // 先にログインを止める（行の更新・削除のあとで Auth の削除に失敗しても、使えるログインを残さない）
+      if (authUserId && !shared) await ban(admin, authUserId)
+
+      const { error: rpcErr } = await admin.rpc(action === 'delete' ? 'delete_worker_with_login' : 'unlink_worker_login', {
+        p_caller: callerId,
+        p_worker_id: workerId,
+      })
+      if (rpcErr) {
+        if (authUserId && !shared) await unbanQuietly(admin, authUserId)
+        throw rpcError(rpcErr)
+      }
+
+      if (authUserId && !shared) {
+        const { error: authDeleteError } = await admin.auth.admin.deleteUser(authUserId)
+        if (authDeleteError) {
+          console.error("deleteUser failed after worker unlink/delete:", authDeleteError)
+          throw new HttpError(500,
+            "ログインは停止しましたが、ログインの削除に失敗しました。Supabase の管理画面（Authentication → Users）で該当ユーザーを削除してください。")
+        }
+      }
+      return { success: true, keptStaffLogin: shared }
     }
 
     default:

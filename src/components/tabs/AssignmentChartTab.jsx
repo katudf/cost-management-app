@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback, useState, useRef } from 'react';
+import React, { useMemo, useCallback, useState, useRef, useEffect } from 'react';
 import { Calendar, ChevronLeft, ChevronRight, Download, Undo2 } from 'lucide-react';
 import { exportAssignmentChartToExcel } from '../../utils/assignmentChartExport';
 import { addDays, toDateStr, buildDateColumns } from '../../utils/dateUtils';
@@ -15,6 +15,8 @@ import ProjectBarRow from '../assignment/ProjectBarRow';
 import WorkerRow from '../assignment/WorkerRow';
 import ExportPeriodDialog from '../assignment/ExportPeriodDialog';
 import { isNonWorkingDay, getHolidayStyle } from '../../utils/holidayUtils';
+import { useProjectNinku, fetchProjectNinkuSummary } from '../../hooks/useProjectNinku';
+import { formatNinkuLabels, parseTargetNinkuInput, NINKU_SOURCE_NOTE } from '../../utils/ninkuDisplay';
 
 // メモ化した行コンポーネントに「変化なし」を安定した参照で伝えるための定数
 const EMPTY_ARRAY = [];
@@ -23,6 +25,9 @@ const EMPTY_OBJECT = {};
 const MAX_EXPORT_DAYS = 366;
 const DAY_MS = 1000 * 60 * 60 * 24;
 const WEEK_BORDER = '2px solid #64748B';
+// 左に固定する列の幅（現場名・人工）
+const NAME_COL_WIDTH = 140;
+const NINKU_COL_WIDTH = 64;
 
 const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTab, setActiveProjectId, setProjects, customers }) => {
     const { showToast } = useToast();
@@ -110,6 +115,74 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         return { bg, color, isToday, isWeekStart };
     }), [dateColumns, holidayMap, todayStr]);
 
+    // 配置そのものが変わったとき（追加・削除・移動、他の人の編集の realtime 反映）だけ数を進める。
+    // 表示期間の移動で配置を読み直しただけのときは、今日までの合計は変わらないので取り直さない。
+    const periodKey = toDateStr(startDate);
+    const [assignmentEditCount, setAssignmentEditCount] = useState(0);
+    const lastPeriodKeyRef = useRef(null);
+    useEffect(() => {
+        if (isLoading) return;
+        if (lastPeriodKeyRef.current !== periodKey) {
+            lastPeriodKeyRef.current = periodKey;
+            return;
+        }
+        setAssignmentEditCount(c => c + 1);
+    }, [assignments, isLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // 現場ごとの「消化人工/目標人工」。集計はバーに出す現場だけに絞る
+    const barProjectIds = useMemo(() => barProjects.map(p => p.id), [barProjects]);
+    const handleNinkuLoadError = useCallback(() => {
+        showToast('人工の集計を取得できませんでした（人工列は空欄になります）', 'error');
+    }, [showToast]);
+    const { ninkuByProject, loadError: ninkuLoadError, updateTargetNinku } = useProjectNinku({
+        projectIds: barProjectIds,
+        refreshKey: assignmentEditCount,
+        enabled: barProjectIds.length > 0,
+        onError: handleNinkuLoadError
+    });
+    const ninkuLabelByProject = useMemo(() => formatNinkuLabels(ninkuByProject), [ninkuByProject]);
+
+    // 目標人工のその場入力（人工セルをクリック → Enter/フォーカス外しで保存、Escで取り消し）
+    const [editingNinkuProjectId, setEditingNinkuProjectId] = useState(null);
+    const ninkuByProjectRef = useRef(ninkuByProject);
+    ninkuByProjectRef.current = ninkuByProject;
+    const handleStartNinkuEdit = useCallback((projectId) => setEditingNinkuProjectId(projectId), []);
+    const handleCancelNinkuEdit = useCallback(() => setEditingNinkuProjectId(null), []);
+    const handleSaveNinku = useCallback(async (projectId, input) => {
+        setEditingNinkuProjectId(null);
+        const value = parseTargetNinkuInput(input);
+        if (value === undefined) {
+            showToast('目標人工は0以上の整数で入力してください', 'error');
+            return;
+        }
+        const current = ninkuByProjectRef.current[projectId]?.targetNinku ?? null;
+        if (current === value) return;
+        try {
+            await updateTargetNinku(projectId, value);
+            showToast(value === null ? '目標人工を未設定にしました' : '目標人工を保存しました', 'success');
+        } catch (e) {
+            console.error('目標人工の保存に失敗しました:', e);
+            showToast('目標人工の保存に失敗しました', 'error');
+        }
+    }, [showToast, updateTargetNinku]);
+
+    // 人工列は現場名列の右に固定する。表は w-max（中身の幅）なので、現場名列は一番長い現場名に合わせて
+    // NAME_COL_WIDTH（最小幅）より広がる（長い現場名を省略せずに見せるための意図した動き）。
+    // そのため固定位置は、現場名の見出しの実際の幅を測って決める。
+    const [nameColWidth, setNameColWidth] = useState(NAME_COL_WIDTH);
+    const nameHeaderObserverRef = useRef(null);
+    const nameHeaderRef = useCallback((el) => {
+        nameHeaderObserverRef.current?.disconnect();
+        nameHeaderObserverRef.current = null;
+        if (!el) return;
+        const update = () => setNameColWidth(Math.round(el.getBoundingClientRect().width) || NAME_COL_WIDTH);
+        update();
+        if (typeof ResizeObserver === 'undefined') return;
+        const ro = new ResizeObserver(update);
+        ro.observe(el);
+        nameHeaderObserverRef.current = ro;
+    }, []);
+
     const handleNameMouseLeave = useCallback(() => setHoverProjectStats(null), [setHoverProjectStats]);
 
     const handleOpenProject = useCallback((projectId) => {
@@ -162,6 +235,14 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         setIsExporting(true);
         try {
             const lookup = await fetchAssignmentLookupForRange(startStr, endStr);
+            // 人工列は出力した時点の値を載せる。取れなければ空欄で出すことを知らせる
+            let exportNinkuLabels = {};
+            try {
+                exportNinkuLabels = formatNinkuLabels(await fetchProjectNinkuSummary(barProjects.map(p => p.id)));
+            } catch (ninkuErr) {
+                console.error('Excel出力用の人工集計の取得に失敗しました:', ninkuErr);
+                showToast('人工の集計を取得できなかったため、人工列は空欄で出力します', 'error');
+            }
             const cols = buildDateColumns(s, days);
             // 指定期間を基準にした案件バー範囲
             const spanFn = (project) => {
@@ -174,7 +255,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                 return { startIdx, endIdx, span: endIdx - startIdx + 1 };
             };
             const label = `${s.getFullYear()}/${s.getMonth() + 1}/${s.getDate()} 〜 ${e.getFullYear()}/${e.getMonth() + 1}/${e.getDate()}`;
-            exportAssignmentChartToExcel(activeWorkers, cols, lookup, projectMap, barProjects, label, spanFn);
+            exportAssignmentChartToExcel(activeWorkers, cols, lookup, projectMap, barProjects, label, spanFn, exportNinkuLabels);
             setShowExportDialog(false);
         } catch (err) {
             console.error('配置表のExcel出力に失敗しました:', err);
@@ -276,7 +357,8 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
             <div ref={tableContainerRef} className="overflow-x-auto border border-slate-200 rounded-lg shadow-sm relative">
                 <table className="border-collapse w-max min-w-full" style={{ tableLayout: 'fixed' }}>
                     <colgroup>
-                        <col style={{ width: '140px', minWidth: '140px' }} />
+                        <col style={{ width: `${NAME_COL_WIDTH}px`, minWidth: `${NAME_COL_WIDTH}px` }} />
+                        <col style={{ width: `${NINKU_COL_WIDTH}px`, minWidth: `${NINKU_COL_WIDTH}px` }} />
                         {dateColumns.map((_, i) => (
                             <col key={i} style={{ width: '48px', minWidth: '48px' }} />
                         ))}
@@ -286,10 +368,19 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                     <thead>
                         <tr>
                             <th
+                                ref={nameHeaderRef}
                                 className="sticky left-0 z-20 bg-slate-700 text-white text-xs font-bold p-2 border border-slate-600"
                                 rowSpan={2}
                             >
                                 現場名
+                            </th>
+                            <th
+                                className="sticky z-20 bg-slate-700 text-white text-xs font-bold p-1 border border-slate-600"
+                                style={{ left: `${nameColWidth}px` }}
+                                rowSpan={2}
+                                title={`消化人工/目標人工（セルをクリックで目標人工を入力）\n${NINKU_SOURCE_NOTE}${ninkuLoadError ? '\n※ 集計を取得できませんでした。空欄は未設定とは限りません' : ''}`}
+                            >
+                                人工{ninkuLoadError && <span className="ml-0.5 text-amber-300" aria-label="集計を取得できませんでした">!</span>}
                             </th>
                             {dateColumns.map((col, i) => {
                                 const info = dayHeaderInfo[i];
@@ -354,6 +445,13 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                                 holidayMap={holidayMap}
                                 todayStr={todayStr}
                                 customerLabel={proj.is_prime_contractor ? '元請' : (customerMap[proj.customerId] || '')}
+                                ninkuLabel={ninkuLabelByProject[proj.id] || ''}
+                                ninkuLeft={nameColWidth}
+                                targetNinku={ninkuByProject[proj.id]?.targetNinku ?? null}
+                                isEditingNinku={editingNinkuProjectId === proj.id}
+                                onStartNinkuEdit={handleStartNinkuEdit}
+                                onSaveNinku={handleSaveNinku}
+                                onCancelNinkuEdit={handleCancelNinkuEdit}
                                 getBarSpan={getBarSpan}
                                 handleGanttPointerDown={handleGanttPointerDown}
                                 handleProjectReorder={handleProjectReorder}
@@ -367,7 +465,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
 
                         {barProjects.length === 0 && (
                             <tr>
-                                <td className="sticky left-0 z-10 bg-white text-xs text-slate-400 p-2 border border-slate-200 italic">
+                                <td colSpan={2} className="sticky left-0 z-10 bg-white text-xs text-slate-400 p-2 border border-slate-200 italic">
                                     案件なし
                                 </td>
                                 {dateColumns.map((_, i) => (
@@ -382,7 +480,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                     {/* セパレーター */}
                     <tbody>
                         <tr>
-                            <td className="sticky left-0 z-20 bg-slate-700 text-white text-xs font-bold p-2 border border-slate-600">
+                            <td colSpan={2} className="sticky left-0 z-20 bg-slate-700 text-white text-xs font-bold p-2 border border-slate-600">
                                 作業員名
                             </td>
                             {dateColumns.map((col, i) => {
@@ -408,7 +506,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                     <tbody>
                         {/* 会社行事/休日 行 */}
                         <tr className="bg-slate-100 border-b-2 border-slate-300 bg-stripes">
-                            <td className="sticky left-0 z-10 bg-slate-100 text-xs font-bold p-2 border border-slate-200 truncate text-slate-600"
+                            <td colSpan={2} className="sticky left-0 z-10 bg-slate-100 text-xs font-bold p-2 border border-slate-200 truncate text-slate-600"
                                 style={{ boxShadow: '2px 0 5px -2px rgba(0,0,0,0.1)' }}
                             >
                                 会社行事/休日
@@ -495,7 +593,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
 
                         {workers.length === 0 && (
                             <tr>
-                                <td className="sticky left-0 z-10 bg-white text-xs text-slate-400 p-2 border border-slate-200 italic">
+                                <td colSpan={2} className="sticky left-0 z-10 bg-white text-xs text-slate-400 p-2 border border-slate-200 italic">
                                     作業員なし
                                 </td>
                                 {dateColumns.map((_, i) => (

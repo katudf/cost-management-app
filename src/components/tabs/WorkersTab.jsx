@@ -1,5 +1,7 @@
-import React, { useState, useMemo } from 'react';
-import { Users, Settings, Plus, Calendar, User, ChevronRight, FileText } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Users, Settings, Plus, Calendar, User, ChevronRight, FileText, KeyRound } from 'lucide-react';
+import { useWorkerLogins } from '../../hooks/useWorkerLogins';
+import WorkerLoginDialogs from './settings/WorkerLoginDialogs';
 import { calculateAge } from '../../utils/dateUtils';
 import { WORKER_TYPE } from '../../utils/constants';
 import WorkerDetailsModal from '../WorkerDetailsModal';
@@ -14,7 +16,17 @@ const WorkersTab = ({
     removeWorker,
     toggleWorkerAssignmentVisibility,
     showToast,
+    // ログインIDの管理（admin / system_admin だけ。docs/specs/worker-login.md §4.4）
+    canManageLogins = false,
+    isSystemAdmin = false,
+    markWorkerLoginLinked,
 }) => {
+    const workerLogins = useWorkerLogins();
+    const { loginMap, refetchLogins } = workerLogins;
+    const [loginTarget, setLoginTarget] = useState(null);
+    useEffect(() => {
+        if (canManageLogins) refetchLogins();
+    }, [canManageLogins, refetchLogins, workers.length]);
     const [selectedWorkerForDetails, setSelectedWorkerForDetails] = useState(null);
     const [showResigned, setShowResigned] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
@@ -42,6 +54,17 @@ const WorkersTab = ({
 
     return (
         <div className={`p-6 bg-slate-50 min-h-[500px] ${isLoading ? 'opacity-50 pointer-events-none' : ''}`}>
+            {loginTarget && (
+                <WorkerLoginDialogs
+                    worker={loginTarget}
+                    login={loginMap.get(loginTarget.id) || null}
+                    loginMap={loginMap}
+                    isSystemAdmin={isSystemAdmin}
+                    workerLogins={workerLogins}
+                    onLinkedChange={(id, linked) => markWorkerLoginLinked?.(id, linked)}
+                    onClose={() => setLoginTarget(null)}
+                />
+            )}
             <WorkerDetailsModal 
                 isOpen={!!selectedWorkerForDetails}
                 worker={workers.find(w => w.id === selectedWorkerForDetails)}
@@ -142,6 +165,25 @@ const WorkersTab = ({
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-3 mt-2 sm:mt-0">
+                                {canManageLogins && (() => {
+                                    const login = loginMap.get(worker.id);
+                                    return (
+                                        <button
+                                            type="button"
+                                            onClick={(e) => { e.stopPropagation(); setLoginTarget(worker); }}
+                                            draggable={true}
+                                            onDragStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                                            aria-label={`${worker.name}のログイン`}
+                                            title="ログインIDの発行・リセット"
+                                            className="flex items-center gap-1.5 bg-white px-2 py-1 rounded border border-slate-200 hover:border-blue-300 text-xs font-bold"
+                                        >
+                                            <KeyRound size={14} className={login ? 'text-blue-600' : 'text-slate-400'} />
+                                            {login
+                                                ? <span className="font-mono text-slate-700">{login.login_id}{login.banned && <span className="ml-1 font-sans text-rose-600">停止中</span>}</span>
+                                                : <span className="text-slate-400">ID未発行</span>}
+                                        </button>
+                                    );
+                                })()}
                                 <label
                                     className="flex items-center gap-1.5 cursor-pointer select-none bg-white px-2 py-1 rounded border border-slate-200 hover:border-blue-300"
                                     title="チェックを外すと配置表・工程表閲覧に表示されません"
