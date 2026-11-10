@@ -113,8 +113,31 @@ describe('A3横の印刷設定', () => {
         expect(ws['!margins'].left).toBe(0.25);
     });
 
-    it('前提の要素が無いシートには書き足さずに止める', () => {
+    it('pageMargins が無いシートには書き足さずに止める', () => {
         expect(() => applyA3LandscapePageSetup('<worksheet><sheetData/></worksheet>')).toThrow();
-        expect(() => applyA3LandscapePageSetup('<worksheet><sheetPr/><pageMargins/></worksheet>')).toThrow();
+    });
+
+    describe('sheetPr が既にあるときは中身を残して fitToPage を足す', () => {
+        const fit = (sheetPr) => applyA3LandscapePageSetup(`<worksheet>${sheetPr}<pageMargins/></worksheet>`).match(/<sheetPr\b[\s\S]*?<\/sheetPr>/)[0];
+        it('子要素なし', () => {
+            expect(fit('<sheetPr codeName="X"/>')).toBe('<sheetPr codeName="X"><pageSetUpPr fitToPage="1"/></sheetPr>');
+        });
+        it('他の子要素あり（pageSetUpPr は最後に置く）', () => {
+            expect(fit('<sheetPr><tabColor rgb="FF0000"/></sheetPr>')).toBe('<sheetPr><tabColor rgb="FF0000"/><pageSetUpPr fitToPage="1"/></sheetPr>');
+        });
+        it('pageSetUpPr が既にある', () => {
+            expect(fit('<sheetPr><pageSetUpPr autoPageBreaks="0"/></sheetPr>')).toBe('<sheetPr><pageSetUpPr autoPageBreaks="0" fitToPage="1"/></sheetPr>');
+            expect(fit('<sheetPr><pageSetUpPr fitToPage="0"/></sheetPr>')).toBe('<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>');
+        });
+        it('sheetPr が1つだけになる', () => {
+            const xml = applyA3LandscapePageSetup('<worksheet><sheetPr/><pageMargins/></worksheet>');
+            expect(xml.match(/<sheetPr\b/g)).toHaveLength(1);
+        });
+    });
+
+    it('出力を圧縮する（無圧縮より小さい）', () => {
+        const zip = xlsx.CFB.read(new Uint8Array(bytes), { type: 'array' });
+        const total = zip.FileIndex.reduce((n, e) => n + (e.content?.length || 0), 0);
+        expect(bytes.length).toBeLessThan(total);
     });
 });
