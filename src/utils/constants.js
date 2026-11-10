@@ -194,5 +194,6 @@ export const SCHEDULE_TYPES = [
     { title: '講習会', color: '#EC4899', icon: '📚' },
     { title: '会議', color: '#0EA5E9', icon: '🗣️' },
     { title: 'CPDS', color: '#14B8A6', icon: '📝' },
+    { title: '社員旅行', color: '#65A30D', icon: '🚌' },
 ];
 
