@@ -337,6 +337,35 @@ const unbanQuietly = async (admin: AdminClient, authUserId: string) => {
   if (error) console.error("unban failed:", error)
 }
 
+/**
+ * 作業員のログインを外す・付け替えるときの共通の順序: 古いログインを止める → DB を書き換える → 古い Auth ユーザーを消す。
+ * 先に止めるのは、書き換えのあとで削除に失敗しても使えるログインを残さないため。書き換えに失敗したら止めたのを戻す。
+ * removableAuthUserId が null（ログインが無い・担当者と共有で消さない）なら DB の書き換えだけ。
+ */
+const retireLoginAround = async (
+  admin: AdminClient,
+  removableAuthUserId: string | null,
+  rpcName: string,
+  rpcArgs: Record<string, unknown>,
+  deleteFailedMessage: string,
+) => {
+  if (removableAuthUserId) await ban(admin, removableAuthUserId)
+
+  const { error: rpcErr } = await admin.rpc(rpcName, rpcArgs)
+  if (rpcErr) {
+    if (removableAuthUserId) await unbanQuietly(admin, removableAuthUserId)
+    throw rpcError(rpcErr)
+  }
+
+  if (removableAuthUserId) {
+    const { error: authDeleteError } = await admin.auth.admin.deleteUser(removableAuthUserId)
+    if (authDeleteError) {
+      console.error(`deleteUser failed after ${rpcName}:`, authDeleteError)
+      throw new HttpError(500, deleteFailedMessage)
+    }
+  }
+}
+
 async function handleWorkerAction(
   admin: AdminClient,
   callerId: string,
@@ -408,6 +437,23 @@ async function handleWorkerAction(
       return { success: true }
     }
 
+    // 作業員の自分のログインを、同じ人の担当者のログインに統合する（担当者のIDを残す。worker-login.md §5.2）。
+    // 統合できるかを先に確かめてから止める（条件を満たさずに作業員のIDだけ消える、を起こさない）。
+    case 'merge_into_staff': {
+      const staffId = Number(body?.staffId)
+      if (!Number.isInteger(staffId) || staffId <= 0) throw new HttpError(400, "staffId が正しくありません。")
+      const oldAuthUserId = target.auth_user_id
+      if (!oldAuthUserId) throw new HttpError(400, "この作業員にはログインがありません。「担当者のIDを紐付ける」を使ってください。")
+
+      const args = { p_caller: callerId, p_worker_id: workerId, p_staff_id: staffId }
+      await assertVia<WorkerRow>(admin, 'assert_can_merge_worker_into_staff', args)
+
+      await retireLoginAround(admin, oldAuthUserId, 'merge_worker_login_into_staff',
+        { ...args, p_expected_auth_user_id: oldAuthUserId },
+        "担当者のIDに統合し、作業員の古いログインも停止しましたが、古いログインの削除に失敗しました。Supabase の管理画面（Authentication → Users）で該当ユーザーを削除してください。")
+      return { success: true }
+    }
+
     case 'reset_password': {
       if (!target.auth_user_id) throw new HttpError(400, "この作業員にはログインがありません。")
       const password = parsePassword(body.password)
@@ -460,26 +506,10 @@ async function handleWorkerAction(
       }
       // 担当者と共有のログインは、担当者として使い続けるので止めも消しもしない（紐付けだけ外れる）
       const shared = authUserId ? (await linkedStaffId(admin, authUserId)) !== null : false
-      // 先にログインを止める（行の更新・削除のあとで Auth の削除に失敗しても、使えるログインを残さない）
-      if (authUserId && !shared) await ban(admin, authUserId)
-
-      const { error: rpcErr } = await admin.rpc(action === 'delete' ? 'delete_worker_with_login' : 'unlink_worker_login', {
-        p_caller: callerId,
-        p_worker_id: workerId,
-      })
-      if (rpcErr) {
-        if (authUserId && !shared) await unbanQuietly(admin, authUserId)
-        throw rpcError(rpcErr)
-      }
-
-      if (authUserId && !shared) {
-        const { error: authDeleteError } = await admin.auth.admin.deleteUser(authUserId)
-        if (authDeleteError) {
-          console.error("deleteUser failed after worker unlink/delete:", authDeleteError)
-          throw new HttpError(500,
-            "ログインは停止しましたが、ログインの削除に失敗しました。Supabase の管理画面（Authentication → Users）で該当ユーザーを削除してください。")
-        }
-      }
+      await retireLoginAround(admin, authUserId && !shared ? authUserId : null,
+        action === 'delete' ? 'delete_worker_with_login' : 'unlink_worker_login',
+        { p_caller: callerId, p_worker_id: workerId },
+        "ログインは停止しましたが、ログインの削除に失敗しました。Supabase の管理画面（Authentication → Users）で該当ユーザーを削除してください。")
       return { success: true, keptStaffLogin: shared }
     }
 

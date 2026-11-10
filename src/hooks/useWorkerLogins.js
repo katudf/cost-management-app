@@ -35,9 +35,11 @@ export function useWorkerLogins() {
         const { data, error } = await supabase.rpc('get_worker_login_ids');
         if (error) {
             console.warn('作業員のログインIDの取得に失敗しました:', error);
-            return;
+            return null;
         }
-        setLoginMap(new Map((data || []).map((row) => [row.worker_id, row])));
+        const next = new Map((data || []).map((row) => [row.worker_id, row]));
+        setLoginMap(next);
+        return next;
     }, []);
 
     const createLogin = useCallback(
@@ -50,6 +52,11 @@ export function useWorkerLogins() {
         (workerId, staffId) => invokeWorker({ action: 'link_staff_account', workerId, staffId }), []);
     const unlinkLogin = useCallback(
         (workerId) => invokeWorker({ action: 'unlink', workerId }), []);
+    /** 作業員の自分のログインを、同じ人の担当者のログインに統合する（作業員のIDは削除。§5.2） */
+    const mergeIntoStaff = useCallback(
+        (workerId, staffId) => invokeWorker({ action: 'merge_into_staff', workerId, staffId }), []);
 
-    return { loginMap, refetchLogins, createLogin, resetPassword, changeLoginId, linkStaffAccount, unlinkLogin };
+    return {
+        loginMap, refetchLogins, createLogin, resetPassword, changeLoginId, linkStaffAccount, unlinkLogin, mergeIntoStaff,
+    };
 }

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { KeyRound, X, Loader2, Link2, Unlink, RefreshCw, PenLine, UserPlus, Ban } from 'lucide-react';
+import { KeyRound, X, Loader2, Link2, Unlink, RefreshCw, PenLine, UserPlus, Ban, Merge } from 'lucide-react';
 import { useToast } from '../../Toast';
 import { useConfirm } from '../../ConfirmProvider';
 import StaffLoginDialog from './StaffLoginDialog';
@@ -24,8 +24,30 @@ const ActionButton = ({ icon: Icon, label, onClick, tone = 'blue' }) => (
     </button>
 );
 
-/** 担当者のIDを作業員に紐付けるダイアログ */
-const LinkStaffDialog = ({ worker, isSystemAdmin, linkedStaffIds, onClose, onSubmit }) => {
+// 担当者を選ぶダイアログの文言。link: ログインの無い作業員に紐付ける / merge: 作業員の自分のIDを担当者のIDに統合する（§5.2）
+const STAFF_PICKER_TEXT = {
+    link: {
+        icon: Link2,
+        title: '担当者のIDを紐付ける',
+        description: '担当者と作業員の両方に登録されている人が、1つのログインIDで作業日報も入力できるようにします。共有アカウント・閲覧用アカウントは選べません。',
+        submit: '紐付ける',
+        failure: '紐付けに失敗しました',
+        empty: '紐付けられる担当者がいません（ログインIDのある事務・管理者で、まだ作業員に紐付いていない人）。',
+    },
+    merge: {
+        icon: Merge,
+        title: '担当者のIDに統合',
+        description: '同じ人の担当者のログインIDに1つにまとめます。作業員のログインIDは削除され、これからは担当者のIDで作業日報も入力します。日報などのデータはそのまま残ります。共有アカウント・閲覧用アカウントは選べません。',
+        submit: '統合する',
+        failure: '統合に失敗しました',
+        empty: '統合先にできる担当者がいません（ログインIDのある事務・管理者で、まだ作業員に紐付いていない人）。',
+    },
+};
+
+/** 担当者のIDを作業員に紐付ける／統合するダイアログ */
+const LinkStaffDialog = ({ worker, variant = 'link', isSystemAdmin, linkedStaffIds, onClose, onSubmit }) => {
+    const text = STAFF_PICKER_TEXT[variant];
+    const TitleIcon = text.icon;
     const { showToast } = useToast();
     const [staff, setStaff] = useState(null);
     const [selected, setSelected] = useState('');
@@ -55,9 +77,11 @@ const LinkStaffDialog = ({ worker, isSystemAdmin, linkedStaffIds, onClose, onSub
         }
         setIsSubmitting(true);
         try {
-            await onSubmit(Number(selected));
+            const staffId = Number(selected);
+            await onSubmit(staffId, candidates.find((s) => s.id === staffId));
         } catch (error) {
-            showToast(error.message || '紐付けに失敗しました', 'error');
+            showToast(error.message || text.failure, 'error');
+        } finally {
             setIsSubmitting(false);
         }
     };
@@ -70,7 +94,7 @@ const LinkStaffDialog = ({ worker, isSystemAdmin, linkedStaffIds, onClose, onSub
                 <div className="p-6 space-y-4">
                     <div className="flex items-center justify-between">
                         <h3 id="link-staff-title" className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                            <Link2 size={20} className="text-blue-600" /> 担当者のIDを紐付ける
+                            <TitleIcon size={20} className="text-blue-600" /> {text.title}
                         </h3>
                         <button type="button" onClick={onClose} disabled={isSubmitting} aria-label="閉じる" title="閉じる"
                             className="p-2 hover:bg-slate-100 rounded-full text-slate-400 disabled:opacity-50">
@@ -81,13 +105,12 @@ const LinkStaffDialog = ({ worker, isSystemAdmin, linkedStaffIds, onClose, onSub
                         対象: <span className="font-bold text-slate-800">{worker.name}</span>
                     </p>
                     <p className="text-xs text-slate-600 bg-blue-50 border border-blue-200 rounded-lg p-2.5">
-                        担当者と作業員の両方に登録されている人が、1つのログインIDで作業日報も入力できるようにします。
-                        共有アカウント・閲覧用アカウントは選べません。
+                        {text.description}
                     </p>
                     {staff === null ? (
                         <div className="flex justify-center py-4"><Loader2 className="animate-spin text-blue-500" /></div>
                     ) : candidates.length === 0 ? (
-                        <p className="text-sm text-slate-500">紐付けられる担当者がいません（ログインIDのある事務・管理者で、まだ作業員に紐付いていない人）。</p>
+                        <p className="text-sm text-slate-500">{text.empty}</p>
                     ) : (
                         <select value={selected} onChange={(e) => setSelected(e.target.value)} aria-label="紐付ける担当者"
                             className="w-full px-3 py-2.5 rounded-lg border-2 border-slate-200 font-bold text-slate-700 outline-none focus:border-blue-500">
@@ -105,7 +128,7 @@ const LinkStaffDialog = ({ worker, isSystemAdmin, linkedStaffIds, onClose, onSub
                     </button>
                     <button type="submit" disabled={isSubmitting || !candidates.length}
                         className="px-5 py-2.5 rounded-xl font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2">
-                        {isSubmitting && <Loader2 size={16} className="animate-spin" />} 紐付ける
+                        {isSubmitting && <Loader2 size={16} className="animate-spin" />} {text.submit}
                     </button>
                 </div>
             </form>
@@ -116,13 +139,13 @@ const LinkStaffDialog = ({ worker, isSystemAdmin, linkedStaffIds, onClose, onSub
 /**
  * 作業員のログイン操作（docs/specs/worker-login.md §4.4）。管理者（admin / system_admin）だけが開く。
  *   未発行   … ID発行 / 担当者のIDを紐付ける
- *   発行済み … パスワードリセット / ID変更 / ログイン解除
+ *   発行済み … パスワードリセット / ID変更 / 担当者のIDに統合（担当者と共有していないとき） / ログイン解除
  *   退職済み … 表示だけ（ログインは止まっている）
  */
 const WorkerLoginDialogs = ({ worker, login, loginMap, isSystemAdmin, workerLogins, onLinkedChange, onClose }) => {
     const { showToast } = useToast();
     const { confirm } = useConfirm();
-    const [mode, setMode] = useState(null); // null（操作の選択）| 'create' | 'reset' | 'changeId' | 'link'
+    const [mode, setMode] = useState(null); // null（操作の選択）| 'create' | 'reset' | 'changeId' | 'link' | 'merge'
 
     // 退職日を入れた時点でログインは止まる（未来の日付でも。決定 #8）
     const resigned = !!worker.resignation_date;
@@ -200,6 +223,42 @@ const WorkerLoginDialogs = ({ worker, login, loginMap, isSystemAdmin, workerLogi
         );
     }
 
+    if (mode === 'merge') {
+        return (
+            <LinkStaffDialog
+                worker={worker}
+                variant="merge"
+                isSystemAdmin={isSystemAdmin}
+                linkedStaffIds={linkedStaffIds}
+                onClose={onClose}
+                onSubmit={async (staffId, staff) => {
+                    const ok = await confirm({
+                        title: '担当者のIDに統合',
+                        message: `「${worker.name}」の作業員のログインID「${login?.login_id}」を削除し、担当者「${staff?.name}」のログインID「${staff?.login_id}」にまとめます。`
+                            + '作業員のIDでログインしている端末はログアウトされるので、本人に担当者のIDで入り直すよう伝えてください。元に戻せません。',
+                        confirmText: '統合する',
+                        variant: 'danger',
+                    });
+                    if (!ok) return;
+                    try {
+                        await workerLogins.mergeIntoStaff(worker.id, staffId);
+                    } catch (error) {
+                        // 古いログインの削除だけ失敗した場合は、付け替えは済んでいる。一覧を取り直し、統合済みなら
+                        // ダイアログを閉じて案内だけ出す（開いたままだと、もう一度押して「既に共有」で断られる）
+                        const latest = await workerLogins.refetchLogins();
+                        if (latest?.get(worker.id)?.linked_staff_id === staffId) {
+                            showToast(error.message || '統合しましたが、古いログインの削除に失敗しました', 'error');
+                            onClose();
+                            return;
+                        }
+                        throw error;
+                    }
+                    await finish(`担当者のログインID「${staff?.login_id}」に統合しました。本人に伝えてください`);
+                }}
+            />
+        );
+    }
+
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm" onClick={onClose}>
             <div role="dialog" aria-modal="true" aria-labelledby="worker-login-title" onClick={(e) => e.stopPropagation()}
@@ -232,6 +291,10 @@ const WorkerLoginDialogs = ({ worker, login, loginMap, isSystemAdmin, workerLogi
                     <div className="space-y-2">
                         <ActionButton icon={RefreshCw} label="パスワードリセット" onClick={() => setMode('reset')} />
                         <ActionButton icon={PenLine} label="ID変更" onClick={() => setMode('changeId')} />
+                        {/* 自分のIDを持つ作業員だけ（担当者と共有済みなら統合するものが無い） */}
+                        {!login.linked_staff_id && (
+                            <ActionButton icon={Merge} label="担当者のIDに統合" onClick={() => setMode('merge')} />
+                        )}
                         <ActionButton icon={Unlink} label="ログイン解除" onClick={handleUnlink} tone="red" />
                     </div>
                 ) : (

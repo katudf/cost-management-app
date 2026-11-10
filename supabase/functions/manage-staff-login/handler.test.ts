@@ -341,6 +341,65 @@ describe('作業員: link_staff_account', () => {
   });
 });
 
+describe('作業員: merge_into_staff', () => {
+  const MERGE = W({ action: 'merge_into_staff', staffId: 4 });
+  const args = { p_caller: CALLER, p_worker_id: 20, p_staff_id: 4 };
+
+  it('確認 → 古いログインの BAN → 付け替え → 古いログインの削除、の順に行う', async () => {
+    const { admin, calls, names } = fakeWorkerAdmin();
+    const result = await handleAction(admin, CALLER, MERGE, META);
+    expect(result).toEqual({ success: true });
+    expect(names()).toEqual([
+      'rpc:assert_can_manage_worker_login', 'rpc:assert_can_merge_worker_into_staff', 'updateUserById',
+      'rpc:merge_worker_login_into_staff', 'deleteUser',
+    ]);
+    expect(calls[1][1]).toEqual({ ...args, p_lock: false });
+    expect(calls[2]).toEqual(['updateUserById', 'worker-uid', { ban_duration: '876000h' }]);
+    expect(calls[3][1]).toEqual({ ...args, p_expected_auth_user_id: 'worker-uid' });
+    expect(calls[4]).toEqual(['deleteUser', 'worker-uid']);
+  });
+
+  it('統合できなければ（共有アカウントなど）何も止めず消さない', async () => {
+    const { admin, names } = fakeWorkerAdmin({
+      rpc: { assert_can_merge_worker_into_staff: { data: null, error: { code: '42501', message: '共有アカウント・閲覧用アカウントは作業員に紐付けられません。' } } },
+    });
+    await expectHttpError(handleAction(admin, CALLER, MERGE, META), 403, '共有アカウント');
+    expect(names()).toEqual(['rpc:assert_can_manage_worker_login', 'rpc:assert_can_merge_worker_into_staff']);
+  });
+
+  it('付け替えに失敗したら BAN を解き、古いログインは消さない', async () => {
+    const { admin, calls, names } = fakeWorkerAdmin({
+      rpc: { merge_worker_login_into_staff: { data: null, error: { code: '23505', message: '操作中にこの作業員のログインが変わりました。' } } },
+    });
+    await expectHttpError(handleAction(admin, CALLER, MERGE, META), 409);
+    expect(calls.at(-1)).toEqual(['updateUserById', 'worker-uid', { ban_duration: 'none' }]);
+    expect(names()).not.toContain('deleteUser');
+  });
+
+  it('BAN に失敗したら付け替えない', async () => {
+    const { admin, names } = fakeWorkerAdmin({ auth: { updateUserById: { data: null, error: { message: 'down' } } } });
+    await expectHttpError(handleAction(admin, CALLER, MERGE, META), 500);
+    expect(names()).not.toContain('rpc:merge_worker_login_into_staff');
+  });
+
+  it('古いログインの削除だけ失敗したら、統合済み・停止済みと伝える', async () => {
+    const { admin } = fakeWorkerAdmin({ auth: { deleteUser: { data: null, error: { message: 'down' } } } });
+    await expectHttpError(handleAction(admin, CALLER, MERGE, META), 500, '統合し');
+  });
+
+  it('ログインのない作業員は 400（紐付けを使う）', async () => {
+    const { admin, names } = fakeWorkerAdmin({ target: { id: 20, name: 'x', auth_user_id: null } });
+    await expectHttpError(handleAction(admin, CALLER, MERGE, META), 400, '紐付ける');
+    expect(names()).toEqual(['rpc:assert_can_manage_worker_login']);
+  });
+
+  it('staffId が不正なら何もしない', async () => {
+    const { admin, names } = fakeWorkerAdmin();
+    await expectHttpError(handleAction(admin, CALLER, W({ action: 'merge_into_staff', staffId: 'x' }), META), 400);
+    expect(names()).toEqual(['rpc:assert_can_manage_worker_login']);
+  });
+});
+
 describe('作業員: reset_password', () => {
   it('パスワードを変えて作業員の履歴に残す', async () => {
     const { admin, calls, names } = fakeWorkerAdmin();

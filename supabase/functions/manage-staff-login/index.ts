@@ -14,6 +14,7 @@
 // target: 'worker' のときは作業員のログイン（設計: docs/specs/worker-login.md §5）。workerId を受け取る。
 //   create / reset_password / change_login_id … 担当者と同じ
 //   link_staff_account … 担当者（office 以上・ログインIDあり）のログインを作業員にも紐付ける
+//   merge_into_staff   … 作業員の自分のログインを、同じ人の担当者のログインに統合する（作業員の Auth ユーザーは消す。§5.2）
 //   unlink / delete    … 紐付けを外す／作業員の行を消す（担当者と共有でなければ Auth ユーザーも消す）
 //   sync_ban           … 退職日に合わせて BAN / 解除する（事務も呼べる。BAN するかは DB の退職日で決める）
 //
