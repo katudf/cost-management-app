@@ -66,6 +66,8 @@ SYSTEM_ADMIN, ADMIN_A, ADMIN_B, OFFICE, SHARED = 1, 2, 3, 4, 5
 TANAKA, SUZUKI, RETIRED, FUTURE, SPARE = 101, 102, 103, 104, 105
 
 MIGRATION = 'supabase/migrations/20261107020000_worker_personal_login.sql'
+# 担当者のIDへの統合（worker-login.md §5.2）。link_worker_to_staff_login も作り直すので、下の紐付けの検査はこちらの版で走る
+MERGE_MIGRATION = 'supabase/migrations/20261110000000_merge_worker_login_into_staff.sql'
 
 assert raw(f'CREATE DATABASE {database}', db='postgres').returncode == 0
 for file in ['tests/db/login-id-fixture.sql',
@@ -73,11 +75,12 @@ for file in ['tests/db/login-id-fixture.sql',
              'supabase/migrations/20261107000000_login_id_management.sql',
              'supabase/migrations/20261107010000_password_change_logs_forwarded_for.sql',
              'tests/db/worker-login-fixture.sql',
-             MIGRATION]:
+             MIGRATION,
+             MERGE_MIGRATION]:
     result = raw((root / file).read_text(encoding='utf-8'))
     assert result.returncode == 0, (file, result.stderr)
 
-rerun = raw((root / MIGRATION).read_text(encoding='utf-8'))
+rerun = raw((root / MIGRATION).read_text(encoding='utf-8') + (root / MERGE_MIGRATION).read_text(encoding='utf-8'))
 check('migration is re-runnable', lambda: expect(rerun.returncode, 0, rerun.stderr))
 
 # 紐付け: 田中・鈴木・退職・予定は作業員アカウント、事務（担当者4）は作業員6と共有
@@ -254,5 +257,53 @@ check('admin may not delete worker sharing admin login', lambda: (
     admin_sql(f"SELECT set_config('app.bypass_worker_protect_trigger','on',false); UPDATE \"Workers\" SET auth_user_id='{uid(ADMIN_B)}' WHERE id=4"),
     service(f"SELECT delete_worker_with_login('{uid(ADMIN_A)}', 4)", fail='システム管理者だけ'))[-1])
 check('worker_id_for_auth_user', lambda: expect(service(f"SELECT worker_id_for_auth_user('{uid(OFFICE)}')"), '6', 'w'))
+
+# ---------- 担当者のIDへの統合（§5.2） ----------
+# ここまでで: 作業員1=田中・2=鈴木（自分のID）、3=退職（自分のID・退職日あり）、4=管理者Bと共有、6=事務と共有。
+# 統合先はシステム管理者（担当者1・ログインID sysadmin・まだ作業員に紐付いていない）を使う
+for fn in [f"_assert_staff_linkable('{uid(SYSTEM_ADMIN)}', 1, false)",
+           f"_assert_worker_mergeable('{uid(SYSTEM_ADMIN)}', 2, false)",
+           f"assert_can_merge_worker_into_staff('{uid(SYSTEM_ADMIN)}', 2, 1, false)",
+           f"merge_worker_login_into_staff('{uid(SYSTEM_ADMIN)}', 2, 1, '{uid(SUZUKI)}')"]:
+    check(f'authenticated cannot call {fn.split("(")[0]}', lambda f=fn: run(f'SELECT {f}', SYSTEM_ADMIN, fail='permission denied'))
+
+admin_sql('INSERT INTO "Workers" (id, name) VALUES (8, \'未発行 八郎\')')
+check('merge needs admin', lambda: service(
+    f"SELECT assert_can_merge_worker_into_staff('{uid(OFFICE)}', 2, 1)", fail='管理者権限'))
+check('merge needs own worker login', lambda: service(
+    f"SELECT assert_can_merge_worker_into_staff('{uid(SYSTEM_ADMIN)}', 8, 1)", fail='ログインがありません'))
+check('merge refuses login already shared with staff', lambda: service(
+    f"SELECT assert_can_merge_worker_into_staff('{uid(SYSTEM_ADMIN)}', 6, 1)", fail='既に担当者と共有'))
+check('merge refuses worker with resignation date', lambda: service(
+    f"SELECT assert_can_merge_worker_into_staff('{uid(SYSTEM_ADMIN)}', 3, 1)", fail='退職日'))
+check('merge refuses shared staff account', lambda: service(
+    f"SELECT assert_can_merge_worker_into_staff('{uid(SYSTEM_ADMIN)}', 2, 5)", fail='共有アカウント'))
+check('merge refuses legacy email staff', lambda: service(
+    f"SELECT assert_can_merge_worker_into_staff('{uid(SYSTEM_ADMIN)}', 2, 2)", fail='ログインIDがありません'))
+check('admin cannot merge into system admin login', lambda: service(
+    f"SELECT assert_can_merge_worker_into_staff('{uid(ADMIN_A)}', 2, 1)", fail='システム管理者だけ'))
+check('merge refuses staff already linked to another worker', lambda: service(
+    f"SELECT assert_can_merge_worker_into_staff('{uid(ADMIN_A)}', 2, 4)", fail='別の作業員'))
+check('merge refuses when login changed after check', lambda: (
+    service(f"SELECT merge_worker_login_into_staff('{uid(SYSTEM_ADMIN)}', 2, 1, '{uid(TANAKA)}')", fail='操作中に'),
+    expect(admin_sql('SELECT auth_user_id FROM "Workers" WHERE id=2'), uid(SUZUKI), 'unchanged'))[-1])
+check('merge moves worker to staff login and returns old login', lambda: (
+    expect(service(f"SELECT merge_worker_login_into_staff('{uid(SYSTEM_ADMIN)}', 2, 1, '{uid(SUZUKI)}')"),
+           uid(SUZUKI), 'old login'),
+    expect(admin_sql('SELECT auth_user_id FROM "Workers" WHERE id=2'), uid(SYSTEM_ADMIN), 'new login'))[-1])
+check('merged staff keeps role and gets worker id', lambda: expect(
+    run("SELECT current_staff_role()||','||current_worker_id()||','||is_personal_worker()", SYSTEM_ADMIN),
+    'system_admin,2,false', 'merged'))
+check('old worker login has no role after merge', lambda: expect(run('SELECT current_staff_role()', SUZUKI), 'none', 'old'))
+check('merged worker cannot be merged again', lambda: service(
+    f"SELECT assert_can_merge_worker_into_staff('{uid(SYSTEM_ADMIN)}', 2, 1)", fail='既に担当者と共有'))
+# よくある形: 管理者（system_admin でない）が、作業員を事務の担当者のIDに統合する。
+# 事務（担当者4）を作業員6から外してから、作業員1（田中）を統合する
+check('admin merges worker into office staff login', lambda: (
+    expect(service(f"SELECT unlink_worker_login('{uid(ADMIN_A)}', 6)"), uid(OFFICE), 'unlink office'),
+    service(f"SELECT assert_can_merge_worker_into_staff('{uid(ADMIN_A)}', 1, 4)"),
+    expect(service(f"SELECT merge_worker_login_into_staff('{uid(ADMIN_A)}', 1, 4, '{uid(TANAKA)}')"), uid(TANAKA), 'old'),
+    expect(run("SELECT current_staff_role()||','||current_worker_id()", OFFICE), 'office,1', 'office merged'),
+    expect(run('SELECT current_staff_role()', TANAKA), 'none', 'old tanaka'))[-1])
 
 print(f'{len(passed)} worker-login DB regressions passed; isolated database: {database}')
