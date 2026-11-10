@@ -23,6 +23,7 @@ const EMPTY_ARRAY = [];
 const EMPTY_OBJECT = {};
 // Excel出力で指定できる最大日数
 const MAX_EXPORT_DAYS = 366;
+const DEFAULT_EXPORT_DAYS = 28;
 const DAY_MS = 1000 * 60 * 60 * 24;
 const WEEK_BORDER = '2px solid #64748B';
 // 左に固定する列の幅（現場名・人工）
@@ -244,9 +245,10 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
     const [showExportDialog, setShowExportDialog] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
 
-    // 期間指定ダイアログの既定値（現在の表示範囲）
+    // 期間指定ダイアログの既定値
     const defaultExportStart = toDateStr(startDate);
-    const defaultExportEnd = toDateStr(addDays(startDate, totalDays - 1));
+    // 出力期間の初期値は表示開始日から4週間（A3横1枚に収まる長さ）
+    const defaultExportEnd = toDateStr(addDays(startDate, DEFAULT_EXPORT_DAYS - 1));
 
     const handleExport = useCallback(async (startStr, endStr) => {
         const s = new Date(startStr + 'T00:00:00');
