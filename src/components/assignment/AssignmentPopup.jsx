@@ -1,6 +1,11 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Trash2, ExternalLink } from 'lucide-react';
 import { SCHEDULE_TYPES } from '../../utils/constants';
+
+// 「その他」の自由記述の最大文字数（配置表のセルが狭いので短く抑える）
+const FREE_TITLE_MAX = 10;
+// 自由記述など、種別に無い予定の色（配置表・共有表示・作業員画面・Excel出力と同じ灰色）
+const FREE_TITLE_COLOR = '#94A3B8';
 
 const AssignmentPopup = React.forwardRef(({
     editCell,
@@ -21,7 +26,22 @@ const AssignmentPopup = React.forwardRef(({
     setActiveProjectId,
     setActiveTab
 }, ref) => {
+    const [freeTitle, setFreeTitle] = useState('');
+    // 別のセルを開いたら入力途中の文字は消す
+    const cellKey = editCell ? `${editCell.workerId}_${editCell.dateStr}_${(editCell.dragDates || []).join(',')}_${(editCell.workerIds || []).join(',')}` : '';
+    useEffect(() => { setFreeTitle(''); }, [cellKey]);
+
     if (!editCell) return null;
+
+    const trimmedFreeTitle = freeTitle.trim();
+    const isFreeTitleDuplicate = editCellAssignments.some(a => !a.projectId && a.title === trimmedFreeTitle);
+    const canAddFreeTitle = trimmedFreeTitle.length > 0 && !isFreeTitleDuplicate;
+    const handleFreeTitleSubmit = (e) => {
+        e.preventDefault();
+        if (!canAddFreeTitle) return;
+        handlePopupAssign(null, trimmedFreeTitle);
+        setFreeTitle('');
+    };
 
     const isMultiWorker = editCell.workerIds && editCell.workerIds.length > 1;
     const workerName = isMultiWorker
@@ -67,8 +87,9 @@ const AssignmentPopup = React.forwardRef(({
                             {editCellAssignments.map((a) => {
                                 const pInfo = a.projectId ? projectMap[a.projectId] : null;
                                 const schedType = !a.projectId && a.title ? SCHEDULE_TYPES.find(s => s.title === a.title) : null;
-                                const itemColor = schedType?.color || pInfo?.color || '#94A3B8';
-                                const itemName = schedType ? `${schedType.icon} ${schedType.title}` : (pInfo?.name || '不明');
+                                const itemColor = schedType?.color || pInfo?.color || FREE_TITLE_COLOR;
+                                // 種別に無い文字（自由記述）はそのまま出す
+                                const itemName = schedType ? `${schedType.icon} ${schedType.title}` : (pInfo?.name || a.title || '不明');
                                 return (
                                     <div
                                         key={a.id}
@@ -179,6 +200,28 @@ const AssignmentPopup = React.forwardRef(({
                                 </button>
                             ))}
                     </div>
+                    {/* 自由記述（種別に無い予定。灰色で表示される） */}
+                    <form onSubmit={handleFreeTitleSubmit} className="flex items-center gap-1 mt-2">
+                        <input
+                            type="text"
+                            value={freeTitle}
+                            onChange={e => setFreeTitle(e.target.value)}
+                            maxLength={FREE_TITLE_MAX}
+                            placeholder={`自由記述（${FREE_TITLE_MAX}文字まで）`}
+                            aria-label="その他の予定を自由記述で入力"
+                            className="flex-1 min-w-0 border border-slate-300 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        />
+                        <button
+                            type="submit"
+                            disabled={!canAddFreeTitle}
+                            className="px-2 py-1 rounded-lg text-[11px] font-bold text-white bg-slate-500 hover:bg-slate-600 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                            追加
+                        </button>
+                    </form>
+                    {isFreeTitleDuplicate && (
+                        <p className="text-[10px] text-red-500 mt-1">この予定は既に入っています</p>
+                    )}
                 </div>
             </div>
 
