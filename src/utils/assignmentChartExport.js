@@ -183,9 +183,11 @@ export const buildAssignmentChartSheet = (
 
             // 名前カラム
             if (C === 0 && R !== 0 && R !== 1) {
+                // 見出し行（「現場名」「作業員名」）は濃い背景なので白文字のままにする
+                const isHeaderRow = R === BAR_HEADER_ROW || R === sepRow;
                 cell.s = {
                     ...cell.s,
-                    font: { bold: true, sz: 10, name: 'BIZ UDゴシック' },
+                    font: { bold: true, sz: 10, name: 'BIZ UDゴシック', ...(isHeaderRow && { color: { rgb: 'FFFFFF' } }) },
                     alignment: { vertical: 'center', horizontal: 'left' }
                 };
             }

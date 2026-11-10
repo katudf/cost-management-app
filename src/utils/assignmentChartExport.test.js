@@ -65,6 +65,15 @@ describe('buildAssignmentChartSheet', () => {
         expect(cell(ws, 2, 1).s.fill.fgColor.rgb).toBe('334155'); // 人工列の見出し
     });
 
+    it('「現場名」「作業員名」の見出しは濃い背景に白文字、名前の行は黒文字', () => {
+        expect(cell(ws, 2, 0).s.fill.fgColor.rgb).toBe('334155');
+        expect(cell(ws, 2, 0).s.font.color.rgb).toBe('FFFFFF');
+        expect(cell(ws, 5, 0).v).toBe('作業員名');
+        expect(cell(ws, 5, 0).s.font.color.rgb).toBe('FFFFFF');
+        expect(cell(ws, 3, 0).s.font.color).toBeUndefined(); // 現場A
+        expect(cell(ws, 6, 0).s.font.color).toBeUndefined(); // 山田
+    });
+
     it('作業員の配置は正しい日付の列に入り、空きの土日も正しい列を塗る', () => {
         expect(cell(ws, 6, 0).v).toBe('山田');
         expect(cell(ws, 6, 5).v).toBe('現場A');
