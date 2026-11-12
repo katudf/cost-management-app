@@ -30,7 +30,7 @@
 | 7 | 配置表の予定人数 | `Assignments.planned_count`（NULL 可）を追加。管理者画面のみ表示 |
 | 8 | 移行 | 1 回限りの SQL（対象は現状 2 社）。配置の付け替えは不要（#13） |
 | 9 | 公開範囲 | 匿名の工程表は既存の `get_public_schedule` RPC を拡張して会社名を返す（新しい匿名ビューは作らない）。金額系は管理者のみ |
-| 10 | 管理画面 | 会社マスタは `MasterTab`、契約は案件詳細画面 |
+| 10 | 管理画面 | 会社マスタは `MasterTab`、契約は `MasterTab` の現場設定内（新コンポーネント `SubcontractContractsPanel`。独立した「案件詳細画面」は存在しない） |
 | 11 | 同じ現場・同じ会社の複数契約 | 許す。「請負 → 完了後に常用」の運用があるため。常用は 1 現場 1 会社 1 件まで、請負は複数可 |
 | 12 | 契約の振り分け方 | 請負契約に期間（開始日・終了日）を持たせ、日報の人数は**日付で自動判定**する。職長は契約を選ばない |
 | 13 | 配置表の改修方針 | **軽量案**。配置表は `Assignments.workerId` のまま動かす。`Workers.subcontractor_id`（NULL 可・UNIQUE）で、下請け会社の配置行を `Subcontractors` と 1 対 1 に紐づける。配置行の名前・表示順は `Subcontractors` が正本で、`Workers` 側へ同期する。配置表の全面改修（`Assignments.subcontractor_id`、セルキーの再設計など。目安 2〜3 週間級）は見送り、将来の課題とする |
@@ -47,7 +47,6 @@
 | created_at | timestamptz | |
 | name | text NOT NULL UNIQUE | 会社名（例: ㈲菊池塗装工業所） |
 | standard_unit_price | numeric NOT NULL DEFAULT 0 | 標準単価（円/人工） |
-| display_order | int8 | 表示順 |
 | show_in_assignment | bool NOT NULL DEFAULT true | 配置表に表示するか |
 | active | bool NOT NULL DEFAULT true | 取引停止後は false |
 
@@ -57,7 +56,7 @@
 |--------|----|------|
 | id | uuid PK | |
 | created_at | timestamptz | |
-| project_id | int4 NOT NULL | 現場 |
+| project_id | int8 NOT NULL | 現場（`Projects.id` への FK、`ON DELETE CASCADE`） |
 | subcontractor_id | int8 NOT NULL | 会社 |
 | type | text NOT NULL | `常用` / `請負`（定数化する。後述） |
 | unit_price | numeric | 常用の単価（請負は NULL） |
@@ -78,19 +77,19 @@
 
 | テーブル | 変更 |
 |----------|------|
-| `Workers` | `subcontractor_id int8`（NULL 可、`Subcontractors.id` への FK、UNIQUE）を追加。値がある行は下請け会社の配置行、NULL は社員。名前・表示順・`show_in_assignment` は `Subcontractors` から同期する（トリガー等） |
+| `Workers` | `subcontractor_id int8`（NULL 可、`Subcontractors.id` への FK、UNIQUE）を追加。値がある行は下請け会社の配置行、NULL は社員。名前・`show_in_assignment` は `Subcontractors` が正本で、トリガーで同期する。**表示順は `Workers.display_order` を正本とし**（社員と下請けで 1 つの順序空間を共有）、`Subcontractors` には表示順を持たせない。詳細は §11.1 |
 | `Assignments` | `planned_count numeric`（NULL 可）を追加するのみ（`workerId` はそのまま）。定義: 1 会社・1 日・1 現場につき 1 行、その行の人数。ドラッグコピーでも `planned_count` をコピーする |
 | `SubcontractorRecords` | `subcontractor_id int8` を追加（移行期間は NULL 可）。`company_name` は表示用に残す。契約への紐づけ（`contract_id`）は**持たず**、集計時に日付から判定する（§4） |
 
 ### 3.4 公開経路
 
-- **匿名の工程表:** 既存の `get_public_schedule`（トークン照合付き SECURITY DEFINER RPC、列を明示列挙）を拡張する。下請けの配置行が `Workers` に残るので、配置の返却は既存のままで足りる。追加するのは、必要なら `subcontractor_id` の有無程度。`planned_count`・単価・契約は返さない。**新しい匿名向けビューは作らない**（匿名にテーブル・ビューへの直接アクセスを許さない `security-permissions.md` の方針に合わせる）。
+- **匿名の工程表:** 既存の `get_public_schedule`（トークン照合付き SECURITY DEFINER RPC、列を明示列挙）を拡張する。下請けの配置行が `Workers` に残るので、配置の返却は既存のままで足りる。変更は不要（`subcontractor_id` も返さない）。`planned_count`・単価・契約は返さない。**新しい匿名向けビューは作らない**（匿名にテーブル・ビューへの直接アクセスを許さない `security-permissions.md` の方針に合わせる）。
 - **認証ユーザー（作業員・閲覧者を含む）:** `workers_directory` に `subcontractor_id` を追加し、社員向け一覧は `subcontractor_id IS NULL` で絞る。
 
 ## 4. 原価計算
 
 ```
-協力業者費 = Σ(常用の記録人数 × 契約の単価) + Σ(請負契約の contract_amount)
+協力業者費 = Σ(常用の記録人数 × 記録の unit_price) + Σ(請負契約の contract_amount)
 予測損益   = Σ工種の予測損益 − 協力業者費
 ```
 
@@ -106,7 +105,7 @@
 ### 5.1 職長の日報（WorkerApp）
 
 1. 会社マスタ（`Subcontractors`）から会社を選び、人数を入力する。自由記述は廃止する。
-2. 保存時、その現場とその会社の**常用契約**がなければ、DB 側の RPC が暫定契約（常用・標準単価・`needs_review = true`）を作成する。記録の単価には契約の単価をコピーする。請負か常用かは日付で自動判定されるので、職長は契約を選ばない。
+2. 保存時、その現場とその会社の**常用契約**がなければ、暫定契約（常用・標準単価・`needs_review = true`）を自動作成する（作成と単価コピーは §11.2 の BEFORE トリガー）。ただし、記録の日付が請負期間内なら作らない。請負か常用かは日付で自動判定されるので、職長は契約を選ばない。
 3. 職長には単価・契約金額を見せない。
 
 運用上の注意: 請負契約の開始日を入れ忘れると、請負の作業日の人数が常用として原価に載る。請負契約は開始日を必須とし、終了日は完了時に入れる（NULL の間は継続中）。「請負が継続中の会社に、請負期間外の常用記録が混じっている」警告は、今回の対象外。
@@ -114,7 +113,7 @@
 ### 5.2 管理者
 
 - **会社マスタ:** `MasterTab` に「下請け会社」セクションを追加する（社名・標準単価・表示順・配置表表示）。
-- **契約:** 案件の詳細画面に「協力業者契約」欄を追加する（常用／請負、単価、請負金額、工事内容）。暫定契約には「要確認」バッジを出し、案件画面で確定する。
+- **契約:** `MasterTab` の現場設定内に「協力業者契約」欄（`SubcontractContractsPanel`）を追加する（常用／請負、単価、請負金額、工事内容）。暫定契約には「要確認」バッジを出し、案件画面で確定する。
 
 ### 5.3 配置表
 
@@ -152,7 +151,7 @@
 - `utils/constants.js` に契約形態の定数（`CONTRACT_TYPE.JOYO` / `CONTRACT_TYPE.UKEOI` 等）を追加
 - `utils/projectUtils.js` の原価集計を、契約形態別に変更
 - `WorkerApp.jsx` の協力業者入力を、会社選択に変更
-- `MasterTab.jsx`、案件詳細画面、配置表（予定人数の入力・表示のみ）、`ScheduleViewApp.jsx`
+- `MasterTab.jsx`（会社マスタ・`SubcontractContractsPanel`）、配置表（予定人数の入力・表示のみ）、`ScheduleViewApp.jsx`
 - 社員向け一覧からの下請け行の除外（`workers_directory` に `subcontractor_id` を追加し、名簿・残業承認・在庫の担当者選択などで `subcontractor_id IS NULL` に絞る）
 - 管理者側の協力業者入力（`InputTab.jsx`、`useProjects.js`）の会社選択化
 - 日報保存 RPC `save_daily_report`（最新は `20261107020000`）の改修（暫定契約の自動作成は `ON CONFLICT DO NOTHING`。旧下書き・旧バンドルが `company_name` で再送しても受け付けて名寄せする）
@@ -183,7 +182,80 @@
 
 将来フェーズ（今回は対象外と決定）: 請負の出来高・支払い管理。請負金額は契約登録時に全額を原価計上し、支払い管理は別の仕組み（購買台帳など）で行う。必要になった時点で `SubcontractPayments` 等を `SubcontractContracts` に紐づけて追加する。
 
-## 10. ドキュメントとコードの食い違い（確認済み）
+## 11. 実装詳細（再レビュー 2026-11-12 の反映）
+
+### 11.1 Workers ↔ Subcontractors の同期
+
+- `Subcontractors` に INSERT すると、トリガーが `Workers` に配置行を作る（`name`、`show_in_assignment`、`display_order = 既存の最大 + 1`、`subcontractor_id`）。
+- `Subcontractors.name` / `show_in_assignment` / `active` の変更は `Workers` に反映する（`active = false` → `show_in_assignment = false`）。`resignation_date` は使わない。
+- `Workers.subcontractor_id` が非 NULL の行は、保護トリガーで、名前・`subcontractor_id` の手編集と DELETE を拒否する（同期トリガーだけがバイパス用のセッション設定で許可される。手本: `20261107020000_worker_personal_login.sql` の `auth_user_id` の保護）。`display_order`（配置表の並び替え）は許可する。
+- 会社名を変えたら、同じトリガーで `SubcontractorRecords.company_name`（表示用コピー）も更新する（Excel / PDF が旧名を出さないため）。
+- `Workers.display_order` に UNIQUE 制約があるかを、実装前に `pg_constraint` で確認する。あれば採番を衝突しないようにする。
+- `WorkersTab`（`useWorkers.js` の編集・削除・`show_in_assignment` 切替・並び替え）は、下請け行を除外する。
+
+### 11.2 SubcontractorRecords の BEFORE INSERT/UPDATE トリガー
+
+日報保存 RPC・管理画面の直接書き込み・将来のインポートが、同じ規則を通るようにする。
+
+1. `subcontractor_id` があれば `company_name` を会社マスタの名前で埋める。なければ、名寄せ関数（NFKC 正規化、㈲／有限会社／(有)の除去、空白除去）で `Subcontractors` と照合し、一致すれば `subcontractor_id` を埋める。一致しなければ `subcontractor_id = NULL` のまま**保存を拒否せず**、管理画面に「未紐づけ」と表示する（旧下書き・旧バンドルの再送を詰まらせない）。
+2. 記録の日付が同じ現場・同じ会社の請負期間に含まれなければ、常用契約を確保する。無ければ暫定契約（標準単価・`needs_review = true`）を `INSERT ... ON CONFLICT (project_id, subcontractor_id) WHERE type = '常用' DO NOTHING` で作り、直後に SELECT する。請負期間内の記録では暫定契約を作らない。
+3. `unit_price` が 0 または NULL の INSERT では、常用契約の単価をコピーする。会社を変更する UPDATE でも再コピーする。
+4. 契約行の取得は `FOR SHARE`、確定 RPC は `FOR UPDATE` にして、確定中に古い単価で記録が作られないようにする。
+5. 同じ名寄せ関数を、移行 SQL とトリガーで共用する。
+
+### 11.3 RPC
+
+| RPC | 内容 |
+|-----|------|
+| `get_project_subcontract_cost(p_project_id, p_worker_id, p_worker_name)` | 職長向け。協力業者費の合計（常用 + 請負）だけを返す。`SECURITY DEFINER`、`SET search_path = public`、先頭で `is_office_or_admin() OR is_declared_foreman(...)` を確認。`REVOKE ... FROM anon, PUBLIC; GRANT ... TO authenticated;`。分類は SQL 関数を正本とし、JS の `classifySubcontractorRecords` は同じテストケースの両側検証（パリティテスト）で固定する |
+| 暫定契約の確定 RPC | 先頭で `is_office_or_admin()` を確認。契約の更新と、対象記録（その現場・その会社の常用の記録のうち `unit_price = 0` または NULL のもの）の更新を 1 トランザクションで行う。すでに非 0 の単価を持つ記録、請負期間内の記録は上書きしない。確定後の遡及訂正の UI は今回は設けない（必要なら SQL で対応） |
+| `save_daily_report`（再定義） | 最新は `20261107020000`。差分は最小にし、早出・手当・承認同期の既存処理を落とさない。`company_name` と `subcontractor_id` の両方を受け付ける。`REVOKE`／`GRANT` を忘れない |
+
+### 11.4 RLS
+
+`SubcontractContracts` と `Subcontractors` の書き込みは既存の書き方（`is_admin() OR current_staff_role() = 'office'`）に揃え、事務（office）も可とする。worker・viewer には基表を直接 SELECT させない。worker 向けの安全列ビュー（`workers_directory` の最新版と同じく `is_staff() OR is_personal_worker()` で絞る）は、`workers_directory` と同じ SECURITY DEFINER ビュー方式で、`security-permissions.md` に同じ注記を足す。
+
+### 11.5 名簿の用途別取捨
+
+下請け行（`Workers.subcontractor_id IS NOT NULL`）を、含める用途と除外する用途に分ける。`workers_directory` ビュー自体は絞らず、`subcontractor_id` 列を末尾に追加する。
+
+| 用途 | 下請け行 |
+|------|----------|
+| 配置表（管理者）、工程表閲覧、`get_public_schedule`、作業員画面の配置表示（`useWorkerAssignments.js`、`WorkerApp.jsx` の `assignmentWorkers`） | **含める** |
+| 職長の選択（`MasterTab.jsx`、`Projects.foreman_worker_id`）、日報の「誰として入力するか」（`WorkerApp.jsx` の `selectableWorkers`、`useDailyReport.js`）、`DailyReportTab.jsx`、`CertificationManager.jsx`、`LineWorksSettings`、見積の作成者（`supabaseEstimates.js` の `fetchWorkers`、`EstimateEditor`）、`WorkersTab`、在庫の担当者選択（取得元を実装時に確認） | **除外する** |
+
+管理画面は `useSupabaseData.js` で、`workers`（社員のみ）と `subcontractorWorkers`（下請け行）を分けて持つ。配置表だけが両方を使う。
+
+### 11.6 人工集計
+
+`get_project_ninku_summary` は `Workers.subcontractor_id IS NULL`（社員）に絞る。下請けの人数は、予定は `planned_count`、実績は `SubcontractorRecords` で別に見る。日報ベースの人工算出に切り替えるときは、下請けの扱いを見直す。
+
+### 11.7 配置表の追加実装
+
+- `useAssignmentState.js` の `Assignments` の insert 経路（コピー・貼り付け・範囲コピー・undo/redo）すべてで `planned_count` を引き継ぐ。
+- 「1 会社・1 日・1 現場につき 1 行」は DB では保証しない（既存が重複行を許容しているため）。UI 側で、下請けの配置行は同一セルで 1 行に限る運用とする。
+- 予定人数と並べる実績人数のため、管理者の配置表向けに `SubcontractorRecords` を日付範囲で取得するフックを追加する。
+
+### 11.8 移行の前提確認（実装前に実 DB で確認）
+
+- `SELECT company_name, unit_price, count(*) FROM "SubcontractorRecords" GROUP BY 1, 2`。現行の保存は `unit_price = 0` 固定のため、全件 0 の可能性が高い。全件 0 なら「最新の非 0 単価」の規則は空振りするので、暫定契約は標準単価を入れて `needs_review = true` とする（標準単価も未設定なら「単価未設定」バッジ付きで 0 のまま）。
+- `Workers.display_order` の UNIQUE の有無（`pg_constraint`）。
+- 2 社の `Workers` 行に、FK 以外の参照（`TaskRecords.worker_name`、`Workers.auth_user_id`、LINE WORKS）が付いていないか。
+- `daterange(start_date, COALESCE(end_date, 'infinity'), '[]')` の EXCLUDE 制約が、ローカルで期待どおり動くか（`btree_gist` を `extensions` スキーマに作成する。制約は `WHERE type = '請負'`）。
+
+### 11.9 実装順序（段階導入）
+
+1. **マイグレーション A（追加のみ、既存挙動は変えない）:** テーブル・制約・RLS、同期・保護トリガー、`Assignments.planned_count`、`SubcontractorRecords.subcontractor_id`、名寄せ関数、BEFORE トリガー、安全ビュー、RPC、`workers_directory` への `subcontractor_id` 追加、`save_daily_report` の再定義。
+2. **マイグレーション B（データ移行）:** §11.8 の確認後に実行。再実行しても壊れない書き方にする。
+3. **定数・純関数・フック:** `CONTRACT_TYPE`、`classifySubcontractorRecords`（テスト先行）、`useSubcontractors.js`、`useProjects.js`、`useSupabaseData.js` の契約取得（2 か所）。
+4. **管理画面:** §11.5 に沿った名簿の絞り込み、`MasterTab` の会社マスタと契約欄、`InputTab` の会社選択、原価表示。
+5. **WorkerApp:** 会社選択、職長向け合計 RPC、`useDailyReport.js` と `useWeeklyReportData.js` の取得列の絞り込み。
+6. **配置表:** §11.7。
+7. **マイグレーション C（遅延）:** 旧クライアントが消えたのを確認してから、`subcontractor_records_select_worker` を撤去する。キャッシュ済みの旧 PWA が単価列に依存するため、これは数日以上あけてから行う。
+
+注記: 職長は協力業者費の合計と人数から、単価を逆算できる（A 案の限界として許容）。
+
+## 12. ドキュメントとコードの食い違い（確認済み）
 
 - `specs/database.md` の `Workers` に `show_in_assignment` がないが、コード（`useWorkers.js`、`workers_directory`）は使っている。
 - `design.md` の `協力業者費 = Σ(人数 × 単価)` は常用のみの式で、請負はドキュメントにもコードにもない。本設計で拡張する。
