@@ -39,6 +39,7 @@ const MasterTab = ({
     addSubcontractorRecord,
     updateSubcontractorRecordField,
     removeSubcontractorRecord,
+    subcontractorOps,
     // Deletion Modal Props
     isDeleteModalOpen,
     setIsDeleteModalOpen,
@@ -445,6 +446,7 @@ const MasterTab = ({
                         addSubcontractorRecord={addSubcontractorRecord}
                         updateSubcontractorRecordField={updateSubcontractorRecordField}
                         removeSubcontractorRecord={removeSubcontractorRecord}
+                        subcontractorOps={subcontractorOps}
                     />
                 )}
             </div>

@@ -5,6 +5,7 @@ import WorkerLoginDialogs from './settings/WorkerLoginDialogs';
 import { calculateAge } from '../../utils/dateUtils';
 import { WORKER_TYPE } from '../../utils/constants';
 import WorkerDetailsModal from '../WorkerDetailsModal';
+import SubcontractorMasterSection from './SubcontractorMasterSection';
 import { downloadWorkerCertificationsPDF } from '../../WorkerCertificationsPDF';
 
 const WorkersTab = ({
@@ -15,6 +16,7 @@ const WorkersTab = ({
     openEditWorkerModal,
     removeWorker,
     toggleWorkerAssignmentVisibility,
+    subcontractorOps,
     showToast,
     // ログインIDの管理（admin / system_admin だけ。docs/specs/worker-login.md §4.4）
     canManageLogins = false,
@@ -217,6 +219,7 @@ const WorkersTab = ({
                     </p>
                 </div>
 
+                {subcontractorOps && <SubcontractorMasterSection subcontractorOps={subcontractorOps} />}
             </div>
         </div>
     );

@@ -57,7 +57,7 @@ export function useDashboardStats({ projects, activeProject, hourlyWage }) {
         // 目標(target)は見積/計画上の合計時間であり日付を持たないため、季節デフォルト(getSeasonConfig(null))で換算する
         const totalTargetNinku = calculateNinku(totalTarget, null);
         const totalPredictedProfitLoss = items.reduce((sum, i) => sum + i.predictedProfitLoss, 0);
-        const subcontractorCost = calcSubcontractorCost(activeProject.subcontractors);
+        const subcontractorCost = calcSubcontractorCost(activeProject.subcontractors, activeProject.subcontractContracts);
 
         return {
             items,

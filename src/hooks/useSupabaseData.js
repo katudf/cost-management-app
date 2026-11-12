@@ -4,6 +4,9 @@ import { fetchAllPages } from '../lib/fetchAllPages';
 import { PROJECT_STATUS } from '../utils/constants';
 import { fetchSystemSettings, DEFAULT_HOURLY_WAGE } from './useSystemSettings';
 
+// マイグレーション（20261112000000）の適用前は契約テーブルが無い（42P01）。その間は契約なし（全記録を常用）として動かす。
+const isMissingTable = (error) => error?.code === '42P01' || error?.code === 'PGRST205';
+
 export function useSupabaseData(showToast) {
     const [projects, setProjects] = useState([]);
     const [workers, setWorkers] = useState([]);
@@ -59,6 +62,7 @@ export function useSupabaseData(showToast) {
             let tData = [];
             let rData = [];
             let sData = [];
+            let ctData = [];
 
             if (activeProjectIds.length > 0) {
                 // 工種・協力業者も、現場が増えると取得上限（1000件）を超えるため全件取得する
@@ -88,6 +92,15 @@ export function useSupabaseData(showToast) {
                     .order('id', { ascending: true }));
                 if (sError) throw sError;
                 sData = subs || [];
+
+                // 協力業者の契約（常用・請負）。請負の契約金額は協力業者費に加わる
+                const { data: contracts, error: ctError } = await fetchAllPages(() => supabase
+                    .from('SubcontractContracts')
+                    .select('*')
+                    .in('project_id', activeProjectIds)
+                    .order('created_at', { ascending: true }));
+                if (ctError && !isMissingTable(ctError)) throw ctError;
+                ctData = contracts || [];
             }
 
             // system_settings へのアクセスは useSystemSettings.js に集約している
@@ -121,6 +134,7 @@ export function useSupabaseData(showToast) {
                         records: [],
                         progressData: {},
                         subcontractors: [],
+                        subcontractContracts: [],
                         _isLoaded: false
                     };
                 }
@@ -152,6 +166,7 @@ export function useSupabaseData(showToast) {
                 }));
 
                 const mySubcontractors = (sData || []).filter(s => s.project_id === p.id);
+                const myContracts = (ctData || []).filter(c => c.project_id === p.id);
 
                 return {
                     id: p.id,
@@ -170,6 +185,7 @@ export function useSupabaseData(showToast) {
                     records,
                     progressData,
                     subcontractors: mySubcontractors,
+                    subcontractContracts: myContracts,
                     _isLoaded: true
                 };
             });
@@ -195,6 +211,25 @@ export function useSupabaseData(showToast) {
             if (showToast) showToast('データ取得エラー: ' + error.message, 'error');
         } finally {
             setIsLoading(false);
+        }
+    }, [showToast]);
+
+    // 作業員（資格つき）だけ取り直す。下請け会社マスタを変えると、同期トリガーが Workers の配置行も変えるため
+    const refreshWorkers = useCallback(async () => {
+        if (!supabase) return;
+        try {
+            const { data: wData, error: wError } = await supabase.from('Workers').select('*').order('display_order', { ascending: true, nullsFirst: false });
+            if (wError) throw wError;
+            const { data: cData, error: cError } = await supabase.from('WorkerCertifications').select('*');
+            if (cError) throw cError;
+            const validWorkers = (wData || []).filter(w => w.name && w.name.trim() !== '');
+            setWorkers(validWorkers.map(w => ({
+                ...w,
+                certifications: cData ? cData.filter(c => Number(c.workerId) === Number(w.id)) : []
+            })));
+        } catch (e) {
+            console.error('作業員の再取得エラー:', e);
+            if (showToast) showToast('作業員の再取得に失敗しました', 'error');
         }
     }, [showToast]);
 
@@ -228,6 +263,13 @@ export function useSupabaseData(showToast) {
                 .eq('project_id', projectId);
             if (sError) throw sError;
 
+            // 対象プロジェクトの協力業者契約
+            const { data: ctData, error: ctError } = await supabase
+                .from('SubcontractContracts')
+                .select('*')
+                .eq('project_id', projectId);
+            if (ctError && !isMissingTable(ctError)) throw ctError;
+
             // データのマッピング
             const masterData = (tData || []).map(t => ({
                 id: t.id,
@@ -253,6 +295,7 @@ export function useSupabaseData(showToast) {
             }));
 
             const subcontractors = sData || [];
+            const subcontractContracts = ctData || [];
 
             // projects ステートの更新
             setProjects(prev => prev.map(p => {
@@ -263,6 +306,7 @@ export function useSupabaseData(showToast) {
                         records,
                         progressData,
                         subcontractors,
+                        subcontractContracts,
                         _isLoaded: true
                     };
                 }
@@ -282,6 +326,7 @@ export function useSupabaseData(showToast) {
         setProjects,
         workers,
         setWorkers,
+        refreshWorkers,
         customers,
         setCustomers,
         hourlyWage,

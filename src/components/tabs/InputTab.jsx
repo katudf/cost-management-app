@@ -5,6 +5,7 @@ import { useConfirm } from '../../components/ConfirmProvider';
 import { WORKER_TYPE } from '../../utils/constants';
 import { useCompanyHolidays } from '../../hooks/useCompanyHolidays';
 import { isActualHoliday } from '../../utils/holidayUtils';
+import SubcontractContractsPanel from './SubcontractContractsPanel';
 
 const InputTab = ({
     activeProject,
@@ -17,11 +18,24 @@ const InputTab = ({
     setFocusedWorkerRow,
     addSubcontractorRecord,
     updateSubcontractorRecordField,
-    removeSubcontractorRecord
+    removeSubcontractorRecord,
+    subcontractorOps
 }) => {
     const { showToast } = useToast();
     const { confirm } = useConfirm();
     const { holidays: companyHolidays } = useCompanyHolidays();
+    const subcontractorList = subcontractorOps?.subcontractors || [];
+    const refreshSubcontracts = subcontractorOps?.refreshProjectSubcontracts;
+
+    // 記録の追加・会社の変更では、DB のトリガーが暫定契約の作成と単価のコピーを行う。契約と記録を取り直して画面に反映する
+    const handleAddSubcontractorRecord = async () => {
+        await addSubcontractorRecord();
+        await refreshSubcontracts?.(activeProject.id);
+    };
+    const handleSubcontractorCompanyChange = async (recordId, value) => {
+        await updateSubcontractorRecordField(recordId, 'subcontractor_id', value === '' ? null : Number(value));
+        await refreshSubcontracts?.(activeProject.id);
+    };
     const [viewMode, setViewMode] = useState('matrix');
     const [currentMonth, setCurrentMonth] = useState(() => {
         const d = new Date();
@@ -410,9 +424,13 @@ const InputTab = ({
                 </div>
             )}
 
+            {subcontractorOps && (
+                <SubcontractContractsPanel activeProject={activeProject} subcontractorOps={subcontractorOps} />
+            )}
+
             <div className="flex items-center justify-between mb-6">
                 <h2 className="text-lg font-bold flex items-center gap-2 text-orange-600"><Edit3 size={20} /> 協力業者実績入力</h2>
-                <button onClick={addSubcontractorRecord} className="bg-orange-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition hover:bg-orange-700 shadow-md">
+                <button onClick={handleAddSubcontractorRecord} className="bg-orange-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition hover:bg-orange-700 shadow-md">
                     <Plus size={16} /> 業者1件追加
                 </button>
             </div>
@@ -439,13 +457,20 @@ const InputTab = ({
                                     />
                                 </td>
                                 <td className="p-2">
-                                    <input
-                                        type="text"
-                                        value={r.company_name || ""}
-                                        placeholder="会社名を入力"
-                                        className="border border-orange-200 rounded p-1 w-full text-xs font-bold outline-none focus:border-orange-400"
-                                        onChange={(e) => updateSubcontractorRecordField(r.id, 'company_name', e.target.value)}
-                                    />
+                                    <select
+                                        value={r.subcontractor_id ?? ''}
+                                        aria-label="会社"
+                                        className="border border-orange-200 rounded p-1 w-full text-xs font-bold outline-none focus:border-orange-400 bg-white"
+                                        onChange={(e) => handleSubcontractorCompanyChange(r.id, e.target.value)}
+                                    >
+                                        <option value="">{r.company_name ? `未登録: ${r.company_name}` : '会社を選択'}</option>
+                                        {subcontractorList.filter(sc => sc.active || sc.id === r.subcontractor_id).map(sc => (
+                                            <option key={sc.id} value={sc.id}>{sc.name}</option>
+                                        ))}
+                                    </select>
+                                    {!r.subcontractor_id && r.company_name && (
+                                        <span className="mt-1 inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-yellow-100 text-yellow-800">未紐づけ</span>
+                                    )}
                                 </td>
                                 <td className="p-2">
                                     <input

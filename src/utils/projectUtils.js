@@ -64,6 +64,19 @@ export function classifySubcontractorRecords(records, contracts) {
 }
 
 /**
+ * 契約を変更（削除・期間の変更）したとき、請負 ↔ 常用の扱いが変わる記録の件数。確認ダイアログの表示用。
+ * @param {Array} records 協力業者の記録（その現場の全件）
+ * @param {Array} contractsBefore 変更前の契約
+ * @param {Array} contractsAfter 変更後の契約
+ * @returns {number}
+ */
+export function countReclassifiedRecords(records, contractsBefore, contractsAfter) {
+    const before = new Set(classifySubcontractorRecords(records, contractsBefore).ukeoi.map(r => r.id));
+    const after = new Set(classifySubcontractorRecords(records, contractsAfter).ukeoi.map(r => r.id));
+    return (records || []).filter(r => before.has(r.id) !== after.has(r.id)).length;
+}
+
+/**
  * 協力業者原価の合計。
  *   常用 = 請負期間外の記録の 人数 × 記録の単価
  *   請負 = 請負契約の契約金額（契約登録時に全額）

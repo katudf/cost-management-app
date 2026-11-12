@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { useSupabaseData } from './hooks/useSupabaseData';
 import { useProjects } from './hooks/useProjects';
 import { useWorkers } from './hooks/useWorkers';
+import { useSubcontractors } from './hooks/useSubcontractors';
 import { useDashboardStats } from './hooks/useDashboardStats';
 
 import { useToast } from './components/Toast';
@@ -263,10 +264,14 @@ const App = () => {
         return new Date(today.setDate(diff)).toISOString().split('T')[0];
     });
 
-    const { projects, setProjects, workers, setWorkers, customers, setCustomers, hourlyWage, setHourlyWage, isGeminiEnabled, setIsGeminiEnabled, isLoading, setIsLoading, fetchAllData, fetchProjectDetails } = useSupabaseData(showToast);
+    const { projects, setProjects, workers, setWorkers, refreshWorkers, customers, setCustomers, hourlyWage, setHourlyWage, isGeminiEnabled, setIsGeminiEnabled, isLoading, setIsLoading, fetchAllData, fetchProjectDetails } = useSupabaseData(showToast);
 
     const workerOps = useWorkers({ workers, setWorkers, showToast });
     const projectOps = useProjects({ projects, setProjects, activeProjectId, setActiveProjectId, showToast, workers, setActiveTab });
+    const subcontractorOps = useSubcontractors({ setProjects, showToast, onWorkersChanged: refreshWorkers });
+    // 下請け会社の配置行（Workers.subcontractor_id あり）は、配置表・工程表だけが使う。
+    // 職長の選択・日報・名簿・LINE WORKS などの社員向けの一覧には出さない（docs/specs/subcontractors.md §11.5）
+    const employeeWorkers = useMemo(() => workers.filter(w => !w.subcontractor_id), [workers]);
     const dashboardStats = useDashboardStats({ projects, activeProject: projectOps.activeProject, hourlyWage });
 
     // 工事基本設定の顧客コンボからの新規顧客登録（登録後の選択は呼び出し側で行う）
@@ -881,7 +886,8 @@ const App = () => {
                             handleProjectStatusChange={projectOps.handleProjectStatusChange}
                             handleForemanChange={projectOps.handleForemanChange}
                             handleProjectDateChange={projectOps.handleProjectDateChange}
-                            workers={workers}
+                            workers={employeeWorkers}
+                            subcontractorOps={subcontractorOps}
                             customers={customers}
                             onCreateCustomer={handleCreateCustomer}
                             updateMasterItemLocal={projectOps.updateMasterItemLocal}
@@ -913,7 +919,7 @@ const App = () => {
                     {activeTab === 'daily_report' && (
                         <DailyReportTab
                             isLoading={isLoading}
-                            workers={workers}
+                            workers={employeeWorkers}
                             workerSummaryData={dashboardStats.workerSummaryData}
                             setExportModalWorker={workerOps.setExportModalWorker}
                         />
@@ -922,7 +928,8 @@ const App = () => {
                     {activeTab === 'workers' && (
                         <WorkersTab
                             isLoading={isLoading}
-                            workers={workers}
+                            workers={employeeWorkers}
+                            subcontractorOps={subcontractorOps}
                             addWorker={workerOps.addWorker}
                             handleWorkerReorder={workerOps.handleWorkerReorder}
                             openEditWorkerModal={workerOps.openEditWorkerModal}
@@ -943,7 +950,7 @@ const App = () => {
                             setIsGeminiEnabled={setIsGeminiEnabled}
                             isLoading={isLoading}
                             setIsLoading={setIsLoading}
-                            workers={workers}
+                            workers={employeeWorkers}
                             fetchAllData={fetchAllData}
                             onPasswordLogsViewed={refreshPasswordLogUnread}
                             onCustomersChanged={setCustomers}

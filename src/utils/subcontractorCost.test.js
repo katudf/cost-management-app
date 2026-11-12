@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifySubcontractorRecords, calcSubcontractorCost, summarizeTaskCosts } from './projectUtils';
+import { classifySubcontractorRecords, calcSubcontractorCost, countReclassifiedRecords, summarizeTaskCosts } from './projectUtils';
 
 // DB 側（scripts/test-subcontractors-db.py の「請負契約」「職長向けの協力業者費合計」）と同じデータ・同じ期待値。
 // 判定の規則（両端を含む／終了日 NULL は継続中／未紐づけは常用）がズレないことを固定する（パリティテスト）。
@@ -101,6 +101,22 @@ describe('calcSubcontractorCost', () => {
 
     it('契約金額が未入力の請負は 0 として扱う', () => {
         expect(calcSubcontractorCost([], [ukeoi({ contract_amount: null })])).toBe(0);
+    });
+});
+
+describe('countReclassifiedRecords', () => {
+    const records = [rec('2026-11-09', { id: 'a' }), rec('2026-11-11', { id: 'b' }), rec('2026-11-13', { id: 'c' })];
+
+    it('請負契約を削除すると、期間内の記録が常用に戻る', () => {
+        expect(countReclassifiedRecords(records, [ukeoi()], [])).toBe(1);
+    });
+
+    it('期間を延ばすと、増えた分の記録だけが請負になる', () => {
+        expect(countReclassifiedRecords(records, [ukeoi()], [ukeoi({ end_date: '2026-11-13' })])).toBe(1);
+    });
+
+    it('変更の前後で扱いが変わらなければ 0 件', () => {
+        expect(countReclassifiedRecords(records, [ukeoi()], [ukeoi({ contract_amount: 1 })])).toBe(0);
     });
 });
 
