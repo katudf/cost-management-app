@@ -534,14 +534,18 @@ export const createCustomer = async (name) => {
 // 作業員一覧取得（作成者選択用）
 // ============================================================
 export const fetchWorkers = async () => {
-  const { data, error } = await supabase
+  const query = (columns) => supabase
     .from('Workers')
-    .select('id, name, stamp_url')
+    .select(columns)
     .is('resignation_date', null)
     .order('display_order');
 
+  let { data, error } = await query('id, name, stamp_url, subcontractor_id');
+  // 下請け会社のマイグレーション（20261112000000）の適用前は subcontractor_id 列が無い（42703）
+  if (error?.code === '42703') ({ data, error } = await query('id, name, stamp_url'));
   if (error) throw error;
-  return data;
+  // 下請け会社の配置行は、見積の作成者にしない
+  return (data || []).filter(w => !w.subcontractor_id);
 };
 
 // ============================================================

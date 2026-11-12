@@ -26,8 +26,9 @@ import { fetchAllPages } from '../lib/fetchAllPages';
 
 /** 作業員名簿。workerロールはWorkers基表を直接読めない（機微カラム遮蔽）ため安全カラムのみのビューを使う。 */
 export const fetchWorkersDirectoryResult = () =>
+    // 安全カラムのみのビューなので '*' でよい（subcontractor_id はマイグレーション適用後に加わる。列名で指定すると適用前に失敗する）
     supabase.from('workers_directory')
-        .select('id, name, resignation_date, worker_type, show_in_assignment')
+        .select('*')
         .order('display_order', { ascending: true, nullsFirst: false });
 
 /** 全工事案件。 */

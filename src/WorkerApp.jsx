@@ -176,7 +176,8 @@ const WorkerApp = () => {
                 const { data: wData } = await fetchWithCache('workers', fetchWorkersDirectoryResult);
                 // 退職の判定は DB と同じく「退職日が今日以前」（退職予定日の前日までは在籍）
                 const selectableWorkers = wData
-                    ? wData.filter(w => w.name && w.name.trim() !== '' && !isResigned(w.resignation_date) && w.worker_type !== WORKER_TYPE.OFFICE)
+                    // 下請け会社の配置行（subcontractor_id あり）は、日報を入力する人ではないので選べないようにする
+                    ? wData.filter(w => w.name && w.name.trim() !== '' && !isResigned(w.resignation_date) && w.worker_type !== WORKER_TYPE.OFFICE && !w.subcontractor_id)
                     : null;
                 if (selectableWorkers) setWorkers(selectableWorkers);
                 if (wData) setAssignmentWorkers(wData.filter(w => w.name && w.name.trim() !== '' && !isResigned(w.resignation_date) && w.show_in_assignment !== false));
