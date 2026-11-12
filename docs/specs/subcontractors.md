@@ -1,6 +1,6 @@
 # 下請け会社の正式管理 設計書
 
-> ステータス: **設計合意済み・未実装**（2026-11-12）。サブエージェントのレビュー（2026-11-12）を受け、配置表を軽量案（§2 #13）に変更し、§6 の権限の事実誤認を訂正した。レビュー指摘への対応はすべて決定済みで、§9 にまとめている。
+> ステータス: **実装済み（マイグレーションC・本番適用は未実施）**（2026-11-12）。実装の記録は §13。サブエージェントのレビュー（2026-11-12）を受け、配置表を軽量案（§2 #13）に変更し、§6 の権限の事実誤認を訂正した。レビュー指摘への対応はすべて決定済みで、§9 にまとめている。
 
 ## 1. 背景と目的
 
@@ -262,3 +262,35 @@
 - 設計書（初版）の「`Assignments` は匿名でも読める」は誤り。実際は認証済みユーザーのみで、匿名は `get_public_schedule` 経由（§6 で訂正済み）。
 - 設計書（初版）の「職長は自分が入力した範囲のみ」は現行ポリシーと不一致（現行は worker ロール全員が全行 SELECT 可）。
 - 設計書（初版）の「記録の単価に契約単価をコピー」は、現行 RPC が `unit_price` を 0 固定で保存する実装と食い違う。RPC の改修が必要（§8）。
+
+## 13. 実装の記録（2026-11-12）
+
+### 実装したもの（コミット順）
+
+| 段階 | 内容 | 主なファイル |
+|------|------|--------------|
+| A | テーブル・制約・RLS、同期・保護トリガー、`SubcontractorRecords` の BEFORE トリガー、RPC、ビュー | `supabase/migrations/20261112000000_subcontractors_phase_a.sql` |
+| B | データ移行（既存 2 社の紐づけ、記録の照合、暫定契約、単価コピー）。**本番未適用** | `supabase/migrations/20261112010000_subcontractors_phase_b_data.sql` |
+| 人工 | 消化人工から下請けの配置行を除く（`is_subcontractor_worker`） | `supabase/migrations/20261112020000_ninku_exclude_subcontractors.sql` |
+| 純関数 | `CONTRACT_TYPE`、`classifySubcontractorRecords`、`countReclassifiedRecords`、`calcSubcontractorCost`（契約対応） | `src/utils/constants.js`、`src/utils/projectUtils.js` |
+| 管理画面 | `useSubcontractors`、下請け会社マスタ、契約欄、会社選択、社員向け一覧からの除外 | `src/hooks/useSubcontractors.js`、`src/components/tabs/` |
+| 職長画面 | 会社をマスタから選択、協力業者費を RPC で表示 | `src/WorkerApp.jsx`、`src/hooks/useDailyReport.js` |
+| 配置表 | 予定人数の入力・表示・コピー・元に戻す | `src/hooks/useAssignmentState.js`、`src/components/assignment/` |
+
+テスト: DB は `scripts/test-subcontractors-db.py`（別クラスタの PostgreSQL。59 項目）、純関数は `src/utils/subcontractorCost.test.js`。
+
+### 設計から変えた点
+
+- **`save_daily_report` は再定義しなかった。** `SubcontractorRecords` の BEFORE トリガーが、会社の照合・暫定契約の作成・単価コピーをすべて行うため、RPC は無改造で動く（旧下書き・旧バンドルの再送も、`company_name` のまま受け付けて照合される）。
+- **`Subcontractors` に `display_order` を持たせない**（§11.1 のとおり。表示順は `Workers.display_order`）。
+- **下請け会社マスタの画面は「従業員」タブ（`WorkersTab`）の下に置いた。** 設計では `MasterTab` としていたが、`MasterTab` は現場ごとの設定で、マスタの置き場にならないため。契約欄は `MasterTab` の「実績入力」サブタブ（`InputTab`）の協力業者実績入力の上に置いた（現場単位の画面）。
+- **契約の期間変更・削除の影響件数は、画面上の記録から計算する**（`countReclassifiedRecords`）。DB への問い合わせは不要にした。
+- **マイグレーション適用前でも画面が動くようにした。** 契約テーブル・ビュー・RPC・列が無いとき（42P01 / 42703）は、従来の動き（全記録を常用・手入力・記録から計算）に戻す。
+
+### 残っている作業
+
+1. **マイグレーションA・人工・B を本番に適用する前の確認**（§11.8）。`SubcontractorRecords.unit_price` の実値、`Workers.display_order` の UNIQUE の有無、2 社の Workers 行への FK 以外の参照。Bの先頭のガードは、2 社の `Workers` 行が見つからなければ中断する。
+2. **マイグレーションC（遅延）。** 旧クライアントが消えたのを確認してから、`subcontractor_records_select_worker` を撤去し、職長画面（`useDailyReport.js`）と週報（`useWeeklyReportData.js`）を `subcontractor_records_directory` ビューの読み取りに切り替える。それまで、worker は単価を読める。
+3. 画面は**ビルドとテストまで確認済みで、実際の Supabase につないだ動作確認（会社の追加→配置表→日報→契約→原価）は未実施。**
+4. `src/types/supabase.ts` は未再生成（新テーブル・列・RPC の型が入っていない。JS のコードは型に依存しない）。
+5. マニュアル（`docs/manuals/`）の更新。

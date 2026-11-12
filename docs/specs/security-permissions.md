@@ -673,3 +673,21 @@ CREATE POLICY "inventory images delete authenticated" ON storage.objects
 ### 9.2 未決（ユーザー判断が必要）
 
 現時点で未決事項なし（2026-07-09、#3〜#6 はすべて decided 済み → §9.1 に統合）。
+
+## 10. 下請け会社（2026-11 追加・マイグレーションA）
+
+設計は [`subcontractors.md`](subcontractors.md)。
+
+| 対象 | admin / office | worker | viewer | anon |
+|------|----------------|--------|--------|------|
+| `Subcontractors`（基表） | 読み書き | 不可 | 不可 | 不可 |
+| `SubcontractContracts`（基表） | 読み書き | 不可 | 不可 | 不可 |
+| `subcontractors_directory`（ビュー。標準単価なし） | 読み取り | 読み取り | 不可 | 不可 |
+| `subcontractor_records_directory`（ビュー。単価なし） | 読み取り | 読み取り | 不可 | 不可 |
+| `get_project_subcontract_cost` RPC | 可 | その現場の職長のみ | 不可 | 不可 |
+| `confirm_subcontract_contract` RPC | 可 | 不可 | 不可 | 不可 |
+
+- 暫定契約の作成は `SubcontractorRecords` の BEFORE トリガー（SECURITY DEFINER）が行う。worker は契約の基表に書けない。
+- 2 つのビューは `workers_directory` と同じ SECURITY DEFINER ビュー方式（`current_staff_role() = 'worker' OR is_office_or_admin()` で絞る）。
+- **マイグレーションC（未実施）**: 旧クライアント（PWA）が消えたのを確認してから、`subcontractor_records_select_worker`（worker の全行 SELECT）を撤去し、職長画面は上記ビューと RPC だけを使う。それまでは、worker は基表の `unit_price` を読める（現行どおり）。
+- 匿名の工程表は `get_public_schedule`（トークン付き RPC）のまま。下請け会社の配置行は `Workers` に残るので変更なし。

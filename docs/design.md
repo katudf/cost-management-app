@@ -164,6 +164,8 @@ Supabase (PostgreSQL)
 ├── ProjectTasks           # 工種タスクマスタ
 ├── TaskRecords            # 日報（作業員ごとの工数記録）
 ├── SubcontractorRecords   # 協力業者記録
+├── Subcontractors         # 下請け会社マスタ（docs/specs/subcontractors.md）
+├── SubcontractContracts   # 現場×会社の契約（常用/請負）
 ├── Assignments            # 配置（アサイン）情報
 ├── ProjectSuspensions     # 工事中断期間
 │
@@ -487,7 +489,8 @@ window.addEventListener('beforeunload', (e) => {
   工数差異   = 進捗率 − (実績時間 ÷ 目標時間 × 100) … −5 未満は危険、0 未満は注意
 
 現場全体
-  協力業者費 = Σ(SubcontractorRecords.worker_count × unit_price)
+  協力業者費 = Σ(請負期間外の SubcontractorRecords の worker_count × unit_price) + Σ(請負契約の contract_amount)
+              （契約形態と日付判定は docs/specs/subcontractors.md §4。契約を渡さない従来の呼び出しは全記録を常用として計上）
   予測損益   = Σ工種の予測損益 − 協力業者費
   全体進捗   = Σ(進捗率 × 目標時間) ÷ Σ目標時間
 ```
