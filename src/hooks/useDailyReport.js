@@ -66,6 +66,26 @@ export const fetchSubcontractorRecordsResult = (projectId, date) =>
         .eq('project_id', projectId)
         .eq('date', date);
 
+/**
+ * 下請け会社の一覧（日報の協力業者入力で選ぶ）。標準単価を含まない安全列ビュー。
+ * マイグレーション（20261112000000）の適用前はビューが無く error になる。呼び出し側で空扱いにする。
+ */
+export const fetchSubcontractorDirectoryResult = () =>
+    supabase.from('subcontractors_directory').select('id, name, active')
+        .eq('active', true)
+        .order('id', { ascending: true });
+
+/**
+ * 職長向け: 現場の協力業者費の合計（常用 + 請負）。単価・契約は返さない（DB の RPC が集計する）。
+ * マイグレーション適用前は関数が無く error になる。呼び出し側で従来の記録からの計算に戻す。
+ */
+export const fetchProjectSubcontractCostResult = (projectId, workerId, workerName) =>
+    supabase.rpc('get_project_subcontract_cost', {
+        p_project_id: Number(projectId),
+        p_worker_id: workerId,
+        p_worker_name: workerName,
+    });
+
 /** 指定現場の全日報レコード（職長の進捗確認用）。 */
 export const fetchAllProjectRecordsResult = (projectId) =>
     // 長期の現場では取得上限（1000件）を超えるため、ページを分けて全件取得する

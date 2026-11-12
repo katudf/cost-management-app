@@ -9,6 +9,8 @@ import {
     fetchSubcontractorRecordsResult,
     fetchAllProjectRecordsResult,
     fetchAllSubcontractorRecordsResult,
+    fetchSubcontractorDirectoryResult,
+    fetchProjectSubcontractCostResult,
     fetchLatestRecordDateBefore,
     fetchTaskRecords,
     fetchWorkerDailyRecords,
@@ -118,6 +120,10 @@ const WorkerApp = () => {
     const [hourlyWage, setHourlyWage] = useState(DEFAULT_HOURLY_WAGE);
     const [allProjectRecords, setAllProjectRecords] = useState([]);
     const [allSubcontractorRecords, setAllSubcontractorRecords] = useState([]);
+    // 下請け会社マスタ（日報の協力業者入力で選ぶ）。空のときは従来どおり会社名を手入力する
+    const [subcontractorDirectory, setSubcontractorDirectory] = useState([]);
+    // 職長向けの協力業者費の合計（DB が常用 + 請負を集計）。null のときは記録から計算する（従来の方法）
+    const [serverSubcontractCost, setServerSubcontractCost] = useState(null);
     const [workerDailyAllRecords, setWorkerDailyAllRecords] = useState([]);
     const [dailyBreakSettings, setDailyBreakSettings] = useState(null);
     const [isLoadingBreakSettings, setIsLoadingBreakSettings] = useState(true);
@@ -404,9 +410,13 @@ const WorkerApp = () => {
                     );
                     if (!active) return;
                     setAllSubcontractorRecords(allSubData || []);
+                    const { data: costData, error: costError } = await fetchProjectSubcontractCostResult(selectedProjectId, loggedInWorker.id, loggedInWorker.name);
+                    if (!active) return;
+                    setServerSubcontractCost(costError || costData == null ? null : Number(costData));
                 } else {
                     setAllProjectRecords([]);
                     setAllSubcontractorRecords([]);
+                    setServerSubcontractCost(null);
                 }
             } catch (error) {
                 console.error('Error loading project details:', error);
@@ -417,6 +427,17 @@ const WorkerApp = () => {
         loadProjectDetails();
         return () => { active = false; };
     }, [selectedProjectId, loggedInWorker, selectedDate]);
+
+    // 下請け会社マスタを読み込む（ログイン後に1回。ビューが無い・空のときは手入力のまま）
+    useEffect(() => {
+        if (!loggedInWorker) return undefined;
+        let active = true;
+        (async () => {
+            const { data, error } = await fetchWithCache('subcontractor-directory', () => fetchSubcontractorDirectoryResult());
+            if (active && !error) setSubcontractorDirectory(data || []);
+        })();
+        return () => { active = false; };
+    }, [loggedInWorker]);
 
     // 本人の「承認されました」のお知らせを読み込む（共有アカウントのため、選んだ作業員の分だけ）
     const loadApprovalNotices = useCallback(async () => {
@@ -1417,6 +1438,9 @@ const WorkerApp = () => {
                     if (fromCache) throw new Error('offline');
                     setSubcontractors(freshSubs || []);
                     setDeletedSubcontractorIds([]);
+                    // 保存で変わった協力業者費（トリガーによる単価コピー・暫定契約を含む）を取り直す
+                    const { data: costData, error: costError } = await fetchProjectSubcontractCostResult(selectedProjectId, loggedInWorker.id, loggedInWorker.name);
+                    if (!costError && costData != null) setServerSubcontractCost(Number(costData));
                 } catch (e) {
                     console.error('Refresh subcontractors failed:', e);
                     showToast('日報は保存しましたが、協力業者の一覧を取り直せませんでした。画面を開き直してから再度送信してください。', 'warning');
@@ -1555,12 +1579,13 @@ const WorkerApp = () => {
             actual: allProjectRecords.filter(r => r.project_task_id === t.id).reduce((s, r) => s + Number(r.hours), 0),
             progress: t.progress_percentage || 0,
         }));
-        const summary = summarizeTaskCosts(items, hourlyWage, allSubcontractorRecords);
+        // 協力業者費は DB の集計（常用 + 請負）を使う。取れないとき（適用前など）は従来どおり記録から計算する
+        const summary = summarizeTaskCosts(items, hourlyWage, serverSubcontractCost == null ? allSubcontractorRecords : []);
         foremanSummary = {
             totalTarget: summary.totalTarget,
             totalActual: summary.totalActual,
             overallProgress: Math.round(summary.overallProgress),
-            predictedProfitLoss: Math.round(summary.predictedProfitLoss),
+            predictedProfitLoss: Math.round(summary.predictedProfitLoss - (serverSubcontractCost ?? 0)),
         };
     }
 
@@ -2283,8 +2308,20 @@ const WorkerApp = () => {
                                         <div className="text-center py-4 text-slate-400 text-sm font-bold border-2 border-dashed border-slate-100 rounded-xl">追加ボタンから業者を入力してください</div>
                                     ) : subcontractors.map(s => (
                                         <div key={s.id} className="flex gap-2 items-center bg-slate-50 p-2 rounded-xl border border-slate-100">
-                                            <input type="text" placeholder="会社名" value={s.company_name || ''} onChange={(e) => updateSubcontractor(s.id, 'company_name', e.target.value)}
-                                                className="flex-1 min-w-0 bg-white border border-slate-200 p-2 rounded-lg text-sm font-bold outline-none focus:border-blue-400" />
+                                            {subcontractorDirectory.length > 0 ? (
+                                                <select value={s.company_name || ''} aria-label="会社名" onChange={(e) => updateSubcontractor(s.id, 'company_name', e.target.value)}
+                                                    className="flex-1 min-w-0 bg-white border border-slate-200 p-2 rounded-lg text-sm font-bold outline-none focus:border-blue-400">
+                                                    <option value="">会社を選択</option>
+                                                    {/* 登録外の名前（過去に手入力した記録）は、そのまま選べるように残す */}
+                                                    {s.company_name && !subcontractorDirectory.some(d => d.name === s.company_name) && (
+                                                        <option value={s.company_name}>{s.company_name}</option>
+                                                    )}
+                                                    {subcontractorDirectory.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+                                                </select>
+                                            ) : (
+                                                <input type="text" placeholder="会社名" value={s.company_name || ''} onChange={(e) => updateSubcontractor(s.id, 'company_name', e.target.value)}
+                                                    className="flex-1 min-w-0 bg-white border border-slate-200 p-2 rounded-lg text-sm font-bold outline-none focus:border-blue-400" />
+                                            )}
                                             <div className="flex items-center gap-1 shrink-0">
                                                 <input type="number" min="0.1" step="0.1" value={s.worker_count || ''} onChange={(e) => updateSubcontractor(s.id, 'worker_count', Number(e.target.value))}
                                                     className="w-16 bg-white border border-slate-200 p-2 rounded-lg text-sm text-center font-bold outline-none focus:border-blue-400" />
