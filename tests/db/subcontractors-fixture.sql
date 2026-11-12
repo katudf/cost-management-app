@@ -55,7 +55,7 @@ CREATE VIEW public.workers_directory AS
   FROM public."Workers" WHERE is_staff() OR is_personal_worker();
 GRANT SELECT ON public.workers_directory TO authenticated;
 
-CREATE TABLE public."Projects" (id bigint PRIMARY KEY, name text, foreman_worker_id bigint);
+CREATE TABLE public."Projects" (id bigint PRIMARY KEY, name text, foreman_worker_id bigint, assignment_target_ninku integer);
 CREATE FUNCTION public.is_declared_foreman(p_project_id bigint, p_worker_id bigint, p_worker_name text)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
   SELECT EXISTS (
@@ -99,3 +99,6 @@ INSERT INTO public.office_staff (id, name, auth_user_id, role) VALUES
 
 INSERT INTO public."Workers" (name, display_order) VALUES ('田中 職長', 1), ('鈴木 作業員', 2);
 INSERT INTO public."Projects" (id, name, foreman_worker_id) VALUES (1, '現場A', 1), (2, '現場B', 2);
+
+-- 人工集計（SECURITY INVOKER）のテスト用: 配置と現場は staff / viewer も読める（本番の RLS でも読み取りは開いている）
+GRANT SELECT ON public."Projects", public."Assignments" TO authenticated;

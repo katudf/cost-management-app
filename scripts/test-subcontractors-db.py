@@ -245,6 +245,25 @@ check('the old worker SELECT policy is untouched in phase A', lambda: expect(
     admin_sql("SELECT count(*) FROM pg_policies WHERE tablename='SubcontractorRecords' AND policyname='subcontractor_records_select_worker'"),
     '1', 'policy'))
 
+# ---------- 人工集計（get_project_ninku_summary）から下請けの配置行を除く ----------
+NINKU_BASE = 'supabase/migrations/20261109000000_project_ninku_summary.sql'
+NINKU_EXCLUDE = 'supabase/migrations/20261112020000_ninku_exclude_subcontractors.sql'
+for file in [NINKU_BASE]:
+    result = raw((root / file).read_text(encoding='utf-8'))
+    assert result.returncode == 0, (file, result.stderr)
+admin_sql("""DELETE FROM "Assignments";
+INSERT INTO "Assignments" (date, "workerId", "projectId")
+  SELECT '2026-11-20', id, 1 FROM "Workers" WHERE name IN ('田中 職長', '㈲菊池塗装');""")
+check('before the exclusion migration, a subcontractor row counts as 1 ninku (old behavior)', lambda: expect(
+    run("SELECT round(consumed_ninku, 2) FROM get_project_ninku_summary('2026-12-31', ARRAY[1]::bigint[])", OFFICE), '2.00', 'before'))
+result = raw((root / NINKU_EXCLUDE).read_text(encoding='utf-8'))
+assert result.returncode == 0, result.stderr
+check('after the exclusion migration, only employees are counted', lambda: expect(
+    run("SELECT round(consumed_ninku, 2) FROM get_project_ninku_summary('2026-12-31', ARRAY[1]::bigint[])", OFFICE), '1.00', 'after'))
+check('the exclusion works for roles that cannot read the Workers table', lambda: expect(
+    run("SELECT round(consumed_ninku, 2) FROM get_project_ninku_summary('2026-12-31', ARRAY[1]::bigint[])", VIEWER), '1.00', 'viewer'))
+check('anon cannot call the subcontractor check', lambda: run('SELECT is_subcontractor_worker(1)', fail='permission denied'))
+
 # ---------- マイグレーションB（データ移行）: 別DBで、移行前の状態から流す ----------
 MIGRATION_B = 'supabase/migrations/20261112010000_subcontractors_phase_b_data.sql'
 database_b = 'subcontractors_test_b_' + uuid.uuid4().hex[:12]
