@@ -13,7 +13,7 @@ describe('buildCopiedAssignments', () => {
     const { copiedData, sourceRecords } = buildCopiedAssignments(['w1'], ['2026-09-01'], assignmentLookup);
 
     expect(copiedData).toEqual([
-      { dayOffset: 0, workerOffset: 0, projectId: 'p1', title: 'foo', assignment_order: 0 }
+      { dayOffset: 0, workerOffset: 0, projectId: 'p1', title: 'foo', assignment_order: 0, planned_count: null }
     ]);
     expect(sourceRecords).toEqual([{ id: 'a1', projectId: 'p1', title: 'foo', assignment_order: 0 }]);
   });
@@ -26,9 +26,18 @@ describe('buildCopiedAssignments', () => {
     const { copiedData } = buildCopiedAssignments(['w1'], ['2026-09-01', '2026-09-03'], assignmentLookup);
 
     expect(copiedData).toEqual([
-      { dayOffset: 0, workerOffset: 0, projectId: 'p1', title: 'day0', assignment_order: 0 },
-      { dayOffset: 2, workerOffset: 0, projectId: 'p1', title: 'day2', assignment_order: 1 }
+      { dayOffset: 0, workerOffset: 0, projectId: 'p1', title: 'day0', assignment_order: 0, planned_count: null },
+      { dayOffset: 2, workerOffset: 0, projectId: 'p1', title: 'day2', assignment_order: 1, planned_count: null }
     ]);
+  });
+
+  it('下請け会社の予定人数（planned_count）をコピーに引き継ぐ', () => {
+    const assignmentLookup = {
+      'w1_2026-09-01': [{ id: 'a1', projectId: 'p1', title: null, assignment_order: 0, planned_count: 3 }]
+    };
+    const { copiedData } = buildCopiedAssignments(['w1'], ['2026-09-01'], assignmentLookup);
+
+    expect(copiedData[0].planned_count).toBe(3);
   });
 
   it('複数workerIdの場合、出現順にworkerOffsetを付与する', () => {

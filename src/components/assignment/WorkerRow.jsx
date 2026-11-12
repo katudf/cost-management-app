@@ -74,12 +74,14 @@ const WorkerRow = ({
                     : cellAssignments.map((a, ai) => {
                         const pInfo = a.projectId ? projectMap[a.projectId] : null;
                         const schedType = !a.projectId && a.title ? SCHEDULE_TYPES.find(s => s.title === a.title) : null;
+                        // 下請け会社の予定人数（あれば「 3名」を添える）
+                        const planned = a.planned_count != null && Number(a.planned_count) > 0 ? ` ${Number(a.planned_count)}名` : '';
                         return {
                             key: ai,
-                            displayName: a.title || shortenName(pInfo?.name || ''),
-                            longName: a.title || pInfo?.name || '',
+                            displayName: (a.title || shortenName(pInfo?.name || '')) + planned,
+                            longName: (a.title || pInfo?.name || '') + planned,
                             bgColor: schedType?.color || pInfo?.color || '#94A3B8',
-                            fullName: pInfo?.name || a.title || '',
+                            fullName: (pInfo?.name || a.title || '') + planned,
                             isActual: false
                         };
                     });

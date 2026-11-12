@@ -74,6 +74,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
         handleActionPaste,
         addAssignment,
         removeAssignment,
+        updatePlannedCount,
         handleAssignmentReorder,
         handleProjectReorder,
         updateProjectColor,
@@ -671,6 +672,7 @@ const AssignmentChartTab = ({ projects, workers, allProjectsSummary, setActiveTa
                     clipboard={clipboard}
                     handleAssignmentReorder={handleAssignmentReorder}
                     removeAssignment={removeAssignment}
+                    updatePlannedCount={updatePlannedCount}
                     handlePopupAssign={handlePopupAssign}
                     handleActionCopy={handleActionCopy}
                     handleActionCut={handleActionCut}

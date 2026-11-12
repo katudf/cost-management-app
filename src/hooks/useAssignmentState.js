@@ -30,7 +30,8 @@ export function buildCopiedAssignments(targetWorkerIds, targetDates, assignmentL
                     workerOffset,
                     projectId: a.projectId,
                     title: a.title,
-                    assignment_order: a.assignment_order
+                    assignment_order: a.assignment_order,
+                    planned_count: a.planned_count ?? null
                 });
                 sourceRecords.push(a);
             });
@@ -510,7 +511,8 @@ export function useAssignmentState({
             projectId: r.projectId,
             date: r.date,
             title: r.title,
-            assignment_order: r.assignment_order
+            assignment_order: r.assignment_order,
+            planned_count: r.planned_count ?? null
         }));
         const { data, error } = await supabase.from('Assignments').insert(inserts).select();
         if (error) throw error;
@@ -649,7 +651,8 @@ export function useAssignmentState({
                 projectId: item.projectId,
                 date: dateStr,
                 title: item.title,
-                assignment_order: item.assignment_order
+                assignment_order: item.assignment_order,
+                planned_count: item.planned_count ?? null
             });
         };
 
@@ -681,7 +684,8 @@ export function useAssignmentState({
                 projectId: r.projectId,
                 date: r.date,
                 title: r.title,
-                assignment_order: r.assignment_order
+                assignment_order: r.assignment_order,
+                planned_count: r.planned_count ?? null
             }));
 
             const { data, error } = await supabase.from('Assignments').insert(inserts).select();
@@ -875,6 +879,36 @@ export function useAssignmentState({
                 : '配置の追加に失敗しました。', 'error');
         }
     }, [assignmentLookup, showToast, pushUndo, deleteAssignmentsByIds]);
+
+    // 下請け会社の予定人数（Assignments.planned_count）。空にすると NULL（人数なし）
+    const updatePlannedCount = useCallback(async (assignmentId, count) => {
+        const next = count === '' || count === null || count === undefined ? null : Number(count);
+        if (next !== null && !(next >= 0)) {
+            showToast('人数は0以上で入力してください。', 'error');
+            return;
+        }
+        let previous;
+        setAssignments(prev => prev.map(a => {
+            if (a.id !== assignmentId) return a;
+            previous = a.planned_count ?? null;
+            return { ...a, planned_count: next };
+        }));
+        const { error } = await supabase.from('Assignments').update({ planned_count: next }).eq('id', assignmentId);
+        if (error) {
+            console.error('予定人数の保存エラー:', error);
+            setAssignments(prev => prev.map(a => (a.id === assignmentId ? { ...a, planned_count: previous ?? null } : a)));
+            showToast('予定人数の保存に失敗しました。', 'error');
+            return;
+        }
+        pushUndo({
+            label: '予定人数の変更',
+            undo: async () => {
+                const { error: undoError } = await supabase.from('Assignments').update({ planned_count: previous ?? null }).eq('id', assignmentId);
+                if (undoError) throw undoError;
+                setAssignments(prev => prev.map(a => (a.id === assignmentId ? { ...a, planned_count: previous ?? null } : a)));
+            }
+        });
+    }, [showToast, pushUndo]);
 
     const removeAssignment = useCallback(async (assignmentId) => {
         let removed = null;
@@ -1265,6 +1299,7 @@ export function useAssignmentState({
         addAssignment,
         addAssignmentBatch,
         removeAssignment,
+        updatePlannedCount,
         handleAssignmentReorder,
         handleProjectReorder,
         updateProjectColor,

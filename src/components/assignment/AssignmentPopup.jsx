@@ -18,6 +18,7 @@ const AssignmentPopup = React.forwardRef(({
     clipboard,
     handleAssignmentReorder,
     removeAssignment,
+    updatePlannedCount,
     handlePopupAssign,
     handleActionCopy,
     handleActionCut,
@@ -42,6 +43,9 @@ const AssignmentPopup = React.forwardRef(({
         handlePopupAssign(null, trimmedFreeTitle);
         setFreeTitle('');
     };
+
+    // 下請け会社の配置行か（予定人数を入力できる）
+    const isSubcontractorRow = !!workers.find(w => w.id === editCell.workerId)?.subcontractor_id;
 
     const isMultiWorker = editCell.workerIds && editCell.workerIds.length > 1;
     const workerName = isMultiWorker
@@ -142,6 +146,24 @@ const AssignmentPopup = React.forwardRef(({
                                             )}
                                         </div>
                                         <div className="flex items-center gap-0.5 flex-shrink-0">
+                                            {isSubcontractorRow && a.projectId && updatePlannedCount && (
+                                                <label className="flex items-center gap-0.5 text-[10px] font-bold text-slate-500" onClick={(e) => e.stopPropagation()}>
+                                                    <input
+                                                        key={`${a.id}-${a.planned_count ?? ''}`}
+                                                        type="number"
+                                                        min="0"
+                                                        step="1"
+                                                        defaultValue={a.planned_count ?? ''}
+                                                        aria-label="予定人数"
+                                                        title="予定人数（空欄なら人数なし）"
+                                                        className="w-10 border border-slate-300 rounded px-1 py-0.5 text-right text-xs bg-white"
+                                                        onBlur={(e) => {
+                                                            const v = e.target.value;
+                                                            if (v !== String(a.planned_count ?? '')) updatePlannedCount(a.id, v);
+                                                        }}
+                                                    />名
+                                                </label>
+                                            )}
                                             <button
                                                 onClick={(e) => {
                                                     e.stopPropagation();
