@@ -308,8 +308,9 @@ BEGIN
     END IF;
     NEW.company_name := v_sub.name;
     v_sub_changed := true;
-  ELSIF TG_OP = 'INSERT' OR NEW.company_name IS DISTINCT FROM OLD.company_name OR v_explicit_sub THEN
-    -- 会社名から照合する（一致しなければ NULL）
+  ELSIF TG_OP = 'INSERT' OR NEW.company_name IS DISTINCT FROM OLD.company_name THEN
+    -- 会社名から照合する（一致しなければ NULL）。subcontractor_id を NULL に戻す更新（会社の紐づけを外す）では、
+    -- 会社名が同じなら照合し直さず、未紐づけのままにする
     SELECT * INTO v_sub FROM public."Subcontractors"
      WHERE public.normalize_company_name(name) = public.normalize_company_name(NEW.company_name)
        AND public.normalize_company_name(NEW.company_name) <> ''
@@ -327,12 +328,14 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  -- 請負期間内の記録は常用の原価に入らないので、契約の確保と単価コピーは不要
+  -- 請負期間内の記録は常用の原価に入らないので、契約の確保と単価コピーは不要（単価は 0 のまま）。
+  -- 請負契約の削除・期間の変更や、記録の日付の変更で期間の外に出たときは、単価 0 の記録がここを通り直して単価を得る
+  -- （請負契約の変更は reprice_records_after_ukeoi_change が記録を更新し直す）。
   IF public._subcontractor_in_ukeoi(NEW.project_id::bigint, NEW.subcontractor_id, NEW.date) THEN
     RETURN NEW;
   END IF;
 
-  IF NOT (TG_OP = 'INSERT' OR v_sub_changed) THEN
+  IF NOT (TG_OP = 'INSERT' OR v_sub_changed OR NEW.date IS DISTINCT FROM OLD.date OR COALESCE(NEW.unit_price, 0) = 0) THEN
     RETURN NEW;
   END IF;
 
@@ -367,6 +370,34 @@ DROP TRIGGER IF EXISTS trg_subcontractor_record_prepare ON public."Subcontractor
 CREATE TRIGGER trg_subcontractor_record_prepare
   BEFORE INSERT OR UPDATE ON public."SubcontractorRecords"
   FOR EACH ROW EXECUTE FUNCTION public.subcontractor_record_prepare();
+
+-- 請負契約の削除・変更で、期間の外に出た記録（請負期間内は単価 0 で保存されている）が 0 円のまま常用に戻らないよう、
+-- 単価 0 の記録を更新し直す（上の BEFORE トリガーが、請負期間外なら常用契約の単価をコピーする）。
+-- 現場の削除（ON DELETE CASCADE）の途中では、現場がもう無いので何もしない（暫定契約の作成が外部キーに反するため）。
+CREATE OR REPLACE FUNCTION public.reprice_records_after_ukeoi_change()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF OLD.type = '請負' AND EXISTS (SELECT 1 FROM public."Projects" p WHERE p.id = OLD.project_id) THEN
+    UPDATE public."SubcontractorRecords"
+       SET unit_price = unit_price
+     WHERE project_id = OLD.project_id
+       AND subcontractor_id = OLD.subcontractor_id
+       AND COALESCE(unit_price, 0) = 0;
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.reprice_records_after_ukeoi_change() FROM anon, authenticated, PUBLIC;
+
+DROP TRIGGER IF EXISTS trg_reprice_records_after_ukeoi_change ON public."SubcontractContracts";
+CREATE TRIGGER trg_reprice_records_after_ukeoi_change
+  AFTER UPDATE OR DELETE ON public."SubcontractContracts"
+  FOR EACH ROW EXECUTE FUNCTION public.reprice_records_after_ukeoi_change();
 
 -- ---------- 8. RPC ----------
 -- 暫定契約の確定: 契約の単価を確定し、その契約の対象記録（単価 0/NULL・請負期間外）の単価を一括更新する。

@@ -240,6 +240,37 @@ check('planned_count accepts NULL and positive values, rejects negative', lambda
     admin_sql("INSERT INTO \"Assignments\" (date, \"workerId\", \"projectId\", planned_count) VALUES ('2026-11-22', 1, 1, -1)",
               fail='assignments_planned_count_nonneg'))[-1])
 
+# ---------- 請負契約の変更で、期間の外に出た記録が 0 円のまま常用に戻らない ----------
+# 常用契約の単価は、上の確定で 99999 になっている（現場1・㈲菊池塗装）
+check('shrinking a ukeoi period re-prices the records that leave it', lambda: (
+    expect(admin_sql("SELECT unit_price FROM \"SubcontractorRecords\" WHERE date='2026-11-11'"), '0', 'in period'),
+    admin_sql("UPDATE \"SubcontractContracts\" SET end_date='2026-11-10' "
+              "WHERE type='請負' AND project_id=1 AND subcontractor_id=1 AND start_date='2026-11-10'"),
+    expect(admin_sql("SELECT unit_price FROM \"SubcontractorRecords\" WHERE date='2026-11-11'"), '99999', 'left the period'))[-1])
+admin_sql("INSERT INTO \"SubcontractorRecords\" (project_id, date, company_name, worker_count) VALUES (1, '2026-11-10', '㈲菊池塗装', 2)")
+check('a record created inside a ukeoi period has price 0', lambda: expect(
+    admin_sql("SELECT unit_price FROM \"SubcontractorRecords\" WHERE date='2026-11-10'"), '0', 'in period'))
+check('moving a record out of the ukeoi period by date copies the price', lambda: (
+    admin_sql("UPDATE \"SubcontractorRecords\" SET date='2026-11-21' WHERE date='2026-11-10' AND project_id=1"),
+    expect(admin_sql("SELECT unit_price FROM \"SubcontractorRecords\" WHERE date='2026-11-21'"), '99999', 'moved'))[-1])
+admin_sql("INSERT INTO \"SubcontractorRecords\" (project_id, date, company_name, worker_count) VALUES (1, '2026-11-10', '㈲菊池塗装', 1)")
+check('deleting a ukeoi contract re-prices its records', lambda: (
+    expect(admin_sql("SELECT unit_price FROM \"SubcontractorRecords\" WHERE date='2026-11-10'"), '0', 'in period'),
+    admin_sql("DELETE FROM \"SubcontractContracts\" WHERE type='請負' AND project_id=1 AND subcontractor_id=1 AND start_date='2026-11-10'"),
+    expect(admin_sql("SELECT unit_price FROM \"SubcontractorRecords\" WHERE date='2026-11-10'"), '99999', 'deleted'))[-1])
+check('deleting a project with ukeoi contracts is not blocked by the re-pricing trigger', lambda: (
+    admin_sql('DELETE FROM "Projects" WHERE id=2'),
+    expect(admin_sql('SELECT count(*) FROM "SubcontractContracts" WHERE project_id=2'), '0', 'cascade'))[-1])
+
+# ---------- 会社の紐づけを外す ----------
+check('clearing subcontractor_id keeps the record unlinked (not re-matched by name)', lambda: (
+    admin_sql("UPDATE \"SubcontractorRecords\" SET subcontractor_id=NULL WHERE date='2026-11-02'"),
+    expect(admin_sql("SELECT coalesce(subcontractor_id::text,'null') FROM \"SubcontractorRecords\" WHERE date='2026-11-02'"), 'null', 'cleared'))[-1])
+check('changing the company name afterwards matches it again', lambda: (
+    admin_sql("UPDATE \"SubcontractorRecords\" SET company_name='有限会社菊池塗装' WHERE date='2026-11-02'"),
+    expect(admin_sql("SELECT subcontractor_id||':'||company_name FROM \"SubcontractorRecords\" WHERE date='2026-11-02'"),
+           '1:㈲菊池塗装', 'rematched'))[-1])
+
 # ---------- 旧クライアント互換 ----------
 check('the old worker SELECT policy is untouched in phase A', lambda: expect(
     admin_sql("SELECT count(*) FROM pg_policies WHERE tablename='SubcontractorRecords' AND policyname='subcontractor_records_select_worker'"),

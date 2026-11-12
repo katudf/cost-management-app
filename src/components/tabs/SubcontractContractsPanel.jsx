@@ -72,7 +72,7 @@ const SubcontractContractsPanel = ({ activeProject, subcontractorOps }) => {
         if (contract.type === CONTRACT_TYPE.UKEOI && ('start_date' in patch || 'end_date' in patch)) {
             if (!next.start_date) {
                 showToast('請負の開始日は必須です', 'error');
-                return;
+                return false;
             }
             const others = contracts.filter(c => c.id !== contract.id);
             const n = countReclassifiedRecords(records, contracts, [...others, next]);
@@ -82,10 +82,10 @@ const SubcontractContractsPanel = ({ activeProject, subcontractorOps }) => {
                     message: `${n} 件の協力業者の記録の扱い（請負 ↔ 常用）が変わります。原価が変わりますが、よろしいですか？`,
                     confirmText: '変更する',
                 });
-                if (!ok) return;
+                if (!ok) return false;
             }
         }
-        await updateContract(contract, patch);
+        return updateContract(contract, patch);
     };
 
     const handleDelete = async (contract) => {
@@ -105,7 +105,8 @@ const SubcontractContractsPanel = ({ activeProject, subcontractorOps }) => {
     const handleConfirm = async (contract) => {
         const raw = confirmPrices[contract.id] ?? contract.unit_price ?? 0;
         const price = Number(raw);
-        if (!(price >= 0)) {
+        // 空欄は Number('') = 0 になり、気づかないまま 0 円で確定してしまうので、はっきり止める
+        if (String(raw).trim() === '' || !(price >= 0)) {
             showToast('単価を正しく入力してください', 'error');
             return;
         }
@@ -210,20 +211,34 @@ const SubcontractContractsPanel = ({ activeProject, subcontractorOps }) => {
                                     <td className="p-2">
                                         {c.type === CONTRACT_TYPE.UKEOI ? (
                                             <div className="flex items-center gap-1">
+                                                {/* 入力の途中の値で保存・確認しないよう、フォーカスが外れたときに確定する */}
                                                 <input
+                                                    key={`${c.id}-start-${c.start_date}`}
                                                     type="date"
-                                                    value={c.start_date || ''}
+                                                    defaultValue={c.start_date || ''}
                                                     aria-label="請負の開始日"
                                                     className={inputClass}
-                                                    onChange={(e) => e.target.value && handleUpdate(c, { start_date: e.target.value })}
+                                                    onBlur={async (e) => {
+                                                        const input = e.target;
+                                                        const v = input.value;
+                                                        if (!v) { input.value = c.start_date || ''; return; }
+                                                        if (v === c.start_date) return;
+                                                        if (!(await handleUpdate(c, { start_date: v }))) input.value = c.start_date || '';
+                                                    }}
                                                 />
                                                 <span>〜</span>
                                                 <input
+                                                    key={`${c.id}-end-${c.end_date}`}
                                                     type="date"
-                                                    value={c.end_date || ''}
+                                                    defaultValue={c.end_date || ''}
                                                     aria-label="請負の終了日（空なら継続中）"
                                                     className={inputClass}
-                                                    onChange={(e) => handleUpdate(c, { end_date: e.target.value || null })}
+                                                    onBlur={async (e) => {
+                                                        const input = e.target;
+                                                        const v = input.value || null;
+                                                        if (v === (c.end_date || null)) return;
+                                                        if (!(await handleUpdate(c, { end_date: v }))) input.value = c.end_date || '';
+                                                    }}
                                                 />
                                             </div>
                                         ) : <span className="text-slate-300">-</span>}
