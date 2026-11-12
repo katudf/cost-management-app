@@ -20,6 +20,7 @@
 | [`estimate-workflow.md`](specs/estimate-workflow.md) | 見積書の承認ワークフローと既知課題 |
 | [`login-id.md`](specs/login-id.md) | 独自ログインIDへの切り替え設計（フェーズ1公開済み） |
 | [`worker-login.md`](specs/worker-login.md) | 作業員の個人ログイン（共有アカウント＋名前選択の廃止）設計（フェーズA実装済み・本番未反映） |
+| [`subcontractors.md`](specs/subcontractors.md) | 下請け会社の正式管理（会社マスタ・常用/請負契約・原価・配置表）設計（設計合意済み・未実装） |
 | [`database.md`](specs/database.md) | テーブル定義（DDL）。最終的な正は `supabase/migrations/` |
 
 ## manuals/
