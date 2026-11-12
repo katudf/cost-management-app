@@ -1,5 +1,5 @@
 // HOURLY_WAGE is now dynamically passed as 'hourlyWage' in calculateProjectsSummary
-import { PROJECT_STATUS } from './constants';
+import { PROJECT_STATUS, CONTRACT_TYPE } from './constants';
 
 /**
  * 原価集計の共通コア。
@@ -38,15 +38,50 @@ export function calcPredictedProfitLoss(target, actual, progress, hourlyWage) {
 }
 
 /**
+ * 日報の協力業者記録を「請負期間内」と「常用」に振り分ける。
+ * DB の `_subcontractor_in_ukeoi`（20261112000000）と同じ規則（パリティテストで固定）:
+ *   - 同じ現場・同じ会社の請負契約の期間（開始日〜終了日の両日を含む。終了日 NULL は継続中）に日付が入る記録は請負
+ *   - それ以外（会社に未紐づけの旧記録を含む）は常用
+ * 日付は 'YYYY-MM-DD' の文字列として比べる。
+ * @param {Array<{project_id?: number, subcontractor_id?: number|null, date: string}>} records
+ * @param {Array<{type: string, project_id?: number, subcontractor_id: number, start_date?: string|null, end_date?: string|null}>} contracts
+ * @returns {{joyo: Array, ukeoi: Array}}
+ */
+export function classifySubcontractorRecords(records, contracts) {
+    const ukeoiContracts = (contracts || []).filter(c => c.type === CONTRACT_TYPE.UKEOI && c.start_date);
+    const joyo = [];
+    const ukeoi = [];
+    (records || []).forEach(r => {
+        const inUkeoi = r.subcontractor_id != null && ukeoiContracts.some(c =>
+            c.subcontractor_id === r.subcontractor_id
+            && (c.project_id == null || r.project_id == null || c.project_id === r.project_id)
+            && r.date >= c.start_date
+            && (c.end_date == null || r.date <= c.end_date)
+        );
+        (inUkeoi ? ukeoi : joyo).push(r);
+    });
+    return { joyo, ukeoi };
+}
+
+/**
  * 協力業者原価の合計。
+ *   常用 = 請負期間外の記録の 人数 × 記録の単価
+ *   請負 = 請負契約の契約金額（契約登録時に全額）
+ * contracts を渡さなければ、全記録を常用として計上する（従来どおり）。
  * @param {Array<{worker_count: number|string, unit_price?: number|string}>} subcontractors
+ * @param {Array} [contracts] SubcontractContracts の行
  * @returns {number}
  */
-export function calcSubcontractorCost(subcontractors) {
-    return (subcontractors || []).reduce(
+export function calcSubcontractorCost(subcontractors, contracts = []) {
+    const { joyo } = classifySubcontractorRecords(subcontractors, contracts);
+    const joyoCost = joyo.reduce(
         (sum, s) => sum + Number(s.worker_count) * Number(s.unit_price || 0),
         0
     );
+    const ukeoiCost = (contracts || [])
+        .filter(c => c.type === CONTRACT_TYPE.UKEOI)
+        .reduce((sum, c) => sum + Number(c.contract_amount || 0), 0);
+    return joyoCost + ukeoiCost;
 }
 
 /**
@@ -67,11 +102,12 @@ export function calcWeightedProgress(items) {
  *        呼び出し側でデータ形を吸収して渡す工種の配列
  * @param {number} hourlyWage 時間単価
  * @param {Array<{worker_count: number|string, unit_price?: number|string}>} [subcontractors]
+ * @param {Array} [contracts] 協力業者の契約（常用/請負）。省略時は全記録を常用として計上
  * @returns {{totalTarget: number, totalActual: number, overallProgress: number,
  *            subcontractorCost: number, predictedProfitLoss: number}}
  *          overallProgress は丸めなし。predictedProfitLoss は協力業者原価を差し引いた後の値
  */
-export function summarizeTaskCosts(items, hourlyWage, subcontractors = []) {
+export function summarizeTaskCosts(items, hourlyWage, subcontractors = [], contracts = []) {
     let totalTarget = 0;
     let totalActual = 0;
     let totalPredictedProfitLoss = 0;
@@ -85,7 +121,7 @@ export function summarizeTaskCosts(items, hourlyWage, subcontractors = []) {
         totalPredictedProfitLoss += calcPredictedProfitLoss(target, actual, progress, hourlyWage);
     });
 
-    const subcontractorCost = calcSubcontractorCost(subcontractors);
+    const subcontractorCost = calcSubcontractorCost(subcontractors, contracts);
 
     return {
         totalTarget,
@@ -110,7 +146,7 @@ export const calculateProjectsSummary = (projects, hourlyWage) => {
         }));
 
         const { totalActual, totalTarget, overallProgress: overallProgressValue, predictedProfitLoss } =
-            summarizeTaskCosts(items, hourlyWage, proj.subcontractors);
+            summarizeTaskCosts(items, hourlyWage, proj.subcontractors, proj.subcontractContracts);
 
         let overallProgress = Math.round(overallProgressValue);
         if (proj.status === PROJECT_STATUS.COMPLETED && masterData.length === 0) {

@@ -218,9 +218,10 @@ BEGIN
 
   IF TG_OP = 'INSERT' THEN
     IF coalesce(current_setting('app.skip_subcontractor_worker_create', true), 'off') <> 'on' THEN
-      INSERT INTO public."Workers" (name, display_order, show_in_assignment, subcontractor_id)
+      INSERT INTO public."Workers" (name, worker_type, display_order, show_in_assignment, subcontractor_id)
       VALUES (
         NEW.name,
+        '作業員',
         COALESCE((SELECT max(display_order) FROM public."Workers"), 0) + 1,
         NEW.show_in_assignment AND NEW.active,
         NEW.id

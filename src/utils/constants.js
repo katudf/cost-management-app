@@ -37,6 +37,13 @@ export const DASHBOARD_VIEW_MODE_LIST = [
     DASHBOARD_VIEW_MODE.COMPACT,
 ];
 
+// === 下請けの契約形態（SubcontractContracts.type） ===
+export const CONTRACT_TYPE = {
+    JOYO: '常用',   // 人工 × 単価
+    UKEOI: '請負',  // 工事ごとの固定金額（期間内の人数は原価に算入しない）
+};
+export const CONTRACT_TYPE_LIST = [CONTRACT_TYPE.JOYO, CONTRACT_TYPE.UKEOI];
+
 // === 作業員 属性 ===
 export const WORKER_TYPE = {
     WORKER: '作業員',
