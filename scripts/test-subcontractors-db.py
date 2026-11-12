@@ -245,5 +245,53 @@ check('the old worker SELECT policy is untouched in phase A', lambda: expect(
     admin_sql("SELECT count(*) FROM pg_policies WHERE tablename='SubcontractorRecords' AND policyname='subcontractor_records_select_worker'"),
     '1', 'policy'))
 
+# ---------- マイグレーションB（データ移行）: 別DBで、移行前の状態から流す ----------
+MIGRATION_B = 'supabase/migrations/20261112010000_subcontractors_phase_b_data.sql'
+database_b = 'subcontractors_test_b_' + uuid.uuid4().hex[:12]
+assert raw(f'CREATE DATABASE {database_b}', db='postgres').returncode == 0
+for file in ['tests/db/subcontractors-fixture.sql', MIGRATION]:
+    result = raw((root / file).read_text(encoding='utf-8'), db=database_b)
+    assert result.returncode == 0, (file, result.stderr)
+
+
+def b_sql(sql):
+    result = raw(sql, db=database_b)
+    assert result.returncode == 0, (sql, result.stderr)
+    return result.stdout.strip()
+
+
+# 移行前の状態: Workers に下請け 2 社（subcontractor_id なし）、配置あり、記録は自由記述（単価は 0 と一部非 0）
+b_sql("""INSERT INTO "Workers" (name, display_order) VALUES ('㈲菊池塗装工業所', 3), ('㈲藤澤塗装', 4);
+INSERT INTO "Assignments" (date, "workerId", "projectId") VALUES ('2026-11-02', 3, 1), ('2026-11-02', 4, 1);
+INSERT INTO "SubcontractorRecords" (project_id, date, company_name, worker_count, unit_price) VALUES
+  (1, '2026-10-01', '㈲菊池塗装工業所', 3, 0),
+  (1, '2026-10-02', '有限会社菊池塗装工業所', 2, 24000),
+  (1, '2026-10-03', '(有)菊池塗装工業所', 1, 26000),
+  (1, '2026-10-04', '㈲藤澤塗装', 2, 0),
+  (2, '2026-10-05', '知らない会社', 1, 0);""")
+result_b = raw((root / MIGRATION_B).read_text(encoding='utf-8'), db=database_b)
+assert result_b.returncode == 0, result_b.stderr
+check('B: companies are created and linked to the existing Workers rows (no new rows)', lambda: (
+    expect(b_sql('SELECT count(*) FROM "Workers"'), '4', 'workers'),
+    expect(b_sql('SELECT count(*) FROM "Subcontractors"'), '2', 'subs'),
+    expect(b_sql("SELECT string_agg(name||'='||subcontractor_id, ',' ORDER BY id) FROM \"Workers\" WHERE subcontractor_id IS NOT NULL"),
+           '㈲菊池塗装工業所=1,㈲藤澤塗装=2', 'link'))[-1])
+check('B: assignments are untouched', lambda: expect(b_sql('SELECT count(*) FROM "Assignments"'), '2', 'assignments'))
+check('B: records are matched and names are canonicalized; unknown stays NULL', lambda: expect(
+    b_sql("SELECT string_agg(coalesce(subcontractor_id::text,'null')||':'||company_name, ',' ORDER BY date) FROM \"SubcontractorRecords\""),
+    '1:㈲菊池塗装工業所,1:㈲菊池塗装工業所,1:㈲菊池塗装工業所,2:㈲藤澤塗装,null:知らない会社', 'records'))
+check('B: provisional contract price is the latest non-zero record price, else 0 (needs review)', lambda: expect(
+    b_sql("SELECT string_agg(subcontractor_id||':'||project_id||':'||unit_price||':'||needs_review, ',' ORDER BY subcontractor_id) "
+          "FROM \"SubcontractContracts\""), '1:1:26000:true,2:1:0:true', 'contracts'))
+check('B: zero-price records receive the contract price; non-zero prices are kept', lambda: expect(
+    b_sql("SELECT string_agg(date||'='||unit_price, ',' ORDER BY date) FROM \"SubcontractorRecords\""),
+    '2026-10-01=26000,2026-10-02=24000,2026-10-03=26000,2026-10-04=0,2026-10-05=0', 'prices'))
+rerun_b = raw((root / MIGRATION_B).read_text(encoding='utf-8'), db=database_b)
+check('B: migration is re-runnable and changes nothing', lambda: (
+    expect(rerun_b.returncode, 0, rerun_b.stderr),
+    expect(b_sql('SELECT count(*) FROM "Subcontractors"'), '2', 'subs'),
+    expect(b_sql('SELECT count(*) FROM "SubcontractContracts"'), '2', 'contracts'))[-1])
+
 print(f'{len(passed)} checks passed')
+raw(f'DROP DATABASE {database_b}', db='postgres')
 raw(f'DROP DATABASE {database}', db='postgres')

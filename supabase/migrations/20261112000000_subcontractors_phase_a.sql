@@ -350,7 +350,9 @@ BEGIN
      FOR SHARE;
   END IF;
 
-  IF FOUND AND (COALESCE(NEW.unit_price, 0) = 0 OR (TG_OP = 'UPDATE' AND v_sub_changed)) THEN
+  -- 会社が別の会社に変わる UPDATE では常に再コピーする。未紐づけ（NULL）から紐づく場合は、入っている単価を残す
+  IF FOUND AND (COALESCE(NEW.unit_price, 0) = 0
+                OR (TG_OP = 'UPDATE' AND v_sub_changed AND OLD.subcontractor_id IS NOT NULL)) THEN
     NEW.unit_price := COALESCE(v_contract.unit_price, 0);
   END IF;
 
