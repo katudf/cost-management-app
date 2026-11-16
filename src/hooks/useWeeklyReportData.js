@@ -100,16 +100,22 @@ export const fetchWorkerReportData = async ({
         workAllowanceApprovals = await fetchWorkAllowanceApprovalsForReport(workerName, days[0], days[6]);
     } catch (e) { console.error('Failed to fetch work allowance approvals:', e); }
 
-    // 配置表の現場なし割当（有給 / 休み 等）。実績のない日に区分を表示するために使う
+    // 配置表の現場なし割当（有給 / 休み 等）。実績のない日に区分を、振休には振替元を表示するために使う
     let leaveAssignments = [];
     if (resolvedForemanId !== undefined && resolvedForemanId !== null) {
-        const { data: asgData, error: asgError } = await supabase
+        const fetchLeave = (columns) => supabase
             .from('Assignments')
-            .select('workerId, date, projectId, title')
+            .select(columns)
             .eq('workerId', resolvedForemanId)
             .is('projectId', null)
             .gte('date', days[0])
             .lte('date', days[6]);
+        let { data: asgData, error: asgError } = await fetchLeave('workerId, date, projectId, title, substitute_for_date');
+        // 振替元の列（マイグレーション 20261116000000）が無い DB でも、休みの区分だけは出す
+        if (asgError) {
+            console.error('Failed to fetch leave assignments with substitute_for_date:', asgError);
+            ({ data: asgData, error: asgError } = await fetchLeave('workerId, date, projectId, title'));
+        }
         if (asgError) console.error('Failed to fetch leave assignments:', asgError);
         else leaveAssignments = asgData || [];
     }

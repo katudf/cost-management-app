@@ -23,6 +23,7 @@ import {
 import { Loader2, LogOut, HardHat, CheckCircle2, AlertCircle, BellRing, Save, Trash2, PlusCircle, Clock, X, Wifi, WifiOff, FileText, CalendarDays, CopyPlus, GripVertical, ChevronDown, KeyRound, UserCog } from 'lucide-react';
 import WorkerAssignmentView from './components/worker/WorkerAssignmentView';
 import QuarterTimeSelect from './components/worker/QuarterTimeSelect';
+import DayLeaveSection from './components/worker/DayLeaveSection';
 import { useAuth } from './hooks/useAuth';
 import LoginScreen from './components/auth/LoginScreen';
 import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
@@ -52,6 +53,11 @@ import { generateMultipleWorkersReportPDF } from './utils/pdfExportUtils';
 import { buildWeekDays, buildWeekPrefix, fetchWorkerReportData } from './hooks/useWeeklyReportData';
 import { useProjectNinku } from './hooks/useProjectNinku';
 import { formatNinkuRatio, NINKU_SOURCE_NOTE } from './utils/ninkuDisplay';
+
+// 現場一覧の先頭に出す社内業務用の共通現場
+const COMPANY_TASK_PROJECT_NAME = '【会社】社内業務・雑務';
+// 旧来の有給用の共通現場（日報に時間を入れて有給を記録していた）。今は「この日の休み」欄で配置表に入れるため、現場一覧には出さない
+const LEGACY_LEAVE_PROJECT_NAMES = ['【会社】有給', '有給', '【有給】'];
 
 // 同じ日に別現場で記録した作業時間の合計。netWorkHours / hours は残業を含むため、残業は足さない。
 const sumOtherProjectsHours = (records, projectId, date, breakDurations) => records
@@ -296,6 +302,16 @@ const WorkerApp = () => {
         return () => { active = false; };
     }, [loggedInWorker, selectedDate]);
 
+    // 旧来の有給用の現場は、その日に入力済みのとき（チップから過去分を開いたとき）だけ選べる。
+    // 端末保存から復元した場合などで、入力の無い日に選ばれたままなら選択を外す
+    useEffect(() => {
+        const project = projects.find(p => String(p.id) === String(selectedProjectId));
+        if (!project || !LEGACY_LEAVE_PROJECT_NAMES.includes(project.name)) return;
+        if (workerDailyAllRecords.some(r => String(r.project_id) === String(project.id))) return;
+        setSelectedProjectId('');
+        removeStorage(projectStorageKey);
+    }, [projects, selectedProjectId, workerDailyAllRecords, projectStorageKey]);
+
     // Load tasks when project is selected
     useEffect(() => {
         if (!selectedProjectId || !loggedInWorker) { setTasks([]); return; }
@@ -326,7 +342,7 @@ const WorkerApp = () => {
 
                 // 有給・社内業務などの特別な共通現場で作業項目が未登録の場合は自動生成する（オンライン時のみ）
                 const project = projects.find(p => p.id === Number(selectedProjectId));
-                const COMMON_PROJECT_NAMES = ["【会社】社内業務・雑務", "【会社】有給", "有給", "【有給】"];
+                const COMMON_PROJECT_NAMES = [COMPANY_TASK_PROJECT_NAME, ...LEGACY_LEAVE_PROJECT_NAMES];
                 if (!tFromCache && project && COMMON_PROJECT_NAMES.includes(project.name) && (!tData || tData.length === 0)) {
                     let defaultTaskName = '社内業務・雑務';
                     if (project.name.includes('有給')) {
@@ -1967,6 +1983,9 @@ const WorkerApp = () => {
                         </div>
                     )}
 
+                    {/* この日の休み（有給・振休）。現場を選ばなくても入力でき、配置表に記録する */}
+                    <DayLeaveSection worker={loggedInWorker} date={selectedDate} isOnline={isOnline} records={workerDailyAllRecords} />
+
                     <label className="block text-sm font-bold text-slate-600 mb-2">現場を選択</label>
                     <select value={selectedProjectId} onChange={async (e) => {
                         const value = e.target.value;
@@ -1981,8 +2000,10 @@ const WorkerApp = () => {
                     }}
                         className="w-full bg-white border-2 border-blue-200 text-slate-800 p-4 rounded-xl font-bold text-lg outline-none focus:border-blue-500 shadow-sm appearance-none">
                         <option value="">現場を選ぶ...</option>
-                        {projects.filter(p => ["【会社】社内業務・雑務", "【会社】有給", "有給", "【有給】"].includes(p.name)).map(p => (<option key={p.id} value={p.id}>{p.name}</option>))}
-                        {projects.filter(p => !["【会社】社内業務・雑務", "【会社】有給", "有給", "【有給】"].includes(p.name) && p.status === PROJECT_STATUS.IN_PROGRESS).map(p => (<option key={p.id} value={p.id}>{p.name || '無題の現場'}</option>))}
+                        {projects.filter(p => p.name === COMPANY_TASK_PROJECT_NAME).map(p => (<option key={p.id} value={p.id}>{p.name}</option>))}
+                        {/* 有給は「この日の休み」欄で入れる。旧来の有給用の現場は、入力済み現場のチップから過去分を開いたときだけ出す */}
+                        {projects.filter(p => LEGACY_LEAVE_PROJECT_NAMES.includes(p.name) && String(p.id) === String(selectedProjectId)).map(p => (<option key={p.id} value={p.id}>{p.name}（過去の入力）</option>))}
+                        {projects.filter(p => p.name !== COMPANY_TASK_PROJECT_NAME && !LEGACY_LEAVE_PROJECT_NAMES.includes(p.name) && p.status === PROJECT_STATUS.IN_PROGRESS).map(p => (<option key={p.id} value={p.id}>{p.name || '無題の現場'}</option>))}
                     </select>
                     {/* この現場の消化人工 / 目標人工（全員に表示） */}
                     {selectedProjectId && selectedProjectNinkuLabel && (

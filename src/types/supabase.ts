@@ -57,6 +57,7 @@ export type Database = {
           id: number
           projectId: number | null
           projectTaskId: number | null
+          substitute_for_date: string | null
           title: string | null
           workerId: number | null
         }
@@ -67,6 +68,7 @@ export type Database = {
           id?: number
           projectId?: number | null
           projectTaskId?: number | null
+          substitute_for_date?: string | null
           title?: string | null
           workerId?: number | null
         }
@@ -77,6 +79,7 @@ export type Database = {
           id?: number
           projectId?: number | null
           projectTaskId?: number | null
+          substitute_for_date?: string | null
           title?: string | null
           workerId?: number | null
         }
@@ -1766,6 +1769,10 @@ export type Database = {
       approve_estimate: { Args: { p_estimate_id: number }; Returns: undefined }
       current_staff_role: { Args: never; Returns: string }
       get_next_estimate_seq: { Args: { date_prefix: string }; Returns: string }
+      get_substitute_holiday_candidates: {
+        Args: { p_worker_id: number; p_worker_name: string; p_date: string }
+        Returns: { work_date: string; remaining: number }[]
+      }
       is_admin: { Args: never; Returns: boolean }
       is_approver_staff: { Args: never; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
@@ -1775,6 +1782,10 @@ export type Database = {
       return_estimate: {
         Args: { p_estimate_id: number; p_reason: string }
         Returns: undefined
+      }
+      save_worker_day_leave: {
+        Args: { p_worker_id: number; p_worker_name: string; p_date: string; p_entries: Json }
+        Returns: Json
       }
       save_estimate_items_v2: {
         Args: { p_estimate_id: number; p_items: Json; p_sheets: Json }

@@ -121,6 +121,13 @@ AdminApp
 - Supabase Auth によるログインID＋パスワードログイン（`LoginScreen`。移行期間中はメールアドレスも可。[`specs/login-id.md`](specs/login-id.md)）
 - プロジェクト選択（施工中のみ表示）。選んだ現場の「消化人工 / 目標人工」を全員に表示する
 - 工種タスク別の作業時間・内容入力
+- この日の休み（有給・振休。終日／午前／午後）の入力（`components/worker/DayLeaveSection.jsx`）。現場選択の上に置き、現場を選ばなくても入れられる
+  - 配置表（`Assignments`）の「現場なし」行として RPC `save_worker_day_leave` で保存する（日報の送信とは別。オンライン時のみ）。配置表の現場の行は残したまま休みの行を足す
+  - 振休は振替元（休業日に日報がある日）が必須。1 つの振替元は合計 1 日分まで（`Assignments.substitute_for_date`）。配置表から事務が入れる振休は振替元なしでよい
+  - 休みと作業実績が食い違う（終日休に作業時間、午前休に 12:00 より前の作業、午後休に 13:00 より後の作業）ときは警告だけ出す（`utils/leaveUtils.js`）
+  - 旧来の「【会社】有給」などの有給用の共通現場は現場一覧に出さない（過去分は入力済み現場のチップから開ける）
+  - 就労日報（Excel/PDF）では、作業実績のある日の半日休を最初の空いている現場欄に出し、3 つとも埋まっていれば現場③の作業内容に添える（`utils/reportDayOffUtils.js`）
+  - 振休の振替元は、休みの区分を出した現場欄の「作業内容」に「振替元 11/8(日)」と出す（半日の振休が 2 つなら「振替元(午前) …」のように時間帯を添える。現場③に添える場合は【振休(午後) 振替元 11/8(日)】）。配置表から入れた振替元なしの振休は出さない
 - 協力業者作業記録の追加
 - 残業・作業手当の申請（早出は申請不要）。承認は作業員画面で現場の職長が行う
 - 承認された残業・作業手当のお知らせ（本人が「確認した」を押すまで画面上部に表示。`lib/approvalNotices.js`）
@@ -393,6 +400,7 @@ AdminApp.jsx
 | `useAssignmentState.js` | 配置表の編集状態管理 |
 | `useProjectNinku.js` | 現場ごとの消化人工・目標人工の取得（DB関数 `get_project_ninku_summary`）と目標人工の保存 |
 | `useWorkerAssignments.js` | 作業員別アサインの取得 |
+| `useWorkerLeave.js` | 日報画面の有給・振休の取得・保存と振替元の候補（関数のみ。RPC `save_worker_day_leave` / `get_substitute_holiday_candidates`） |
 | `useInventory.js` | 在庫アイテム・倉庫の取得と入出庫 |
 
 ### サービス層（フック外のDB操作）

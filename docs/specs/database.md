@@ -148,10 +148,17 @@ CREATE TABLE public.Assignments (
   workerId int8,             -- 作業員ID
   projectId int8,            -- プロジェクトID
   projectTaskId int8,        -- 作業項目ID（任意）
-  title text,                -- 備考・注釈
-  assignment_order int8      -- 1日の中の順序
+  title text,                -- 備考・注釈（現場なしの行はスケジュール種別名。有給・振休は半日の「有給(午前)」なども）
+  assignment_order int8,     -- 1日の中の順序
+  planned_count numeric,     -- 下請け会社の予定人数（上記参照）
+  substitute_for_date date   -- 振休の振替元（休業日に出勤した日）。振休・振休(午前)・振休(午後)の行だけ（CHECK 制約）
 );
 ```
+
+- 有給・振休（半日を含む 6 種別）は、作業員が日報画面から RPC `save_worker_day_leave` で入れる（worker は RLS で直接書けない）。
+  1 日は「終日 1 つ」か「午前・午後それぞれ 1 つまで」。日報画面からの振休は振替元が必須で、1 つの振替元は合計 1 日分まで。
+  振替元の候補は RPC `get_substitute_holiday_candidates`（休みを取る日の前後 1 年で、休業日に日報がある日と残り日数）。
+  マイグレーション `20261116000000_worker_day_leave.sql`。権限は [`security-permissions.md`](security-permissions.md) §11。
 
 ---
 

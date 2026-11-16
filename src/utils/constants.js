@@ -192,10 +192,16 @@ export const DEFAULT_COLORS = [
 ];
 
 // === 配置表 スケジュール種別 ===
+// 有給・振休（半日を含む 6 種別）は作業員も日報画面から入力する（src/utils/leaveUtils.js）。
+// title は DB 関数 save_worker_day_leave / _leave_part と同じ文字列にすること。
 export const SCHEDULE_TYPES = [
     { title: '有給', color: '#F59E0B', icon: '🏖️' },
+    { title: '有給(午前)', color: '#FBBF24', icon: '🏖️' },
+    { title: '有給(午後)', color: '#FBBF24', icon: '🏖️' },
     { title: '休み', color: '#6B7280', icon: '💤' },
     { title: '振休', color: '#6366F1', icon: '🔄' },
+    { title: '振休(午前)', color: '#818CF8', icon: '🔄' },
+    { title: '振休(午後)', color: '#818CF8', icon: '🔄' },
     { title: '健診', color: '#10B981', icon: '🏥' },
     { title: '会社', color: '#8B5CF6', icon: '🏢' },
     { title: '講習会', color: '#EC4899', icon: '📚' },

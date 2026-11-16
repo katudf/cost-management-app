@@ -1,6 +1,6 @@
 import { calculateNinku, formatTimeDisplay } from './workTimeUtils';
 import { buildDayOvertimeLines } from './overtimeReportUtils';
-import { getReportDayOffLabel } from './reportDayOffUtils';
+import { getReportDayOffLabel, getReportHalfDayLeaveLabel, getReportSubstituteNotes } from './reportDayOffUtils';
 
 /**
  * 共通のCSSスタイル定義
@@ -257,6 +257,15 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
         });
     });
 
+    // 作業実績のある日の半日休（有給(午前) など）。最初の空いている現場欄に出し、3 つとも埋まっていれば現場③の作業内容に添える
+    const halfDayLeaveLabels = {};
+    days.forEach(d => {
+        halfDayLeaveLabels[d] = getReportHalfDayLeaveLabel(d, {
+            hasRecords: (dateProjectMap[d] || []).length > 0,
+            leaveAssignments,
+        });
+    });
+
     // 日付ヘッダー
     const dateHeaders = days.map((d, i) => {
         const parts = d.split('-');
@@ -292,6 +301,10 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
                 }
                 timeRow += `<td class="data-cell time-data${sizeClass}" colspan="2" style="${timeStyle}">${timeText || ': 　〜　:'}</td>`;
                 const uniqueItems = [...new Set(group.items)];
+                if (g === 2 && halfDayLeaveLabels[d]) {
+                    const notes = getReportSubstituteNotes(d, { leaveAssignments, halfDayOnly: true });
+                    uniqueItems.push(`【${[halfDayLeaveLabels[d], ...notes].join(' ')}】`);
+                }
                 let contentStyle = '';
                 if (uniqueItems.length >= 6) {
                     contentStyle = 'font-size: 7.0px; line-height: 1.1;';
@@ -301,10 +314,13 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
                     contentStyle = 'font-size: 9.5px; line-height: 1.1;';
                 }
                 contentRow += `<td class="data-cell content-data" colspan="2" style="${contentStyle}">${uniqueItems.map(i => esc(i)).join('<br/>')}</td>`;
-            } else if (g === 0 && dayOffLabels[d]) {
-                nameRow += `<td class="data-cell site-name${sizeClass}" colspan="2">${esc(dayOffLabels[d])}</td>`;
+            } else if ((g === 0 && dayOffLabels[d]) || (g > 0 && g === (dateProjectMap[d] || []).length && halfDayLeaveLabels[d])) {
+                const label = g === 0 ? dayOffLabels[d] : halfDayLeaveLabels[d];
+                // 振休の振替元は作業内容の欄に出す（作業実績のある日は半日の振休だけ）
+                const notes = getReportSubstituteNotes(d, { leaveAssignments, halfDayOnly: g > 0 });
+                nameRow += `<td class="data-cell site-name${sizeClass}" colspan="2">${esc(label)}</td>`;
                 timeRow += `<td class="data-cell time-data${sizeClass}" colspan="2">&nbsp;</td>`;
-                contentRow += `<td class="data-cell content-data" colspan="2">&nbsp;</td>`;
+                contentRow += `<td class="data-cell content-data" colspan="2">${notes.length > 0 ? notes.map(n => esc(n)).join('<br/>') : '&nbsp;'}</td>`;
             } else {
                 nameRow += `<td class="data-cell site-name${sizeClass}" colspan="2">&nbsp;</td>`;
                 timeRow += `<td class="data-cell time-data${sizeClass}" colspan="2">: 　〜　:</td>`;

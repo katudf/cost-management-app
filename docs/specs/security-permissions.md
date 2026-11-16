@@ -691,3 +691,16 @@ CREATE POLICY "inventory images delete authenticated" ON storage.objects
 - 2 つのビューは `workers_directory` と同じ SECURITY DEFINER ビュー方式（`current_staff_role() = 'worker' OR is_office_or_admin()` で絞る）。
 - **マイグレーションC（未実施）**: 旧クライアント（PWA）が消えたのを確認してから、`subcontractor_records_select_worker`（worker の全行 SELECT）を撤去し、職長画面は上記ビューと RPC だけを使う。それまでは、worker は基表の `unit_price` を読める（現行どおり）。
 - 匿名の工程表は `get_public_schedule`（トークン付き RPC）のまま。下請け会社の配置行は `Workers` に残るので変更なし。
+
+## 11. 日報画面からの有給・振休（2026-11 追加）
+
+マイグレーション `20261116000000_worker_day_leave.sql`。`Assignments` の RLS（worker は SELECT のみ）は変えず、次の RPC で書き込む。
+
+| RPC | admin / office | worker | viewer | anon |
+|-----|----------------|--------|--------|------|
+| `save_worker_day_leave(p_worker_id, p_worker_name, p_date, p_entries)` | 可（代理入力） | 可 | 不可 | 不可 |
+| `get_substitute_holiday_candidates(p_worker_id, p_worker_name, p_date)` | 可 | 可 | 不可 | 不可 |
+
+- 対象の作業員は `_effective_worker` で決める（個人アカウントは本人に固定、担当者と共有アカウントは申告どおり。`save_daily_report` と同じ）。日報は名前、休みの行は ID で引くため、`is_declared_worker` で ID と名前の組も確かめる。
+- 書き換えるのは、その作業員・その日の「現場なし」で title が有給・振休 6 種別（`有給` `有給(午前)` `有給(午後)` `振休` `振休(午前)` `振休(午後)`）の行だけ。現場の行や他の種別の行には触れない。
+- 振休は振替元（`substitute_for_date`）が必須。振替元は休業日（日曜・会社カレンダーの休日）で、その作業員の日報がある日に限る。1 つの振替元は合計 1 日分（終日 1、半日 0.5）まで。同じ作業員の同時保存は advisory lock で直列にする。

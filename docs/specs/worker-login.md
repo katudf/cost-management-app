@@ -102,6 +102,7 @@ RLS の本人限定（§8）まで残る（§3.4）。
 | `delete_worker_project_day` | `p_worker_name` | `20261105020000` |
 | `approve_overtime` / `approve_work_allowance` | `p_approver_worker_id` / `p_approver_name` | `20261105030000` |
 | `acknowledge_approvals` | `p_worker_id` / `p_worker_name` | `20261105030000` |
+| `save_worker_day_leave` / `get_substitute_holiday_candidates` | `p_worker_id` / `p_worker_name` | `20261116000000`（最初から `_effective_worker` を使う） |
 
 - **`is_personal_worker()` のとき**: 作業員IDは `current_worker_id()`、名前はその `Workers.name` を使い、引数は無視する
   （名前だけでなくIDでも一致させる。同じ名前の別人がいても通らない）。

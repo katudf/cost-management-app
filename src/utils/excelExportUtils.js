@@ -1,7 +1,7 @@
 import * as xlsx from 'xlsx-js-style';
 import { calculateNinku, calculateNinkuExact, roundNinku, formatTimeDisplay, splitRecordOvertime } from './workTimeUtils';
 import { buildDayOvertimeLines } from './overtimeReportUtils';
-import { getReportDayOffLabel } from './reportDayOffUtils';
+import { getReportDayOffLabel, getReportHalfDayLeaveLabel, getReportSubstituteNotes } from './reportDayOffUtils';
 import layoutData from '../layout_react.json';
 import * as fflate from 'fflate';
 
@@ -563,7 +563,20 @@ const createWorkerReportSheet = (workerName, days, recordsData, projects, subcon
                         leaveAssignments,
                         companyHolidays,
                     });
-                    if (label) grid[baseRow][mc] = label;
+                    if (label) {
+                        grid[baseRow][mc] = label;
+                        // 振休の振替元は作業内容の欄に出す
+                        if (dateProjectMap[d].length === 0) {
+                            grid[baseRow + 2][mc] = getReportSubstituteNotes(d, { leaveAssignments }).join('\n');
+                        }
+                    }
+                } else if (g === dateProjectMap[d].length) {
+                    // 作業実績のある日の半日休（有給(午前) など）は、最初の空いている現場欄に出す
+                    const halfLabel = getReportHalfDayLeaveLabel(d, { hasRecords: true, leaveAssignments });
+                    if (halfLabel) {
+                        grid[baseRow][mc] = halfLabel;
+                        grid[baseRow + 2][mc] = getReportSubstituteNotes(d, { leaveAssignments, halfDayOnly: true }).join('\n');
+                    }
                 }
                 return;
             }
@@ -573,6 +586,14 @@ const createWorkerReportSheet = (workerName, days, recordsData, projects, subcon
             // 時間と作業内容の対応関係を保って改行出力
             const timeSlotLines = group.sortedSlots.map(s => s.timeSlot);
             const taskLines = group.sortedSlots.map(s => s.items.join('、'));
+            // 現場欄が 3 つとも埋まっている日の半日休は、現場③の作業内容の後ろに添える
+            if (g === 2) {
+                const halfLabel = getReportHalfDayLeaveLabel(d, { hasRecords: true, leaveAssignments });
+                if (halfLabel) {
+                    const notes = getReportSubstituteNotes(d, { leaveAssignments, halfDayOnly: true });
+                    taskLines.push(`【${[halfLabel, ...notes].join(' ')}】`);
+                }
+            }
 
             grid[baseRow + 1][mc] = timeSlotLines.join('\n');
             grid[baseRow + 2][mc] = taskLines.join('\n');
