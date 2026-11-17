@@ -29,6 +29,21 @@ import {
 import { buildSheetRowsShared } from './sheetRowLayout';
 import { formatNumberInput, formatQuantityInput, parseNumberInput } from './numberInputFormat';
 import { ROW_DRAG_TYPE, isRowDragEvent } from './rowBulkOps';
+import { RANGE_COLS, rangeColOf } from './cellRangeOps';
+
+// セル範囲選択の強調色
+const RANGE_BG = 'rgba(37, 99, 235, 0.14)';
+// 範囲選択の対象セル（外側の枠 div）に付ける目印と強調表示。rangeKeys は `${uid}:${col}` の集合
+const rangeCell = (baseStyle, uid, col, rangeKeys) => {
+  const on = !!rangeKeys && (col === '*'
+    ? RANGE_COLS.some(c => rangeKeys.has(`${uid}:${c}`))
+    : rangeKeys.has(`${uid}:${col}`));
+  return {
+    'data-cell-uid': uid,
+    'data-cell-col': col === '*' ? 'name' : col,
+    style: on ? { ...baseStyle, background: RANGE_BG } : baseStyle,
+  };
+};
 
 // 空行センチネル（design.md §4: 空行は保持し、category_symbol で識別する）
 const BLANK_SENTINEL = '__blank__';
@@ -164,6 +179,15 @@ const TextCell = ({ uid, col, value, align, color, bold, italic, placeholder, on
 // カンマ区切りの数値入力欄（フォーカス中は生値、blur で整形表示）
 const NumberCell = ({ uid, col, value, format, onChange, onPaste, onKeyDown }) => {
   const [draft, setDraft] = useState(null);
+  // この欄の入力で送った最後の値。これと違う値が来たら、範囲への貼り付け・消去や元に戻すなど
+  // 外からの変更なので、入力中の表示（draft）もその値に合わせる
+  const emittedRef = useRef(value);
+  useEffect(() => {
+    if (draft !== null && value !== emittedRef.current) {
+      emittedRef.current = value;
+      setDraft(String(value ?? ''));
+    }
+  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
   const fmtFn = format || formatNumberInput;
   const displayValue = draft !== null ? draft : fmtFn(value);
   return (
@@ -173,10 +197,12 @@ const NumberCell = ({ uid, col, value, format, onChange, onPaste, onKeyDown }) =
       data-uid={uid}
       data-col={col}
       value={displayValue}
-      onFocus={() => setDraft(String(value ?? ''))}
+      onFocus={() => { emittedRef.current = value; setDraft(String(value ?? '')); }}
       onChange={(e) => {
         setDraft(e.target.value);
-        onChange(col, parseNumberInput(e.target.value));
+        const parsed = parseNumberInput(e.target.value);
+        emittedRef.current = parsed;
+        onChange(col, parsed);
       }}
       onBlur={() => setDraft(null)}
       onPaste={onPaste}
@@ -211,7 +237,12 @@ const UnitCell = ({ uid, col, value, onChange, onPaste, onKeyDown }) => {
   };
 
   const handleKeyDown = (e) => {
-    if (showSug && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+    // Shift を押したら候補を閉じる（下のセルへの Shift+クリック・Shift+↑↓ での範囲選択を候補が奪わないように）
+    if (e.key === 'Shift' && showSug) {
+      setShowSug(false);
+      setHighlightIdx(-1);
+    }
+    if (showSug && !e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
       e.preventDefault();
       const dir = e.key === 'ArrowDown' ? 1 : -1;
       setHighlightIdx((prev) => {
@@ -275,7 +306,10 @@ const UnitCell = ({ uid, col, value, onChange, onPaste, onKeyDown }) => {
             <button
               key={u}
               type="button"
-              onMouseDown={() => commit(u)}
+              onMouseDown={(e) => {
+                if (forwardShiftClickToCell(e)) { setShowSug(false); setHighlightIdx(-1); return; }
+                commit(u);
+              }}
               onMouseEnter={() => setHighlightIdx(i)}
               style={{
                 display: 'block',
@@ -298,6 +332,27 @@ const UnitCell = ({ uid, col, value, onChange, onPaste, onKeyDown }) => {
       )}
     </div>
   );
+};
+
+// 候補リストの上での Shift+クリックは候補を確定せず、リストの下にある明細セルへの
+// Shift+クリック（範囲選択）として渡し直す。渡せたら true
+const forwardShiftClickToCell = (e) => {
+  if (!e.shiftKey) return false;
+  // 元のクリックは候補リスト（セル以外）なので、そのまま伝わると範囲の解除になる
+  e.preventDefault(); // 候補ボタンへフォーカスを移さない（入力中のセルにカーソルを残す）
+  e.stopPropagation();
+  // 候補リストのすぐ下にある要素だけを見る（全画面表示の裏にある通常表示のセルは拾わない）。
+  // 候補リストは body 直下に出すので、シートは入力中のセル（フォーカスは残っている）から求める
+  const list = e.currentTarget.parentElement;
+  const sheet = document.activeElement?.closest?.('[id^="paper-sheet-"]');
+  const below = document.elementsFromPoint(e.clientX, e.clientY).find(el => !list?.contains(el));
+  const cell = below?.closest?.('[data-cell-uid]');
+  if (!cell || !sheet?.contains(cell)) return true; // 下にセルが無くても、候補は確定しない
+  cell.dispatchEvent(new MouseEvent('mousedown', {
+    bubbles: true, cancelable: true, button: 0, buttons: 1, shiftKey: true,
+    clientX: e.clientX, clientY: e.clientY,
+  }));
+  return true;
 };
 
 // 品名入力欄（過去の見積明細からの候補付き）。
@@ -347,8 +402,10 @@ const NameCell = ({ uid, col, value, onChange, onPaste, onKeyDown, onSearch, onP
   };
 
   const handleKeyDown = (e) => {
+    // Shift を押したら候補を閉じる（範囲選択の Shift+クリック・Shift+↑↓ を候補が奪わないように）
+    if (e.key === 'Shift' && open) close();
     if (open && !e.nativeEvent?.isComposing) {
-      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      if (!e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
         e.preventDefault();
         const dir = e.key === 'ArrowDown' ? 1 : -1;
         setHighlightIdx((prev) => {
@@ -416,7 +473,10 @@ const NameCell = ({ uid, col, value, onChange, onPaste, onKeyDown, onSearch, onP
               type="button"
               role="option"
               aria-selected={i === highlightIdx}
-              onMouseDown={() => pick(s)}
+              onMouseDown={(e) => {
+                if (forwardShiftClickToCell(e)) { close(); return; }
+                pick(s);
+              }}
               onMouseEnter={() => setHighlightIdx(i)}
               style={{
                 display: 'block',
@@ -703,7 +763,7 @@ const rowSelectionDecor = (item, edit, selection, dropLine) => {
 // 行レンダリング
 // ============================================================
 // edit = 編集ハンドラ束（null なら読み取り専用）
-const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom, cycleUids, selection, dropLine }, edit) => {
+const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom, cycleUids, selection, dropLine, rangeKeys }, edit) => {
   const rowStyle = {
     ...rowBase,
     ...(isSolidBottom || isLastRowOfPage ? { borderBottom: solidBottom } : {}),
@@ -736,7 +796,7 @@ const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom, cycleUids, sel
           style={{ ...rowStyle, background: COLORS.categoryBg }}>
           {toolbar}
           {decor}
-          <div style={{ ...CELLS.no, borderRight: 'none' }}>
+          <div {...(editable ? rangeCell({ ...CELLS.no, borderRight: 'none' }, uid, '*', rangeKeys) : { style: { ...CELLS.no, borderRight: 'none' } })}>
             {editable ? (
               <input
                 type="text"
@@ -745,12 +805,13 @@ const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom, cycleUids, sel
                 value={item.category_symbol || ''}
                 placeholder="A"
                 onChange={(e) => edit.onUpdateItem(uid, 'category_symbol', e.target.value)}
+                onPaste={(e) => edit.onCellPaste(e, uid, true)}
                 onKeyDown={edit.onKeyDown}
                 style={{ ...inputBase, textAlign: 'center', fontWeight: 'bold' }}
               />
             ) : (item.category_symbol || '')}
           </div>
-          <div style={{ ...CELLS.name, flex: 7, borderRight: 'none', fontWeight: 'bold' }}>
+          <div {...(editable ? rangeCell({ ...CELLS.name, flex: 7, borderRight: 'none', fontWeight: 'bold' }, uid, '*', rangeKeys) : { style: { ...CELLS.name, flex: 7, borderRight: 'none', fontWeight: 'bold' } })}>
             {editable ? (
               <input
                 type="text"
@@ -759,6 +820,7 @@ const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom, cycleUids, sel
                 value={item.name || ''}
                 placeholder="工種名"
                 onChange={(e) => edit.onUpdateItem(uid, 'name', e.target.value)}
+                onPaste={(e) => edit.onCellPaste(e, uid, true)}
                 onKeyDown={edit.onKeyDown}
                 style={{ ...inputBase, fontWeight: 'bold' }}
               />
@@ -781,10 +843,11 @@ const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom, cycleUids, sel
           {toolbar}
           {decor}
           <div style={CELLS.no} />
-          <div style={{ ...CELLS.name, flex: 1, borderRight: 'none' }}>
+          <div {...(editable ? rangeCell({ ...CELLS.name, flex: 1, borderRight: 'none' }, uid, '*', rangeKeys) : { style: { ...CELLS.name, flex: 1, borderRight: 'none' } })}>
             {editable ? (
               <TextCell uid={uid} col="name" value={item.name} italic color={COLORS.noteInk}
                 placeholder="コメント" onChange={(c, v) => edit.onUpdateItem(uid, c, v)}
+                onPaste={(e) => edit.onCellPaste(e, uid, true)}
                 onKeyDown={edit.onKeyDown} />
             ) : (item.name)}
           </div>
@@ -831,39 +894,39 @@ const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom, cycleUids, sel
           {toolbar}
           {decor}
           <div style={CELLS.no}>{itemNo ?? ''}</div>
-          <div style={CELLS.name}>
+          <div {...rangeCell(CELLS.name, uid, 'name', rangeKeys)}>
             {lockName
               ? item.name
               : <NameCell uid={uid} col="name" value={item.name} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown}
                   onSearch={edit.onSearchItemSuggestions}
                   onPick={edit.onPickItemSuggestion ? (s) => edit.onPickItemSuggestion(uid, s) : undefined} />}
           </div>
-          <div style={CELLS.spec}>
+          <div {...rangeCell(CELLS.spec, uid, 'spec', rangeKeys)}>
             <TextCell uid={uid} col="spec" value={item.spec} color={COLORS.subInk} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />
           </div>
-          <div style={CELLS.qty}>
+          <div {...rangeCell(CELLS.qty, uid, 'quantity', rangeKeys)}>
             {lockQty
               ? (item.quantity != null && item.quantity !== '' ? formatQuantityInput(item.quantity) : '')
               : <NumberCell uid={uid} col="quantity" value={item.quantity} format={formatQuantityInput} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />}
           </div>
-          <div style={CELLS.unit}>
+          <div {...rangeCell(CELLS.unit, uid, 'unit', rangeKeys)}>
             {lockUnit
               ? (item.unit || '')
               : <UnitCell uid={uid} col="unit" value={item.unit} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />}
           </div>
-          <div style={CELLS.price}>
+          <div {...rangeCell(CELLS.price, uid, 'unit_price', rangeKeys)}>
             {lockPrice
               ? (item.unit_price != null && item.unit_price !== '' ? fmt(item.unit_price) : '')
               : <NumberCell uid={uid} col="unit_price" value={item.unit_price} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />}
           </div>
           {/* 金額は自動計算（数量×単価）だが非リンク行は手入力での上書きも許容。Tabナビ対象外 */}
-          <div style={CELLS.amount}>
+          <div {...rangeCell(CELLS.amount, uid, 'amount', rangeKeys)}>
             {(lockPrice)
               ? (item.amount != null && item.amount !== '' ? fmt(item.amount) : '')
               : <NumberCell uid={uid} col="__amount" value={item.amount}
                   onChange={(_c, v) => edit.onUpdateItem(uid, 'amount', v)} onPaste={paste} onKeyDown={edit.onKeyDown} />}
           </div>
-          <div style={CELLS.note}>
+          <div {...rangeCell(CELLS.note, uid, 'note', rangeKeys)}>
             {lockNote
               ? <span style={{ color: COLORS.noteInk }}>{item.note || ''}</span>
               : <TextCell uid={uid} col="note" value={item.note} color={COLORS.noteInk} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />}
@@ -1004,6 +1067,13 @@ const SheetPaper = ({
   // ── 品名の入力補完（任意） ──
   onSearchItemSuggestions, // (query) => Promise<候補[]>  過去の見積明細からの候補
   onPickItemSuggestion,    // (uid, 候補) => void  品名・仕様・単位・単価を反映
+  // ── セルの範囲選択（任意） ──
+  cellRangeKeys,     // このシートで範囲に入っているセル `${uid}:${col}` の Set
+  onCellRangeSet,    // (anchor|null, focus) => void  範囲の両端（anchor null は今の範囲のアンカーのまま）
+  onCellRangeStep,   // (from, dir) => void  Shift+↑↓ で先端を上下へ
+  onCellRangeClear,  // () => void
+  onCellRangeDelete, // () => void | null  範囲の消去（このシートに範囲があるときだけ）
+  onCellRangePaste,  // (text) => boolean | null  範囲への貼り付け
 }) => {
   const isTopSheet = sheetIndex === 0;
   const rows = buildSheetRows(items, header, isTopSheet, totals, sheetTotal, showTotalRow);
@@ -1069,6 +1139,8 @@ const SheetPaper = ({
 
   // Tab/Enter=次セル、Shift+Tab=前セル、矢印上下=同列の前後行セルへ。
   // 末尾セルで Tab/Enter を押したら新規 ITEM 行を追加してその name へ。
+  const rangeActive = editable && !!cellRangeKeys && cellRangeKeys.size > 0;
+
   const handleKeyDown = useCallback((e) => {
     if (!editable) return;
     // IME変換中は無視
@@ -1076,6 +1148,35 @@ const SheetPaper = ({
     const uid = e.target.dataset?.uid;
     const col = e.target.dataset?.col;
     if (!uid || !col) return;
+
+    // ── セルの範囲選択 ──
+    // Shift+↑↓: 範囲を上下へ広げる（文字選択に使う Shift+←→ はそのまま）
+    if (e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      const rcol = rangeColOf(col);
+      if (rcol && onCellRangeStep) {
+        e.preventDefault();
+        onCellRangeStep({ uid, col: rcol }, e.key === 'ArrowUp' ? -1 : 1);
+        return;
+      }
+    }
+    if (rangeActive) {
+      if (e.key === 'Escape') {
+        // 全画面表示を閉じる Esc より先に、範囲の解除だけを行う
+        e.preventDefault();
+        e.stopPropagation();
+        onCellRangeClear?.();
+        return;
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && onCellRangeDelete) {
+        e.preventDefault();
+        onCellRangeDelete();
+        return;
+      }
+      // Ctrl/⌘ との組み合わせ（コピー・貼り付け・元に戻す等）と修飾キー単独は範囲を保つ。
+      // それ以外（文字の入力・IME開始・移動キー）は範囲を解除して通常どおり処理する
+      const modifierOnly = ['Shift', 'Control', 'Alt', 'Meta'].includes(e.key);
+      if (!modifierOnly && !e.ctrlKey && !e.metaKey) onCellRangeClear?.();
+    }
 
     const idx = navCells.findIndex((c) => c.uid === uid && c.col === col);
     if (idx < 0) return;
@@ -1110,29 +1211,92 @@ const SheetPaper = ({
         }
       }
     }
-  }, [editable, navCells, focusCell, addRowAndFocus]);
+  }, [editable, navCells, focusCell, addRowAndFocus, rangeActive, onCellRangeStep, onCellRangeClear, onCellRangeDelete]);
 
-  // セルへの TSV 貼り付け（複数行 or タブ区切りを含む場合のみ横取り）。
-  // 単一値の貼り付けはブラウザ既定（当該セルへの通常貼付）に任せる。
-  const handleCellPaste = useCallback((e, uid) => {
+  // セルへの貼り付け。
+  //   1) この画面でコピーした行（工種行・コメント行・リンクを含む）→ その行の下に行ごと挿入
+  //   2) セルの範囲を選んでいる → 範囲へ貼り付け（1つの値なら範囲全体、複数セルなら左上から範囲内だけ）
+  //   3) 複数行 or タブ区切り → カーソルのある列から流し込み（行が足りなければ追加）
+  //   単一値はブラウザ既定（当該セルへの通常貼付）に任せる。
+  // rangeOnly=true（工種行・コメント行）は 3) を行わない。
+  const handleCellPaste = useCallback((e, uid, rangeOnly = false) => {
     if (!editable) return;
     const text = e.clipboardData?.getData('text/plain') ?? '';
-    // この画面でコピーした行（工種行・コメント行・リンクを含む）なら、その行の下に行ごと挿入する
     const html = e.clipboardData?.getData('text/html') ?? '';
     if (onPasteRows && onPasteRows(uid, { html, text })) {
       e.preventDefault();
       return;
     }
+    if (rangeActive && onCellRangePaste) {
+      if (onCellRangePaste(text)) e.preventDefault();
+      return;
+    }
+    if (rangeOnly) return;
     if (!text.includes('\t') && !text.includes('\n')) return;
     e.preventDefault();
-    onPasteTsv(uid, text);
-  }, [editable, onPasteTsv, onPasteRows]);
+    onPasteTsv(uid, text, e.target?.dataset?.col);
+  }, [editable, onPasteTsv, onPasteRows, rangeActive, onCellRangePaste]);
+
+  // ── マウスでの範囲選択 ──
+  // Shift+クリック: 今のカーソル位置（範囲があればそのアンカー）からクリックしたセルまで。
+  // ドラッグ: 押したセルから別のセルへ動いたら範囲に切り替える（同じセル内のドラッグは文字選択のまま）。
+  const rangeDragRef = useRef(null); // { uid, col, last } 押したセル
+  const cellOf = (el) => {
+    const cell = el instanceof Element ? el.closest('[data-cell-uid]') : null;
+    if (!cell || !sheetRef.current?.contains(cell)) return null;
+    return { uid: cell.getAttribute('data-cell-uid'), col: cell.getAttribute('data-cell-col') };
+  };
+  const handleSheetMouseDown = (e) => {
+    if (!editable || !onCellRangeSet || e.button !== 0) return;
+    const cell = cellOf(e.target);
+    if (!cell) return;
+    if (e.shiftKey) {
+      e.preventDefault(); // フォーカス移動と文字選択をさせない
+      let anchor = null;
+      if (!rangeActive) {
+        const a = document.activeElement;
+        const rcol = a?.dataset?.col ? rangeColOf(a.dataset.col) : null;
+        anchor = a?.dataset?.uid && rcol && sheetRef.current?.contains(a) ? { uid: a.dataset.uid, col: rcol } : cell;
+      }
+      onCellRangeSet(anchor, cell);
+      return;
+    }
+    rangeDragRef.current = { ...cell, last: null };
+    if (rangeActive) onCellRangeClear?.();
+  };
+  useEffect(() => {
+    if (!editable || !onCellRangeSet) return undefined;
+    const onMove = (e) => {
+      const drag = rangeDragRef.current;
+      if (!drag) return;
+      if (!(e.buttons & 1)) { rangeDragRef.current = null; return; }
+      const cell = cellOf(document.elementFromPoint(e.clientX, e.clientY));
+      if (!cell) return;
+      const key = `${cell.uid}:${cell.col}`;
+      if (drag.last === key) return;
+      if (drag.last === null && cell.uid === drag.uid && cell.col === drag.col) return;
+      drag.last = key;
+      onCellRangeSet({ uid: drag.uid, col: drag.col }, cell);
+      window.getSelection?.()?.removeAllRanges();
+    };
+    const onUp = () => { rangeDragRef.current = null; };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, [editable, onCellRangeSet]);
 
   const edit = editable ? {
     onUpdateItem,
     onAddRowAfter,
     onDuplicateRow,
-    onRemoveRow,
+    // 選択中の行の削除ボタンは、Delete キーと同じく選択した行をまとめて削除する
+    onRemoveRow: (uid) => {
+      if (selectionActions?.onDelete && selectedUids?.has(uid)) selectionActions.onDelete();
+      else onRemoveRow(uid);
+    },
     onMoveRow,
     onKeyDown: handleKeyDown,
     onCellPaste: handleCellPaste,
@@ -1196,6 +1360,7 @@ const SheetPaper = ({
       id={`paper-sheet-${sheetIndex}`}
       onDragOver={handleSheetDragOver}
       onDrop={handleSheetDrop}
+      onMouseDown={handleSheetMouseDown}
       style={{ display: 'flex', flexDirection: 'column', gap: pt(18), alignItems: 'center' }}
     >
       {/* 行ツールバーは通常非表示、アクティブ（フォーカス中）の行のみ表示するためのスタイル */}
@@ -1246,6 +1411,7 @@ const SheetPaper = ({
             cycleUids,
             selection,
             dropLine,
+            rangeKeys: editable ? cellRangeKeys : null,
           }, edit))}
 
           {/* 末尾ページに［＋行を追加］［＋グループ行を追加］［＋コメント行を追加］（編集時のみ） */}

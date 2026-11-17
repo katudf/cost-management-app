@@ -75,6 +75,7 @@ import {
   tsvNumber,
 } from './rowBulkOps';
 import { computeEstimateCalc, wouldCreateCycle, computeAutoAmount, encodeSheetItemsForOutput } from './estimateCalc';
+import { resolveRange, rangeCellKeys, clearRange, pasteIntoRange, rangeToTsv, stepRangeRow, writableColsOf } from './cellRangeOps';
 
 // 今日の日付を YYMMDD 形式で返す
 const todayPrefix = () => {
@@ -919,24 +920,29 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
     });
   }, [renumberSheet, editItems]);
 
-  // TSV貼り付け（Excelからの複数セル貼り付け）。基準行 uid から、行×列で
-  // name/spec/quantity/unit/unit_price/note を流し込み、行が足りなければ追加する。
-  const pasteTsv = useCallback((uid, tsv) => {
+  // TSV貼り付け（Excelからの複数セル貼り付け）。基準行 uid・カーソルのある列 col から、行×列で
+  // name/spec/quantity/unit/unit_price/note の並びに流し込み、行が足りなければ追加する。
+  // 金額欄にカーソルがあるときは摘要から、それ以外の列（工種記号など）は品名から入れる。
+  const pasteTsv = useCallback((uid, tsv, col = 'name') => {
     if (operationInFlight.current) return;
-    const COLS = ['name', 'spec', 'quantity', 'unit', 'unit_price', 'note'];
+    const ALL_COLS = ['name', 'spec', 'quantity', 'unit', 'unit_price', 'note'];
+    const start = col === '__amount' ? ALL_COLS.indexOf('note') : Math.max(0, ALL_COLS.indexOf(col));
+    const COLS = ALL_COLS.slice(start);
     const rows = parseTsvCells(tsv);
     if (rows.length === 0) return;
 
-    const entry = editItems('貼り付け', { focus: { uid, col: 'name' } }, (prev) => {
+    const entry = editItems('貼り付け', { focus: { uid, col: COLS[0] } }, (prev) => {
       const anchorIdx = prev.findIndex(it => it._uid === uid);
       if (anchorIdx < 0) return prev;
       const sheetId = prev[anchorIdx].sheet_id;
 
       // 貼り付け対象となる連続した ITEM 行（アンカー以降・同一シート）を収集
+      // リンク行の制御列（単価・名称など）は書き込まない（範囲への貼り付けと同じ判定）
       const applyToRow = (row, cells) => {
         let next = { ...row };
+        const writable = writableColsOf(row);
         COLS.forEach((col, ci) => {
-          if (ci >= cells.length) return;
+          if (ci >= cells.length || !writable.includes(col)) return;
           const v = cells[ci];
           next[col] = (col === 'quantity' || col === 'unit_price') ? tsvNumber(v) : v;
         });
@@ -1083,6 +1089,8 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
   // 選択は _uid で持ち、元に戻すなどで消えた行は表示時に自動で外れる。
   // ============================================================
   const [rowSelection, setRowSelection] = useState({ sheetId: null, uids: [], anchor: null });
+  // セルの範囲選択（{ sheetId, anchor: { uid, col }, focus: { uid, col } } | null）。行の選択とは同時に持たない
+  const [cellRange, setCellRange] = useState(null);
   // 貼り付け先が同じ見積かの判定用（未保存の新規見積でも同じ画面内なら同じ見積とみなす）
   const instanceKeyRef = useRef(`ed_${Date.now()}_${Math.random().toString(36).slice(2)}`);
 
@@ -1116,6 +1124,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
   // 行の左端クリック: 単独選択／Shift で範囲／Ctrl(⌘) で追加・解除。別シートなら選び直し
   const selectRow = useCallback((sheetId, uid, { shift = false, ctrl = false } = {}) => {
     if (inputsLockedRef.current) return;
+    setCellRange(null);
     setRowSelection(sel => {
       if (sel.sheetId !== sheetId || (!shift && !ctrl)) return { sheetId, uids: [uid], anchor: uid };
       if (shift) {
@@ -1417,8 +1426,142 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
     };
   }, []);
 
-  // SheetPaper へ渡す選択情報（選択中のシートにだけ渡す）
+  // ============================================================
+  // セルの範囲選択（Shift+クリック／セルをまたぐドラッグ／Shift+↑↓）→ Delete・Ctrl+C・Ctrl+V
+  // 範囲は1シート内。書き込めないセル（リンク行の制御列、工種行・コメント行の名称以外）は飛ばして通知する。
+  // ============================================================
+  const activeRange = useMemo(() => (resolveRange(items, cellRange) ? cellRange : null), [items, cellRange]);
+  const rangeKeys = useMemo(() => rangeCellKeys(items, activeRange), [items, activeRange]);
+
+  const clearCellRange = useCallback(() => setCellRange(cur => (cur ? null : cur)), []);
+  useEffect(() => { if (inputsLocked) clearCellRange(); }, [inputsLocked, clearCellRange]);
+
+  // 範囲の両端を決める（focus だけ変えるときは anchor を省く）
+  const setRangeEnds = useCallback((sheetId, anchor, focus) => {
+    if (inputsLockedRef.current) return;
+    setCellRange(cur => {
+      const a = anchor ?? (cur && cur.sheetId === sheetId ? cur.anchor : null);
+      if (!a || !focus) return cur;
+      return { sheetId, anchor: a, focus };
+    });
+    clearRowSelection();
+  }, [clearRowSelection]);
+
+  // Shift+↑↓: 先端を上下の行へ（範囲が無ければ今のセルから始める）
+  const stepCellRange = useCallback((sheetId, from, dir) => {
+    if (inputsLockedRef.current) return;
+    setCellRange(cur => {
+      // 1セルに縮んだ範囲（解除されずに残っている）は使わず、今のセルから始め直す
+      const live = cur && cur.sheetId === sheetId && resolveRange(items, cur);
+      const base = live ? cur : { sheetId, anchor: from, focus: from };
+      const uid = stepRangeRow(items, sheetId, base.focus.uid, dir);
+      return { ...base, focus: { uid, col: base.focus.col } };
+    });
+    clearRowSelection();
+  }, [items, clearRowSelection]);
+
+  // 元に戻したときのカーソル位置（金額列の入力欄は data-col="__amount"）
+  const rangeFocusOf = (r) => ({ uid: r.anchor.uid, col: r.anchor.col === 'amount' ? '__amount' : r.anchor.col });
+
+  const skipNotes = (skipped, truncated) => [
+    skipped ? `${skipped}セルは変更できないため飛ばしました` : '',
+    truncated ? `${truncated}セルは範囲外のため貼り付けませんでした` : '',
+  ].filter(Boolean).join('。');
+
+  const rangeDelete = useCallback(() => {
+    if (!canEditNow() || !activeRange) return;
+    let res = null;
+    const entry = editItems('範囲の消去', { focus: rangeFocusOf(activeRange) }, (prev) => {
+      res = clearRange(prev, activeRange);
+      return res ? res.items : prev;
+    });
+    if (!res) return;
+    const note = skipNotes(res.skipped, 0);
+    if (entry) notifyWithUndo(entry, `${res.changed}セルを消去しました${note ? `（${note}）` : ''}`);
+    else if (note) showToast(note, 'info');
+  }, [activeRange, editItems, notifyWithUndo, showToast]);
+
+  const rangePaste = useCallback((text) => {
+    if (!canEditNow() || !activeRange) return false;
+    let res = null;
+    const entry = editItems('範囲への貼り付け', { focus: rangeFocusOf(activeRange) }, (prev) => {
+      res = pasteIntoRange(prev, activeRange, text);
+      return res ? res.items : prev;
+    });
+    if (!res) return false;
+    const note = skipNotes(res.skipped, res.truncated);
+    if (entry) notifyWithUndo(entry, `${res.changed}セルに貼り付けました${note ? `（${note}）` : ''}`);
+    else if (note) showToast(note, 'info');
+    return true;
+  }, [activeRange, editItems, notifyWithUndo, showToast]);
+
+  // 範囲のコピー（Ctrl+C）。入力欄にカーソルがあっても範囲があれば範囲を写す
+  useEffect(() => {
+    if (!activeRange) return undefined;
+    const inPaper = (el) => el instanceof HTMLElement && !!el.closest('[data-estimate-undo-scope]') && !isInOverlay(el);
+    const onCopy = (e) => {
+      if (!inPaper(document.activeElement) && document.activeElement !== document.body) return;
+      const tsv = rangeToTsv(resolvedItems, activeRange);
+      if (tsv == null || !e.clipboardData) return;
+      e.preventDefault();
+      e.clipboardData.setData('text/plain', tsv);
+      lastRowsCopy = null; // 行のコピーと取り違えない
+    };
+    // 紙面のセル以外を押したら範囲を解除（つまみ・行ツールバー・右パネル等）。
+    // ただしスクロールバーの操作と、紙面の中のボタン等でない場所（ページの間・余白）では解除しない
+    const onScrollbar = (el, e) => {
+      const r = el.getBoundingClientRect();
+      return e.clientX >= r.left + el.clientLeft + el.clientWidth || e.clientY >= r.top + el.clientTop + el.clientHeight;
+    };
+    const onMouseDown = (e) => {
+      const t = e.target;
+      if (!(t instanceof Element)) { clearCellRange(); return; }
+      if (t.closest('[data-cell-uid]') || onScrollbar(t, e)) return;
+      if (t.closest('[id^="paper-sheet-"]') && !t.closest('button, a, input, select, textarea, [role="button"], [draggable="true"]')) return;
+      clearCellRange();
+    };
+    // 入力欄の外（セルの余白・リンク行の固定セル）から範囲を作ったときは、カーソルが入力欄に無いので
+    // Delete・Esc・Ctrl+V をここで受ける（入力欄にカーソルがあるときは SheetPaper 側で処理する）
+    const outsideInput = () => {
+      const a = document.activeElement;
+      return !isEditableEl(a) && (a === document.body || inPaper(a)) &&
+        !document.querySelector('[aria-modal="true"]') && !previewOpen;
+    };
+    const onKeyDown = (e) => {
+      if (!outsideInput() || e.isComposing) return;
+      if (e.key === 'Escape') { e.stopPropagation(); clearCellRange(); return; }
+      if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); rangeDelete(); }
+    };
+    const onPaste = (e) => {
+      if (!outsideInput()) return;
+      if (rangePaste(e.clipboardData?.getData('text/plain') ?? '')) e.preventDefault();
+    };
+    document.addEventListener('copy', onCopy);
+    document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('paste', onPaste);
+    return () => {
+      document.removeEventListener('copy', onCopy);
+      document.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('paste', onPaste);
+    };
+  }, [activeRange, resolvedItems, clearCellRange, rangeDelete, rangePaste, previewOpen]);
+
+  // 選択・範囲が無いシートへ渡す空の集合（毎回作らないため）
   const EMPTY_SET = useMemo(() => new Set(), []);
+
+  // SheetPaper へ渡す範囲選択の情報（範囲のあるシートにだけ強調表示を渡す）
+  const cellRangePropsFor = (sheetId) => ({
+    cellRangeKeys: activeRange?.sheetId === sheetId ? rangeKeys : EMPTY_SET,
+    onCellRangeSet: (anchor, focus) => setRangeEnds(sheetId, anchor, focus),
+    onCellRangeStep: (from, dir) => stepCellRange(sheetId, from, dir),
+    onCellRangeClear: clearCellRange,
+    onCellRangeDelete: activeRange?.sheetId === sheetId ? rangeDelete : null,
+    onCellRangePaste: activeRange?.sheetId === sheetId ? rangePaste : null,
+  });
+
+  // SheetPaper へ渡す選択情報（選択中のシートにだけ渡す）
   const selectionPropsFor = (sheetId) => {
     const active = selSheetId === sheetId && selectedUidSet.size > 0;
     return {
@@ -1872,6 +2015,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
                   onPasteTsv={pasteTsv}
                   onSetRowLink={setRowLink}
                   {...selectionPropsFor(sheet.id)}
+                  {...cellRangePropsFor(sheet.id)}
                 />
               </div>
             ))}
@@ -2068,6 +2212,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
                 onPasteTsv={pasteTsv}
                 onSetRowLink={setRowLink}
                 {...selectionPropsFor(sheets[fullscreenSheetIndex].id)}
+                {...cellRangePropsFor(sheets[fullscreenSheetIndex].id)}
               />
             </div>
           </div>
