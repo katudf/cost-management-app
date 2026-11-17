@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Save, Undo2, Redo2, Unlock, ChevronDown, ChevronUp, Lock, UserCheck, Send, Trophy, XCircle, RefreshCw, Download, LayoutList } from 'lucide-react';
+import { Save, Undo2, Redo2, Unlock, ChevronDown, ChevronUp, Lock, UserCheck, Send, Trophy, XCircle, RefreshCw, Download, LayoutList, Percent } from 'lucide-react';
 import { ESTIMATE_STATUS, ESTIMATE_STATUS_LABEL, isAdminRole } from '../utils/constants';
 import { formatCurrency } from '../supabaseEstimates';
 import EstimateApprovalModal from '../components/estimate/EstimateApprovalModal';
@@ -56,6 +56,7 @@ const STATUS_BADGES = [
  *   - onReissueNumber: () => void  空き枝番の自動採番
  *   - onImportGroups: (groups) => void  過去見積グループの取込（EstimateEditor側でトップシートへ追記）
  *   - onGenerateSummary: () => void  総括表シートの自動生成（各カテゴリ小計を②リンクで引く）
+ *   - onAdjustPrices: () => void  単価の一括調整（掛率）の画面を開く
  *   - currentEstimateId: number|null  取込モーダルで自分自身を除外するため
  *   - onOpenPreview: () => void
  *   - onUndo / onRedo: () => void  元に戻す／やり直し
@@ -81,6 +82,7 @@ const SettingsPanel = ({
   onReissueNumber,
   onImportGroups,
   onGenerateSummary,
+  onAdjustPrices,
   currentEstimateId = null,
   onOpenPreview,
   onUndo,
@@ -407,6 +409,19 @@ const SettingsPanel = ({
           >
             <LayoutList size={14} />
             総括表を生成
+          </button>
+        )}
+        {!isLocked && onAdjustPrices && (
+          <button
+            type="button"
+            onClick={onAdjustPrices}
+            disabled={saving || isLocked}
+            data-keep-cell-range
+            title="選んだ行・シートの単価に掛率を掛けて、端数を丸めます"
+            className="w-full flex items-center justify-center gap-1.5 border border-slate-300 text-slate-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 px-3 py-2 rounded-lg text-sm font-medium transition"
+          >
+            <Percent size={14} />
+            単価の一括調整
           </button>
         )}
       </div>

@@ -20,7 +20,7 @@
 // 持たず、フラット配列内の絶対 index を知らないため）。
 import React, { useRef, useCallback, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, Trash2, Copy, ChevronUp, ChevronDown, Link2, Link2Off, FolderPlus, MessageSquarePlus, Scissors, X } from 'lucide-react';
+import { Plus, Trash2, Copy, ChevronUp, ChevronDown, Link2, Link2Off, FolderPlus, MessageSquarePlus, Scissors, X, Percent } from 'lucide-react';
 import { ITEM_TYPE } from '../utils/constants';
 import { sumItemAmounts } from '../supabaseEstimates';
 import {
@@ -694,6 +694,10 @@ const SelectionBar = ({ actions }) => {
         title="コピー（Ctrl+C）。Ctrl+V で選択行の下に貼り付け" aria-label="選択した行をコピー"><Copy size={14} /></button>
       <button type="button" style={btn} onMouseDown={keep} onClick={actions.onCut}
         title="切り取り（Ctrl+X）" aria-label="選択した行を切り取り"><Scissors size={14} /></button>
+      {actions.onAdjustPrice && (
+        <button type="button" style={btn} onMouseDown={keep} onClick={actions.onAdjustPrice}
+          title="選択した行の単価を一括調整（掛率）" aria-label="選択した行の単価を一括調整"><Percent size={14} /></button>
+      )}
       <button type="button" style={{ ...btn, color: '#dc2626' }} onMouseDown={keep} onClick={actions.onDelete}
         title="選択した行を削除（Delete）" aria-label="選択した行を削除"><Trash2 size={14} /></button>
       <button type="button" style={{ ...btn, color: '#64748b' }} onMouseDown={keep} onClick={actions.onClear}
@@ -1057,7 +1061,7 @@ const SheetPaper = ({
   selectedUids,      // このシートで選択中の行 _uid の Set
   onSelectRow,       // (uid, { shift, ctrl }) => void  行の左端クリック
   onPasteRows,       // (uid, { html, text }) => boolean  アプリでコピーした行ならその行の下へ挿入して true
-  selectionActions,  // 操作バーのハンドラ { count, onDelete, onDuplicate, onCopy, onCut, onMove, onClear } | null
+  selectionActions,  // 操作バーのハンドラ { count, onDelete, onDuplicate, onCopy, onCut, onMove, onClear, onAdjustPrice } | null
   // ── 行のドラッグ移動（任意） ──
   onRowDragStart,    // (uid) => boolean  ドラッグを始めてよければ true
   onRowDragOver,     // ({ sheetId, uid, position }) => void  落とし先の更新（uid null はシート末尾）

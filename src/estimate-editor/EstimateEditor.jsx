@@ -58,6 +58,7 @@ import PageNav from './PageNav';
 import CoverPaper from './CoverPaper';
 import SheetPaper, { calcSheetPageCount } from './SheetPaper';
 import SettingsPanel from './SettingsPanel';
+import PriceAdjustDialog from './PriceAdjustDialog';
 import { useEditHistory } from './useEditHistory';
 import { SERVER_MANAGED_HEADER_FIELDS } from './editHistory';
 import {
@@ -76,6 +77,7 @@ import {
 } from './rowBulkOps';
 import { computeEstimateCalc, wouldCreateCycle, computeAutoAmount, encodeSheetItemsForOutput } from './estimateCalc';
 import { resolveRange, rangeCellKeys, clearRange, pasteIntoRange, rangeToTsv, stepRangeRow, writableColsOf } from './cellRangeOps';
+import { adjustPrices, countAdjustableRows } from './priceAdjustOps';
 
 // 今日の日付を YYMMDD 形式で返す
 const todayPrefix = () => {
@@ -382,7 +384,8 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
   useEffect(() => {
     const onFocusIn = (e) => {
       history.breakCoalesce();
-      if (isEditableEl(e.target)) clearRowSelectionRef.current?.();
+      // 紙面の入力欄へ移ったら行の選択を解除（単価の一括調整などの重ね画面の入力欄では解除しない）
+      if (isEditableEl(e.target) && !e.target.closest('[aria-modal="true"]')) clearRowSelectionRef.current?.();
     };
     document.addEventListener('focusin', onFocusIn);
     return () => document.removeEventListener('focusin', onFocusIn);
@@ -1516,7 +1519,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
     const onMouseDown = (e) => {
       const t = e.target;
       if (!(t instanceof Element)) { clearCellRange(); return; }
-      if (t.closest('[data-cell-uid]') || onScrollbar(t, e)) return;
+      if (t.closest('[data-cell-uid]') || t.closest('[data-keep-cell-range]') || onScrollbar(t, e)) return;
       if (t.closest('[id^="paper-sheet-"]') && !t.closest('button, a, input, select, textarea, [role="button"], [draggable="true"]')) return;
       clearCellRange();
     };
@@ -1561,6 +1564,96 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
     onCellRangePaste: activeRange?.sheetId === sheetId ? rangePaste : null,
   });
 
+  // ============================================================
+  // 単価の一括調整（掛率）。対象は 選択中の行（行の選択かセル範囲の行）／各シート／全シート。
+  // 開いた時点の選択を覚えておき、初期値は選択があれば選択行、無ければ最後に触ったシート。
+  // ============================================================
+  const lastSheetIdRef = useRef(null);
+  const sheetsRef = useRef(sheets);
+  sheetsRef.current = sheets;
+  useEffect(() => {
+    const onFocusIn = (e) => {
+      const paper = e.target instanceof Element ? e.target.closest('[id^="paper-sheet-"]') : null;
+      if (!paper) return;
+      const idx = Number(paper.id.slice('paper-sheet-'.length));
+      const sheet = sheetsRef.current[idx];
+      if (sheet) lastSheetIdRef.current = sheet.id;
+    };
+    document.addEventListener('focusin', onFocusIn);
+    return () => document.removeEventListener('focusin', onFocusIn);
+  }, []);
+
+  const [priceAdjust, setPriceAdjust] = useState(null); // { selection: _uid[] | null, defaultTarget } | null
+
+  const openPriceAdjust = useCallback(() => {
+    if (!canEditNow()) return;
+    let selection = null;
+    if (selectedUidSet.size > 0) selection = [...selectedUidSet];
+    else if (activeRange) selection = (resolveRange(items, activeRange)?.rows ?? []).map(r => r._uid);
+    const lastSheet = sheets.some(s => s.id === lastSheetIdRef.current) ? lastSheetIdRef.current : sheets[0]?.id;
+    setPriceAdjust({ selection, defaultTarget: selection?.length ? 'selection' : String(lastSheet) });
+  }, [selectedUidSet, activeRange, items, sheets]);
+
+  // 対象の選択肢の値（'selection' | 'all' | シートid）→ 対象行の _uid
+  const priceAdjustUids = useCallback((target) => {
+    if (target === 'selection') return new Set(priceAdjust?.selection ?? []);
+    if (target === 'all') return new Set(items.map(it => it._uid));
+    return new Set(items.filter(it => String(it.sheet_id) === target).map(it => it._uid));
+  }, [items, priceAdjust]);
+
+  const priceAdjustTargets = useMemo(() => {
+    if (!priceAdjust) return [];
+    const list = [];
+    if (priceAdjust.selection?.length) {
+      list.push({ value: 'selection', label: '選択中の行', count: countAdjustableRows(items, priceAdjust.selection) });
+    }
+    sheets.forEach((s, i) => {
+      list.push({ value: String(s.id), label: s.title || `明細 ${i + 1}`, count: countAdjustableRows(items, priceAdjustUids(String(s.id))) });
+    });
+    list.push({ value: 'all', label: '全シート', count: countAdjustableRows(items, priceAdjustUids('all')) });
+    return list;
+  }, [priceAdjust, sheets, items, priceAdjustUids]);
+
+  // 調整後の合計の予告（保存はしない）
+  const previewPriceAdjust = useCallback((target, settings) => {
+    const uids = priceAdjustUids(target);
+    const res = adjustPrices(items, uids, settings);
+    const after = res.items === items ? calc : computeEstimateCalc(sheets, res.items);
+    const sumOf = (list) => list.reduce((acc, it) =>
+      (uids.has(it._uid) && it.item_type === ITEM_TYPE.ITEM ? acc + (Number(it.amount) || 0) : acc), 0);
+    const topSheetId = sheets[0]?.id;
+    const totalAfter = calcTopSheetTotals(after.resolvedItems.filter(it => it.sheet_id === topSheetId), header).subtotal;
+    return {
+      changed: res.changed,
+      skippedNegative: res.skippedNegative,
+      skippedLinked: res.skippedLinked,
+      targetBefore: sumOf(resolvedItems),
+      targetAfter: sumOf(after.resolvedItems),
+      totalBefore: totals.subtotal,
+      totalAfter,
+    };
+  }, [priceAdjustUids, items, calc, sheets, resolvedItems, header, totals]);
+
+  const applyPriceAdjust = useCallback((target, settings) => {
+    if (!canEditNow()) return;
+    const uids = priceAdjustUids(target);
+    let res = null;
+    const entry = editItems('単価の一括調整', {}, (prev) => {
+      res = adjustPrices(prev, uids, settings);
+      return res.items;
+    });
+    setPriceAdjust(null);
+    if (!entry || !res) return;
+    const skipped = [
+      res.skippedNegative ? `マイナスの行${res.skippedNegative}行` : '',
+      res.skippedLinked ? `リンク行${res.skippedLinked}行` : '',
+    ].filter(Boolean).join('・');
+    notifyWithUndo(entry, `${res.changed}行の単価を${Number(settings.percent)}%に調整しました${skipped ? `（${skipped}は変更していません）` : ''}`);
+  }, [priceAdjustUids, editItems, notifyWithUndo]);
+
+  // ロックされたら閉じる
+  useEffect(() => { if (inputsLocked) setPriceAdjust(null); }, [inputsLocked]);
+
   // SheetPaper へ渡す選択情報（選択中のシートにだけ渡す）
   const selectionPropsFor = (sheetId) => {
     const active = selSheetId === sheetId && selectedUidSet.size > 0;
@@ -1576,6 +1669,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
         onCut: () => bulkCut(),
         onMove: bulkMove,
         onClear: clearRowSelection,
+        onAdjustPrice: openPriceAdjust,
       } : null,
       // ドラッグ移動
       onRowDragStart: handleRowDragStart,
@@ -2056,6 +2150,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
             onReissueNumber={handleReissueNumber}
             onImportGroups={handleImportGroups}
             onGenerateSummary={handleGenerateSummary}
+            onAdjustPrices={openPriceAdjust}
             currentEstimateId={estimateId}
             onOpenPreview={handleOpenPreview}
             onUndo={handleUndo}
@@ -2065,6 +2160,17 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
           />
         </div>
       </div>
+
+      {/* ===== 単価の一括調整 ===== */}
+      {priceAdjust && (
+        <PriceAdjustDialog
+          targets={priceAdjustTargets}
+          defaultTarget={priceAdjust.defaultTarget}
+          preview={previewPriceAdjust}
+          onApply={applyPriceAdjust}
+          onClose={() => setPriceAdjust(null)}
+        />
+      )}
 
       {/* ===== PDFプレビューオーバーレイ ===== */}
       {previewOpen && (
