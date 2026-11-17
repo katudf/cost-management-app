@@ -2,8 +2,30 @@ import { describe, it, expect, vi } from 'vitest';
 import {
     toFiniteOrNull, buildImportItems, buildEstimatePrefix,
     createEstimateWithRetry, importProjectCore, rollbackImport, MAX_NUMBER_RETRIES,
+    buildImportEstimateHeader,
 } from './projectExcelImport';
 import { PROJECT_STATUS, ESTIMATE_STATUS } from './constants';
+
+describe('buildImportEstimateHeader', () => {
+    const now = new Date(2026, 10, 17);
+    it('Excelの表紙項目（工事場所・工期・有効期限・支払条件・備考）を見積に入れる', () => {
+        const header = buildImportEstimateHeader({
+            customerId: 1, title: 'T', now, items: [],
+            parsed: { siteLocation: '奥州市', workPeriod: '契約後30日', validUntil: '2026-12-30', paymentTerms: '月末払い', notes: '※備考' },
+        });
+        expect(header).toMatchObject({
+            site_location: '奥州市', work_period: '契約後30日', valid_until: '2026-12-30',
+            payment_terms: '月末払い', notes: '※備考', issue_date: '2026-11-17', status: ESTIMATE_STATUS.DRAFT,
+        });
+    });
+
+    it('Excelに無い項目は空、支払条件は従来の既定値にする', () => {
+        const header = buildImportEstimateHeader({ customerId: 1, title: 'T', now, items: [] });
+        expect(header).toMatchObject({
+            site_location: null, work_period: null, valid_until: null, payment_terms: '従来通り', notes: null,
+        });
+    });
+});
 
 const makeDeps = (over = {}) => ({
     getNextEstimateSeq: vi.fn().mockResolvedValue(1),

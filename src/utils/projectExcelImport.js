@@ -27,13 +27,16 @@ export const buildImportItems = (parsed) => (parsed.items || [])
     }));
 
 // Excel取込で作る下書き見積のヘッダー（estimate_number は採番時に入れる）。total_with_tax は明細から計算して入れる
-export const buildImportEstimateHeader = ({ customerId, title, notes, now, calcTopSheetTotals, items }) => {
+// parsed は parseExcelForEstimate の結果（備考・工事場所・工期・有効期限・支払条件を使う）
+export const buildImportEstimateHeader = ({ customerId, title, parsed = {}, now, calcTopSheetTotals, items }) => {
     const header = {
         estimate_number: null, customer_id: customerId, customer_honorific: '御中',
-        title, site_location: null, work_period: null,
+        title, site_location: parsed.siteLocation || null, work_period: parsed.workPeriod || null,
         // toISOString は UTC のため、日本時間の 0〜9 時に前日の日付になる。ローカル日付を使う
-        issue_date: toDateStr(now), valid_until: null, payment_terms: '従来通り',
-        notes: notes || null, tax_rate: 0.10, status: ESTIMATE_STATUS.DRAFT,
+        issue_date: toDateStr(now), valid_until: parsed.validUntil || null,
+        // payment_terms は NOT NULL。Excel に無ければ従来の既定値
+        payment_terms: parsed.paymentTerms || '従来通り',
+        notes: parsed.notes || null, tax_rate: 0.10, status: ESTIMATE_STATUS.DRAFT,
         show_net: false, show_subtotals: false, stamp_header: 'company', show_approver: true,
         staff_id: null, net_calc_type: 'perc', net_perc: 95, net_amount: null,
     };
@@ -72,7 +75,7 @@ export async function importProjectCore(deps, { parsed, fileName, customerId, pr
         if (items.length === 0) throw new Error('取り込めるデータが見つかりませんでした');
 
         const header = buildImportEstimateHeader({
-            customerId, title, notes: parsed.notes, now, calcTopSheetTotals: deps.calcTopSheetTotals, items,
+            customerId, title, parsed, now, calcTopSheetTotals: deps.calcTopSheetTotals, items,
         });
         const created = await createEstimateWithRetry(deps, buildEstimatePrefix(now), (estimateNumber) => ({
             ...header, estimate_number: estimateNumber,

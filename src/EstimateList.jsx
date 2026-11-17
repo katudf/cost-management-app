@@ -318,7 +318,7 @@ const EstimateList = ({ onEdit }) => {
       const header = buildImportEstimateHeader({
         customerId,
         title: result.projectName || file.name.replace(/\.[^/.]+$/, ''),
-        notes: result.notes,
+        parsed: result,
         now,
         calcTopSheetTotals,
         items: saveableItems,
