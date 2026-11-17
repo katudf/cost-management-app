@@ -1,6 +1,58 @@
 import * as xlsx from 'xlsx-js-style';
 import { ITEM_TYPE } from './constants';
 
+const HONORIFICS = ['御中', '様', '殿'];
+const CUSTOMER_SEARCH_ROWS = 20;
+
+// 「株式会社X　御中」のように空白を挟んで末尾に付いた敬称（\s は全角スペースも含む）
+const TRAILING_HONORIFIC = new RegExp(`\\s+(${HONORIFICS.join('|')})$`);
+
+/** 末尾の敬称（空白区切り）を取り除く。残りが空なら null */
+export const stripHonorific = (s) => {
+    const name = String(s).trim().replace(TRAILING_HONORIFIC, '').trim();
+    return name || null;
+};
+
+/**
+ * 先頭付近の行から顧客名を探す。
+ * - 「御中」「様」「殿」だけのセルがあれば、同じ行でその左にある最も近い文字列
+ * - 「株式会社X　御中」のように空白＋敬称で終わるセルがあれば、敬称を除いた部分
+ * @param {Array<Array>} rows sheet_to_json(header: 1) の結果
+ * @returns {string|null}
+ */
+export const findCustomerNameByHonorific = (rows) => {
+    for (const row of (rows || []).slice(0, CUSTOMER_SEARCH_ROWS)) {
+        if (!Array.isArray(row)) continue;
+        for (let i = 0; i < row.length; i++) {
+            const cell = row[i];
+            if (typeof cell !== 'string') continue;
+            if (HONORIFICS.includes(cell.replace(/\s+/g, ''))) {
+                for (let j = i - 1; j >= 0; j--) {
+                    if (typeof row[j] === 'string' && row[j].trim() !== '') return stripHonorific(row[j]);
+                }
+            } else if (TRAILING_HONORIFIC.test(cell.trim())) {
+                const name = stripHonorific(cell);
+                if (name) return name;
+            }
+        }
+    }
+    return null;
+};
+
+/**
+ * 1枚目のシートから顧客名を取り出す。敬称から探せればそれを優先し、
+ * 見つからなければ従来様式の D13（文字列のときだけ。金額などの数値は顧客名にしない）を使う。
+ * @param {object} sheet xlsx のシート
+ * @param {Array<Array>} rows 同じシートの sheet_to_json(header: 1) の結果
+ * @returns {string|null}
+ */
+export const extractCustomerName = (sheet, rows) => {
+    const byHonorific = findCustomerNameByHonorific(rows);
+    if (byHonorific) return byHonorific;
+    const d13 = sheet?.['D13']?.v;
+    return typeof d13 === 'string' ? stripHonorific(d13) : null;
+};
+
 /**
  * 見積書管理用：Excelファイルを忠実にパースする関数
  * 工種（カテゴリ）行を自動検出し、明細フィールドを個別に保持する
@@ -32,14 +84,17 @@ export const parseExcelForEstimate = (file) => {
                 const items = [];
                 const comments = [];
 
-                // 最初のシートから顧客名を取得 (D13)
+                // シートごとの行配列（1枚目は顧客名の検出と明細の読み取りで共用する）
+                const sheetRows = {};
+                const getRows = (name) => {
+                    if (!sheetRows[name]) sheetRows[name] = xlsx.utils.sheet_to_json(workbook.Sheets[name], { header: 1 });
+                    return sheetRows[name];
+                };
+
+                // 最初のシートから顧客名を取得（敬称の左 → 従来様式の D13 の順）
                 const firstSheetName = workbook.SheetNames[0];
                 if (firstSheetName) {
-                    const firstSheet = workbook.Sheets[firstSheetName];
-                    const customerCell = firstSheet['D13'];
-                    if (customerCell && customerCell.v) {
-                        extractedCustomerName = String(customerCell.v).trim();
-                    }
+                    extractedCustomerName = extractCustomerName(workbook.Sheets[firstSheetName], getRows(firstSheetName));
                 }
 
                 // 工種シンボルの自動採番用
@@ -47,8 +102,7 @@ export const parseExcelForEstimate = (file) => {
                 let categoryIndex = 0;
 
                 workbook.SheetNames.forEach(sheetName => {
-                    const sheet = workbook.Sheets[sheetName];
-                    const rows = xlsx.utils.sheet_to_json(sheet, { header: 1 });
+                    const rows = getRows(sheetName);
 
                     rows.forEach(row => {
                         // 工事名の抽出

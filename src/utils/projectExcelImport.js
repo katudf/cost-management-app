@@ -26,6 +26,22 @@ export const buildImportItems = (parsed) => (parsed.items || [])
         amount: toFiniteOrNull(it.amount),
     }));
 
+// Excel取込で作る下書き見積のヘッダー（estimate_number は採番時に入れる）。total_with_tax は明細から計算して入れる
+export const buildImportEstimateHeader = ({ customerId, title, notes, now, calcTopSheetTotals, items }) => {
+    const header = {
+        estimate_number: null, customer_id: customerId, customer_honorific: '御中',
+        title, site_location: null, work_period: null,
+        // toISOString は UTC のため、日本時間の 0〜9 時に前日の日付になる。ローカル日付を使う
+        issue_date: toDateStr(now), valid_until: null, payment_terms: '従来通り',
+        notes: notes || null, tax_rate: 0.10, status: ESTIMATE_STATUS.DRAFT,
+        show_net: false, show_subtotals: false, stamp_header: 'company', show_approver: true,
+        staff_id: null, net_calc_type: 'perc', net_perc: 95, net_amount: null,
+    };
+    // 一覧に出す税込合計を、エディタで保存したときと同じ計算で入れておく（以前は 0 のままで一覧が ¥0 だった）
+    header.total_with_tax = calcTopSheetTotals ? calcTopSheetTotals(items, header).total : 0;
+    return header;
+};
+
 export const buildEstimatePrefix = (now) =>
     `${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
 
@@ -55,17 +71,9 @@ export async function importProjectCore(deps, { parsed, fileName, customerId, pr
         const items = buildImportItems(parsed);
         if (items.length === 0) throw new Error('取り込めるデータが見つかりませんでした');
 
-        const header = {
-            estimate_number: null, customer_id: customerId, customer_honorific: '御中',
-            title, site_location: null, work_period: null,
-            // toISOString は UTC のため、日本時間の 0〜9 時に前日の日付になる。ローカル日付を使う
-            issue_date: toDateStr(now), valid_until: null, payment_terms: '従来通り',
-            notes: parsed.notes || null, tax_rate: 0.10, status: ESTIMATE_STATUS.DRAFT,
-            show_net: false, show_subtotals: false, stamp_header: 'company', show_approver: true,
-            staff_id: null, net_calc_type: 'perc', net_perc: 95, net_amount: null,
-        };
-        // 一覧に出す税込合計を、エディタで保存したときと同じ計算で入れておく（以前は 0 のままで一覧が ¥0 だった）
-        header.total_with_tax = deps.calcTopSheetTotals ? deps.calcTopSheetTotals(items, header).total : 0;
+        const header = buildImportEstimateHeader({
+            customerId, title, notes: parsed.notes, now, calcTopSheetTotals: deps.calcTopSheetTotals, items,
+        });
         const created = await createEstimateWithRetry(deps, buildEstimatePrefix(now), (estimateNumber) => ({
             ...header, estimate_number: estimateNumber,
         }));

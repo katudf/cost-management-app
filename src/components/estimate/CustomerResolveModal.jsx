@@ -39,21 +39,23 @@ const CustomerResolveModal = ({ customerName, customers, onRegisterNew, onLinkEx
         </div>
 
         <div className="space-y-2 mb-5">
-          <label className={`flex items-start gap-2 border border-slate-200 rounded-lg p-3 cursor-pointer hover:bg-slate-50 has-[:checked]:border-blue-400 has-[:checked]:bg-blue-50 ${customerName ? '' : 'opacity-50 pointer-events-none'}`}>
-            <input
-              type="radio"
-              name="customer-resolve-mode"
-              disabled={!customerName}
-              checked={mode === 'new'}
-              onChange={() => setMode('new')}
-              className="mt-1"
-            />
-            <span className="text-sm text-slate-700">
-              <span className="font-bold">新規顧客として登録する</span>
-              <br />
-              「{customerName}」を顧客マスタに新規追加します。
-            </span>
-          </label>
+          {/* 顧客名が無いときは登録する名前が無いので、新規登録の選択肢は出さない */}
+          {customerName && (
+            <label className="flex items-start gap-2 border border-slate-200 rounded-lg p-3 cursor-pointer hover:bg-slate-50 has-[:checked]:border-blue-400 has-[:checked]:bg-blue-50">
+              <input
+                type="radio"
+                name="customer-resolve-mode"
+                checked={mode === 'new'}
+                onChange={() => setMode('new')}
+                className="mt-1"
+              />
+              <span className="text-sm text-slate-700">
+                <span className="font-bold">新規顧客として登録する</span>
+                <br />
+                「{customerName}」を顧客マスタに新規追加します。
+              </span>
+            </label>
+          )}
 
           <label className="flex items-start gap-2 border border-slate-200 rounded-lg p-3 cursor-pointer hover:bg-slate-50 has-[:checked]:border-blue-400 has-[:checked]:bg-blue-50">
             <input

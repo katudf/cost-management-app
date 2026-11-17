@@ -22,12 +22,17 @@ import {
   saveEstimateItemsV2,
   calcTopSheetTotals,
 } from './supabaseEstimates';
-import { toDateStr } from './utils/dateUtils';
 import { downloadEstimatePDF } from './EstimatePDF';
 import { useToast } from './components/Toast';
 import { ESTIMATE_STATUS, ESTIMATE_STATUS_LABEL } from './utils/constants';
 import CustomerResolveModal from './components/estimate/CustomerResolveModal';
 import { parseExcelForEstimate } from './utils/excelImportUtils';
+import {
+  buildImportItems,
+  buildImportEstimateHeader,
+  buildEstimatePrefix,
+  createEstimateWithRetry,
+} from './utils/projectExcelImport';
 
 // ステータス表示設定（ラベルは constants の定数を参照）
 const STATUS_CONFIG = {
@@ -288,21 +293,15 @@ const EstimateList = ({ onEdit }) => {
       if (!result.items || result.items.length === 0) {
         throw new Error('取り込めるデータが見つかりませんでした');
       }
-      const now = new Date();
-      const prefix = `${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
-      const seq = await getNextEstimateSeq(prefix);
-      const estimateNumber = await findAvailableBranchNumber(prefix, seq, 1);
-      if (result.customerName) {
-        const customers = await fetchCustomers();
-        const found = customers.find(c => c.name === result.customerName);
-        if (found) {
-          await continueExcelImport({ file, result, estimateNumber, customerId: found.id });
-        } else {
-          setPendingImport({ file, result, estimateNumber, customers, customerName: result.customerName });
-          setImporting(false);
-        }
+      // 顧客は必須（estimates.customer_id は NOT NULL）。名前が無い・一致しない場合はモーダルで選ばせる
+      // 見積番号はモーダルで待つ間に他者に使われうるため、作成直前に採番する（continueExcelImport）
+      const customers = await fetchCustomers();
+      const found = result.customerName && customers.find(c => c.name === result.customerName);
+      if (found) {
+        await continueExcelImport({ file, result, customerId: found.id });
       } else {
-        await continueExcelImport({ file, result, estimateNumber, customerId: null });
+        setPendingImport({ file, result, customers, customerName: result.customerName || null });
+        setImporting(false);
       }
     } catch (err) {
       showToast('Excelの取り込みに失敗しました: ' + err.message, 'error');
@@ -310,48 +309,36 @@ const EstimateList = ({ onEdit }) => {
     }
   };
 
-  const continueExcelImport = async ({ file, result, estimateNumber, customerId }) => {
+  // 見積の作成〜明細保存（現場管理タブの取込と同じ部品を使う）
+  const continueExcelImport = async ({ file, result, customerId }) => {
     try {
-      const payload = {
-        estimate_number: estimateNumber,
-        customer_id: customerId,
-        customer_honorific: '御中',
+      const now = new Date();
+      const saveableItems = buildImportItems(result);
+      if (saveableItems.length === 0) throw new Error('取り込めるデータが見つかりませんでした');
+      const header = buildImportEstimateHeader({
+        customerId,
         title: result.projectName || file.name.replace(/\.[^/.]+$/, ''),
-        site_location: null,
-        work_period: null,
-        issue_date: toDateStr(new Date()),
-        valid_until: null,
-        payment_terms: '従来通り',
-        notes: result.notes || null,
-        tax_rate: 0.10,
-        status: ESTIMATE_STATUS.DRAFT,
-        show_net: false,
-        show_subtotals: false,
-        stamp_header: 'company',
-        show_approver: true,
-        staff_id: null,
-        net_calc_type: 'perc',
-        net_perc: 95,
-        net_amount: null,
-      };
-      const saveableItems = result.items
-        .filter(i => i.name?.trim())
-        .map((item, idx) => ({
-          ...item,
-          sheet_id: null,
-          sort_order: idx,
-          quantity: item.quantity != null ? Number(item.quantity) : null,
-          unit_price: item.unit_price !== '' && item.unit_price != null ? Number(item.unit_price) : null,
-          amount: item.amount !== '' && item.amount != null ? Number(item.amount) : null,
-        }));
-      // 一覧に出す税込合計を、エディタで保存したときと同じ計算で入れておく（以前は 0 のままで一覧が ¥0 だった）
-      payload.total_with_tax = calcTopSheetTotals(saveableItems, payload).total;
-      const created = await createEstimate(payload);
+        notes: result.notes,
+        now,
+        calcTopSheetTotals,
+        items: saveableItems,
+      });
+      const created = await createEstimateWithRetry(
+        { getNextEstimateSeq, findAvailableBranchNumber, createEstimate },
+        buildEstimatePrefix(now),
+        (estimateNumber) => ({ ...header, estimate_number: estimateNumber })
+      );
       const { payloadSheets, payloadItems } = buildSaveItemsPayload(
         [{ id: null, title: null }],
         saveableItems
       );
-      await saveEstimateItemsV2(created.id, payloadSheets, payloadItems);
+      try {
+        await saveEstimateItemsV2(created.id, payloadSheets, payloadItems);
+      } catch (itemsErr) {
+        // 明細0件の見積を残さない（失敗しても元のエラーを優先して通知する）
+        try { await deleteEstimate(created.id); } catch (_) { /* ゴミ箱に残るだけ */ }
+        throw itemsErr;
+      }
       onEdit(created.id);
     } catch (err) {
       showToast('Excelの取り込みに失敗しました: ' + err.message, 'error');
