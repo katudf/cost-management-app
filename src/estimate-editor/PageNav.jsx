@@ -161,7 +161,7 @@ export default function PageNav({
                               sheets[pendingDelete]?.title || '見積内訳明細書'
                           }」とその明細をすべて削除します。${
                               pendingDelete === 0 ? '削除後、先頭シートは次の明細シートに切り替わります。' : ''
-                          }この操作は保存するまで元に戻せます。`
+                          }この操作は「元に戻す」（Ctrl+Z）で戻せます。`
                         : ''
                 }
                 confirmText="削除する"
