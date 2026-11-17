@@ -295,6 +295,19 @@ export const saveEstimateItemsV2 = async (estimateId, payloadSheets, payloadItem
 };
 
 // 表紙・シート・明細と任意の申請を一つのトランザクションで確定する。
+/**
+ * 品名の入力補完: 過去の見積明細から、品名に query を含むものを「品名＋仕様＋単位」ごとに
+ * 最新の単価・使用回数・最終使用日つきで返す（DB関数 search_estimate_item_suggestions）。
+ * @returns [{ name, spec, unit, unit_price, use_count, last_used }]
+ */
+export const searchEstimateItemSuggestions = async (query, limit = 10) => {
+  const q = (query || '').trim();
+  if (q.length < 2) return [];
+  const { data, error } = await supabase.rpc('search_estimate_item_suggestions', { p_query: q, p_limit: limit });
+  if (error) throw error;
+  return data || [];
+};
+
 export const saveEstimateV3 = async (estimateId, header, sheets, items, approverStaffId = null) => {
   const { data, error } = await supabase.rpc('save_estimate_v3', {
     p_estimate_id: estimateId || null,

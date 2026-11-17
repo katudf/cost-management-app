@@ -41,6 +41,7 @@ import {
   findAvailableBranchNumber,
   fetchOfficeStaff,
   fetchSystemSettings,
+  searchEstimateItemSuggestions,
 } from '../supabaseEstimates';
 import { ITEM_TYPE, ESTIMATE_STATUS, ESTIMATE_STATUS_LABEL, isAdminRole } from '../utils/constants';
 import {
@@ -1242,6 +1243,35 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
   }, [items, pasteRows]);
 
   // ============================================================
+  // 品名の入力補完（過去の見積明細から。選ぶと品名・仕様・単位・単価を上書きし金額を再計算）
+  // ============================================================
+  const suggestErrorShownRef = useRef(false);
+  const searchItemSuggestions = useCallback(async (query) => {
+    try {
+      return await searchEstimateItemSuggestions(query);
+    } catch (e) {
+      // 入力のたびに同じエラーが出続けないよう、通知は画面を開いている間に1回だけ
+      if (!suggestErrorShownRef.current) {
+        suggestErrorShownRef.current = true;
+        showToast('品名の候補を取得できませんでした: ' + (e?.message || e), 'error');
+      }
+      return [];
+    }
+  }, [showToast]);
+
+  const pickItemSuggestion = useCallback((uid, s) => {
+    if (!canEditNow()) return;
+    editItems('品名の候補を反映', { focus: { uid, col: 'name' } }, (prev) =>
+      prev.map(it => (it._uid !== uid ? it : computeAutoAmount({
+        ...it,
+        name: s.name ?? it.name,
+        spec: s.spec ?? '',
+        unit: s.unit ?? '',
+        unit_price: s.unit_price ?? '',
+      }))));
+  }, [editItems]);
+
+  // ============================================================
   // 行のドラッグ移動（左端のつまみをつかむ。選択行をつかめば選択行をまとめて、
   // それ以外はその1行だけ。別シート・左ナビのシート名へも落とせる）
   // ============================================================
@@ -1410,6 +1440,9 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
       onRowDrop: dropDraggedRows,
       onRowDragEnd: handleRowDragEnd,
       dropIndicator: dropIndicator?.sheetId === sheetId ? dropIndicator : null,
+      // 品名の入力補完
+      onSearchItemSuggestions: searchItemSuggestions,
+      onPickItemSuggestion: pickItemSuggestion,
     };
   };
 

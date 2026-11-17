@@ -18,7 +18,7 @@
 // 編集ハンドラは EstimateEditor から props で受け取り、対象行は配列 index ではなく
 // クライアント安定キー `_uid` で指定する（SheetPaper はシートローカルな items しか
 // 持たず、フラット配列内の絶対 index を知らないため）。
-import React, { useRef, useCallback, useState } from 'react';
+import React, { useRef, useCallback, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, Trash2, Copy, ChevronUp, ChevronDown, Link2, Link2Off, FolderPlus, MessageSquarePlus, Scissors, X } from 'lucide-react';
 import { ITEM_TYPE } from '../utils/constants';
@@ -291,6 +291,157 @@ const UnitCell = ({ uid, col, value, onChange, onPaste, onKeyDown }) => {
               }}
             >
               {u}
+            </button>
+          ))}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+};
+
+// 品名入力欄（過去の見積明細からの候補付き）。
+// 2文字以上入力して0.3秒止まると候補を検索し、品名・仕様・単位・単価と使用回数・最終使用日を出す。
+// 上下キーで選択、Enter/クリックで確定（onPick で仕様・単位・単価まで反映）、Esc で閉じる。
+// 候補が開いていないときの Enter・Tab・上下キーは、従来どおりセル間の移動。
+const SUGGEST_MIN_CHARS = 2;
+const SUGGEST_DELAY_MS = 300;
+const yen = (v) => (v == null || v === '' ? '' : `¥${Number(v).toLocaleString('ja-JP')}`);
+
+const NameCell = ({ uid, col, value, onChange, onPaste, onKeyDown, onSearch, onPick }) => {
+  const [suggestions, setSuggestions] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [highlightIdx, setHighlightIdx] = useState(-1);
+  const [menuPos, setMenuPos] = useState(null);
+  const inputRef = useRef(null);
+  const timerRef = useRef(null);
+  const seqRef = useRef(0); // 古い検索結果で上書きしないための通し番号
+  useEffect(() => () => clearTimeout(timerRef.current), []);
+
+  const close = () => {
+    clearTimeout(timerRef.current);
+    seqRef.current += 1;
+    setOpen(false);
+    setHighlightIdx(-1);
+  };
+
+  const scheduleSearch = (text) => {
+    clearTimeout(timerRef.current);
+    const q = (text || '').trim();
+    if (!onSearch || q.length < SUGGEST_MIN_CHARS) { close(); return; }
+    timerRef.current = setTimeout(async () => {
+      const seq = ++seqRef.current;
+      const list = await onSearch(q);
+      if (seq !== seqRef.current) return;
+      const rect = inputRef.current?.getBoundingClientRect();
+      if (rect) setMenuPos({ top: rect.bottom, left: rect.left, minWidth: rect.width });
+      setSuggestions(list || []);
+      setHighlightIdx(-1);
+      setOpen((list || []).length > 0 && document.activeElement === inputRef.current);
+    }, SUGGEST_DELAY_MS);
+  };
+
+  const pick = (s) => {
+    close();
+    onPick?.(s);
+  };
+
+  const handleKeyDown = (e) => {
+    if (open && !e.nativeEvent?.isComposing) {
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        const dir = e.key === 'ArrowDown' ? 1 : -1;
+        setHighlightIdx((prev) => {
+          const next = prev + dir;
+          if (next < 0) return suggestions.length - 1;
+          if (next >= suggestions.length) return 0;
+          return next;
+        });
+        return;
+      }
+      if (e.key === 'Enter' && highlightIdx >= 0) {
+        e.preventDefault();
+        pick(suggestions[highlightIdx]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation(); // 全画面表示を閉じる Esc より先に候補だけ閉じる
+        close();
+        return;
+      }
+    }
+    onKeyDown?.(e);
+  };
+
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <input
+        ref={inputRef}
+        type="text"
+        data-uid={uid}
+        data-col={col}
+        value={value || ''}
+        autoComplete="off"
+        onChange={(e) => { onChange(col, e.target.value); scheduleSearch(e.target.value); }}
+        onBlur={() => setTimeout(close, 150)}
+        onPaste={onPaste}
+        onKeyDown={handleKeyDown}
+        style={inputBase}
+      />
+      {open && menuPos && createPortal(
+        <div
+          role="listbox"
+          aria-label="過去の見積からの品名候補"
+          onMouseDown={(e) => e.preventDefault()}
+          style={{
+            position: 'fixed',
+            top: menuPos.top,
+            left: menuPos.left,
+            marginTop: 2,
+            minWidth: Math.max(menuPos.minWidth, 320),
+            maxWidth: 480,
+            maxHeight: 280,
+            overflowY: 'auto',
+            background: '#fff',
+            border: `1px solid ${COLORS.dashed}`,
+            borderRadius: 4,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+            zIndex: 10000,
+          }}
+        >
+          {suggestions.map((s, i) => (
+            <button
+              key={`${s.name}|${s.spec}|${s.unit}`}
+              type="button"
+              role="option"
+              aria-selected={i === highlightIdx}
+              onMouseDown={() => pick(s)}
+              onMouseEnter={() => setHighlightIdx(i)}
+              style={{
+                display: 'block',
+                width: '100%',
+                textAlign: 'left',
+                padding: '4px 8px',
+                border: 'none',
+                borderBottom: `1px solid ${COLORS.dashed}`,
+                background: i === highlightIdx ? '#eff6ff' : 'transparent',
+                cursor: 'pointer',
+                color: COLORS.ink,
+              }}
+            >
+              <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', fontSize: 12 }}>
+                <span style={{ fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
+                <span style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}>
+                  {yen(s.unit_price)}{s.unit ? ` / ${s.unit}` : ''}
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: 8, fontSize: 10, color: COLORS.muted }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.spec || '（仕様なし）'}</span>
+                <span style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}>
+                  {s.use_count}回{s.last_used ? `・最終 ${s.last_used}` : ''}
+                </span>
+              </div>
             </button>
           ))}
         </div>,
@@ -683,7 +834,9 @@ const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom, cycleUids, sel
           <div style={CELLS.name}>
             {lockName
               ? item.name
-              : <TextCell uid={uid} col="name" value={item.name} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />}
+              : <NameCell uid={uid} col="name" value={item.name} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown}
+                  onSearch={edit.onSearchItemSuggestions}
+                  onPick={edit.onPickItemSuggestion ? (s) => edit.onPickItemSuggestion(uid, s) : undefined} />}
           </div>
           <div style={CELLS.spec}>
             <TextCell uid={uid} col="spec" value={item.spec} color={COLORS.subInk} onChange={chg} onPaste={paste} onKeyDown={edit.onKeyDown} />
@@ -848,6 +1001,9 @@ const SheetPaper = ({
   onRowDrop,         // ({ sheetId, uid, position }) => void
   onRowDragEnd,      // () => void
   dropIndicator,     // このシート上の落とし先 { sheetId, uid, position } | null
+  // ── 品名の入力補完（任意） ──
+  onSearchItemSuggestions, // (query) => Promise<候補[]>  過去の見積明細からの候補
+  onPickItemSuggestion,    // (uid, 候補) => void  品名・仕様・単位・単価を反映
 }) => {
   const isTopSheet = sheetIndex === 0;
   const rows = buildSheetRows(items, header, isTopSheet, totals, sheetTotal, showTotalRow);
@@ -984,6 +1140,8 @@ const SheetPaper = ({
     onSelectRow,
     onRowDragStart,
     onRowDragEnd,
+    onSearchItemSuggestions,
+    onPickItemSuggestion,
     currentSheetId: sheet.id,
     linkTargets,
   } : null;
