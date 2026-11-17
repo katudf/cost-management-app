@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { FileText, Layers, Trash2, Plus } from 'lucide-react';
 import ConfirmModal from '../components/ConfirmModal';
+import { isRowDragEvent } from './rowBulkOps';
 
 /**
  * 左ナビゲーション。
@@ -14,6 +15,8 @@ import ConfirmModal from '../components/ConfirmModal';
  *   - onDeleteSheet: (sheetIndex) => void   （index 0 は「総括表」の場合のみ呼ばれる）
  *   - onAddSheet: () => void
  *   - isLocked: boolean  ロック時は削除・追加を無効化
+ *   - onDropRowsToSheet: (sheetIndex) => void  紙面の行をシート名へドラッグして落としたとき（そのシートの末尾へ移す）
+ *   - onRowsDragOverNav: () => void  行のドラッグがシート名の上に来たとき（紙面側の落とし先表示を消す）
  */
 const scrollToAnchor = (anchorId) => {
     const el = document.getElementById(anchorId);
@@ -27,9 +30,32 @@ export default function PageNav({
     onDeleteSheet,
     onAddSheet,
     isLocked = false,
+    onDropRowsToSheet,
+    onRowsDragOverNav,
 }) {
     // 削除確認モーダルの状態（対象シートindex）
     const [pendingDelete, setPendingDelete] = useState(null);
+    // 行をドラッグしてシート名の上に重ねている間のシートindex（強調表示用）
+    const [dropTargetIdx, setDropTargetIdx] = useState(null);
+    const canDropRows = (e) => !isLocked && typeof onDropRowsToSheet === 'function' && isRowDragEvent(e);
+    const dropHandlers = (idx) => ({
+        onDragOver: (e) => {
+            if (!canDropRows(e)) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            if (dropTargetIdx !== idx) {
+                setDropTargetIdx(idx);
+                onRowsDragOverNav?.(); // 紙面側の落とし先表示（青線）を消す
+            }
+        },
+        onDragLeave: () => setDropTargetIdx(cur => (cur === idx ? null : cur)),
+        onDrop: (e) => {
+            if (!canDropRows(e)) return;
+            e.preventDefault();
+            setDropTargetIdx(null);
+            onDropRowsToSheet(idx);
+        },
+    });
 
     const itemCountForSheet = (sheetId) =>
         items.filter((it) => it.sheet_id === sheetId).length;
@@ -72,12 +98,15 @@ export default function PageNav({
                             <button
                                 type="button"
                                 onClick={() => scrollToAnchor(`paper-sheet-${idx}`)}
+                                {...dropHandlers(idx)}
                                 className={`${navBtnBase} flex-1 min-w-0 ${
-                                    isActive(anchor)
-                                        ? 'bg-blue-100 text-blue-700 font-bold'
-                                        : 'text-slate-600 hover:bg-slate-100'
+                                    dropTargetIdx === idx
+                                        ? 'bg-blue-50 text-blue-700 ring-2 ring-blue-400'
+                                        : isActive(anchor)
+                                            ? 'bg-blue-100 text-blue-700 font-bold'
+                                            : 'text-slate-600 hover:bg-slate-100'
                                 }`}
-                                title={`${sheet.title || '見積内訳明細書'} へ移動`}
+                                title={`${sheet.title || '見積内訳明細書'} へ移動（行をここへドラッグすると、このシートの末尾へ移せます）`}
                             >
                                 <Layers size={16} className="shrink-0" />
                                 <span className="truncate">

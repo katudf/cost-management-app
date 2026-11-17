@@ -59,6 +59,20 @@ import SheetPaper, { calcSheetPageCount } from './SheetPaper';
 import SettingsPanel from './SettingsPanel';
 import { useEditHistory } from './useEditHistory';
 import { SERVER_MANAGED_HEADER_FIELDS } from './editHistory';
+import {
+  orderedSelection,
+  rangeUids,
+  removeRows,
+  duplicateRows,
+  moveRows,
+  moveRowsTo,
+  buildRowsClipboard,
+  parseRowsClipboard,
+  rowsFromTsv,
+  pasteRowsInto,
+  parseTsvCells,
+  tsvNumber,
+} from './rowBulkOps';
 import { computeEstimateCalc, wouldCreateCycle, computeAutoAmount, encodeSheetItemsForOutput } from './estimateCalc';
 
 // 今日の日付を YYMMDD 形式で返す
@@ -148,6 +162,23 @@ const nextCategorySymbol = (items) => {
 };
 
 const MAX_ROWS = 300;
+
+// 複数行の複製・貼り付けで新しい行に振るID
+const ROW_IDS = {
+  uid: () => newUid(),
+  catTempId: () => `cat_${Date.now()}_${Math.random()}`,
+};
+// このタブで直前にコピーした行（クリップボードの html が落ちても行の種類・リンクを復元するため）
+let lastRowsCopy = null;
+// 入力欄（文字入力・選択欄）か。行選択中のキー操作・コピー＆貼り付けを入力欄では横取りしない
+const isEditableEl = (el) =>
+  !!el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName));
+// モーダル・通知など、紙面より手前の重ね画面の中か（全画面シート表示は紙面扱い）
+const isInOverlay = (el) => {
+  if (!(el instanceof HTMLElement)) return false;
+  const layer = el.closest('.fixed');
+  return !!layer && !layer.hasAttribute('data-estimate-undo-scope');
+};
 
 // 文字を打ち込む入力欄か（同じ欄への連続入力を1回分にまとめる判定に使う。select・日付・チェックは対象外）
 const TYPING_INPUT_TYPES = new Set(['', 'text', 'search', 'number', 'tel', 'email', 'url']);
@@ -334,11 +365,8 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
       const t = e.target instanceof HTMLElement ? e.target : document.body;
       // モーダル（role=dialog / 全面固定表示の重ね画面）の中、またはモーダルが開いている間は対象外。
       // 全画面シート表示は data-estimate-undo-scope 付きの固定表示なので対象に含める。
-      if (document.querySelector('[aria-modal="true"]')) return;
-      const fixedLayer = t.closest('.fixed');
-      if (fixedLayer && !fixedLayer.hasAttribute('data-estimate-undo-scope')) return;
-      const editable = t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName);
-      if (editable && !t.closest('[data-estimate-undo-scope]')) return;
+      if (document.querySelector('[aria-modal="true"]') || isInOverlay(t)) return;
+      if (isEditableEl(t) && !t.closest('[data-estimate-undo-scope]')) return;
       e.preventDefault();
       if (isUndo) handleUndo(); else handleRedo();
     };
@@ -347,8 +375,13 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
   }, [previewOpen, inputsLocked, handleUndo, handleRedo]);
 
   // 別の入力欄へ移ったら、同じセルへの連続入力のまとめを打ち切る
+  // セルへの入力を始めたら行の選択は解除する（解除関数は下の「複数行の一括操作」で設定）
+  const clearRowSelectionRef = useRef(null);
   useEffect(() => {
-    const onFocusIn = () => history.breakCoalesce();
+    const onFocusIn = (e) => {
+      history.breakCoalesce();
+      if (isEditableEl(e.target)) clearRowSelectionRef.current?.();
+    };
     document.addEventListener('focusin', onFocusIn);
     return () => document.removeEventListener('focusin', onFocusIn);
   }, [history.breakCoalesce]);
@@ -890,11 +923,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
   const pasteTsv = useCallback((uid, tsv) => {
     if (operationInFlight.current) return;
     const COLS = ['name', 'spec', 'quantity', 'unit', 'unit_price', 'note'];
-    const rows = tsv
-      .replace(/\r\n?/g, '\n')
-      .replace(/\n$/, '')
-      .split('\n')
-      .map(line => line.split('\t'));
+    const rows = parseTsvCells(tsv);
     if (rows.length === 0) return;
 
     const entry = editItems('貼り付け', { focus: { uid, col: 'name' } }, (prev) => {
@@ -907,12 +936,8 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
         let next = { ...row };
         COLS.forEach((col, ci) => {
           if (ci >= cells.length) return;
-          let v = cells[ci];
-          if (col === 'quantity' || col === 'unit_price') {
-            const num = String(v).replace(/,/g, '').trim();
-            v = num === '' ? '' : (Number.isNaN(Number(num)) ? v : Number(num));
-          }
-          next[col] = v;
+          const v = cells[ci];
+          next[col] = (col === 'quantity' || col === 'unit_price') ? tsvNumber(v) : v;
         });
         return computeAutoAmount(next);
       };
@@ -1051,6 +1076,342 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
     });
     return starts;
   }, [sheets, itemsBySheet, header, totals, sheetTotals, linkedSheetIds]);
+
+  // ============================================================
+  // 複数行の一括操作（1シート内で行単位に選択 → 削除・複製・コピー／切り取り／貼り付け・上下移動）
+  // 選択は _uid で持ち、元に戻すなどで消えた行は表示時に自動で外れる。
+  // ============================================================
+  const [rowSelection, setRowSelection] = useState({ sheetId: null, uids: [], anchor: null });
+  // 貼り付け先が同じ見積かの判定用（未保存の新規見積でも同じ画面内なら同じ見積とみなす）
+  const instanceKeyRef = useRef(`ed_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+
+  // 保存で仮シートIDが確定IDに変わった対応（コピー後に保存してから貼った行のリンク①を保つため）
+  const sheetIdAliasRef = useRef(new Map());
+
+  const selSheetId = rowSelection.sheetId;
+  // 選択行（シート内の表示順）
+  const selectedRows = useMemo(
+    () => (selSheetId == null ? [] : orderedSelection(items, selSheetId, new Set(rowSelection.uids))),
+    [items, selSheetId, rowSelection.uids]);
+  const selectedUidSet = useMemo(() => new Set(selectedRows.map(r => r._uid)), [selectedRows]);
+  const firstSelectedUid = () => selectedRows[0]?._uid ?? null;
+  const lastSelectedUid = () => selectedRows[selectedRows.length - 1]?._uid ?? null;
+
+  // 元に戻すなどで消えた行は選択から外す（やり直しで行が戻っても選択は復活させない）
+  useEffect(() => {
+    if (selectedRows.length === rowSelection.uids.length) return;
+    const uids = selectedRows.map(r => r._uid);
+    setRowSelection(sel => (uids.length ? { ...sel, uids } : { sheetId: null, uids: [], anchor: null }));
+  }, [selectedRows, rowSelection.uids.length]);
+
+  const clearRowSelection = useCallback(() => {
+    setRowSelection(sel => (sel.uids.length ? { sheetId: null, uids: [], anchor: null } : sel));
+  }, []);
+  clearRowSelectionRef.current = clearRowSelection;
+
+  // 編集ロック中は選択できない
+  useEffect(() => { if (isLocked) clearRowSelection(); }, [isLocked, clearRowSelection]);
+
+  // 行の左端クリック: 単独選択／Shift で範囲／Ctrl(⌘) で追加・解除。別シートなら選び直し
+  const selectRow = useCallback((sheetId, uid, { shift = false, ctrl = false } = {}) => {
+    if (inputsLockedRef.current) return;
+    setRowSelection(sel => {
+      if (sel.sheetId !== sheetId || (!shift && !ctrl)) return { sheetId, uids: [uid], anchor: uid };
+      if (shift) {
+        const range = rangeUids(items, sheetId, sel.anchor ?? uid, uid);
+        const uids = ctrl ? [...new Set([...sel.uids, ...range])] : range;
+        return { ...sel, uids };
+      }
+      const has = sel.uids.includes(uid);
+      return { sheetId, uids: has ? sel.uids.filter(u => u !== uid) : [...sel.uids, uid], anchor: uid };
+    });
+  }, [items]);
+
+  const bulkDelete = useCallback((label = '行の一括削除', verb = '削除') => {
+    if (!canEditNow() || selSheetId == null || selectedUidSet.size === 0) return;
+    const count = selectedUidSet.size;
+    const entry = editItems(label, { focus: { uid: firstSelectedUid(), col: 'name' } }, (prev) =>
+      removeRows(prev, selSheetId, selectedUidSet, (sid) => newItemRow(sid, 0)));
+    clearRowSelection();
+    notifyWithUndo(entry, `${count}行を${verb}しました`);
+  }, [selSheetId, selectedUidSet, editItems, clearRowSelection, notifyWithUndo, items]);
+
+  const bulkDuplicate = useCallback(() => {
+    if (!canEditNow() || selSheetId == null || selectedUidSet.size === 0) return;
+    let newUids = [];
+    editItems('行の一括複製', { focus: { uid: firstSelectedUid(), col: 'name' } }, (prev) => {
+      const res = duplicateRows(prev, selSheetId, selectedUidSet, ROW_IDS);
+      newUids = res.newUids;
+      return res.items;
+    });
+    if (newUids.length) setRowSelection({ sheetId: selSheetId, uids: newUids, anchor: newUids[0] });
+  }, [selSheetId, selectedUidSet, editItems, items]);
+
+  const bulkMove = useCallback((dir) => {
+    if (!canEditNow() || selSheetId == null || selectedUidSet.size === 0) return;
+    editItems('行の一括移動', { focus: { uid: firstSelectedUid(), col: 'name' } }, (prev) =>
+      moveRows(prev, selSheetId, selectedUidSet, dir));
+  }, [selSheetId, selectedUidSet, editItems, items]);
+
+  // 選択行のコピー内容（リンク行はコピー時点の実効値も持たせるため、計算済みの行を使う）
+  const buildSelectionClipboard = () => {
+    const rows = (itemsBySheet.get(selSheetId) || []).filter(r => selectedUidSet.has(r._uid));
+    if (rows.length === 0) return null;
+    const clip = buildRowsClipboard(rows, { estimateId, instanceKey: instanceKeyRef.current });
+    lastRowsCopy = clip;
+    return clip;
+  };
+
+  // クリップボードへ書き込む。キー操作（copy/cut イベント）なら event に書き、
+  // ボタン操作なら Clipboard API を使う。
+  const writeRowsClipboard = async (clip, event) => {
+    if (event?.clipboardData) {
+      event.clipboardData.setData('text/plain', clip.text);
+      event.clipboardData.setData('text/html', clip.html);
+      return true;
+    }
+    try {
+      if (window.ClipboardItem && navigator.clipboard?.write) {
+        await navigator.clipboard.write([new window.ClipboardItem({
+          'text/plain': new Blob([clip.text], { type: 'text/plain' }),
+          'text/html': new Blob([clip.html], { type: 'text/html' }),
+        })]);
+      } else {
+        await navigator.clipboard.writeText(clip.text);
+      }
+      return true;
+    } catch (e) {
+      showToast('クリップボードへのコピーに失敗しました: ' + (e?.message || e), 'error');
+      return false;
+    }
+  };
+
+  const bulkCopy = useCallback(async (event) => {
+    if (selSheetId == null || selectedUidSet.size === 0) return;
+    const clip = buildSelectionClipboard();
+    if (!clip) return;
+    if (await writeRowsClipboard(clip, event)) {
+      if (!event) showToast(`${selectedUidSet.size}行をコピーしました（Ctrl+V で選択行の下に貼り付け）`, 'success');
+    }
+  }, [selSheetId, selectedUidSet, itemsBySheet, estimateId, showToast]);
+
+  const bulkCut = useCallback(async (event) => {
+    if (!canEditNow() || selSheetId == null || selectedUidSet.size === 0) return;
+    const clip = buildSelectionClipboard();
+    if (!clip) return;
+    if (await writeRowsClipboard(clip, event)) bulkDelete('行の切り取り', '切り取り');
+  }, [selSheetId, selectedUidSet, itemsBySheet, estimateId, bulkDelete]);
+
+  /**
+   * 行の貼り付け。anchorUid の行の下に挿入する。
+   * allowTsv=false のときは、このアプリでコピーした行データの場合だけ処理する
+   * （セル内での Excel 貼り付けは従来どおり pasteTsv に任せるため）。
+   * @returns 処理したら true
+   */
+  const pasteRows = useCallback((sheetId, anchorUid, clipboard, allowTsv) => {
+    if (!canEditNow()) return false;
+    const payload = parseRowsClipboard(clipboard, lastRowsCopy);
+    const dataRows = payload ? payload.rows : (allowTsv ? rowsFromTsv(clipboard.text) : []);
+    if (dataRows.length === 0) return false;
+    const sameEstimate = !!payload && (
+      payload.instanceKey === instanceKeyRef.current ||
+      (payload.estimateId != null && payload.estimateId === estimateId));
+
+    let newUids = [];
+    const entry = editItems('行の貼り付け', { focus: { uid: anchorUid, col: 'name' } }, (prev, st) => {
+      // リンクの取捨（同じ見積・参照先あり・循環なし）と切り取った工種の識別子の引き継ぎは pasteRowsInto
+      const res = pasteRowsInto(prev, st.sheets, sheetId, anchorUid, dataRows, ROW_IDS, {
+        sameEstimate,
+        mapSheetId: (id) => sheetIdAliasRef.current.get(id) ?? id,
+        wouldCreateCycle,
+      });
+      newUids = res.newUids;
+      return res.items;
+    });
+    if (!entry) return false;
+    setRowSelection({ sheetId, uids: newUids, anchor: newUids[0] });
+    notifyWithUndo(entry, `${newUids.length}行を貼り付けました`);
+    return true;
+  }, [editItems, estimateId, notifyWithUndo]);
+
+  // セルにカーソルがあるときの貼り付け（SheetPaper から）。アプリの行データならその行の下へ挿入
+  const pasteRowsIntoCell = useCallback((uid, clipboard) => {
+    const row = items.find(it => it._uid === uid);
+    if (!row) return false;
+    return pasteRows(row.sheet_id, uid, clipboard, false);
+  }, [items, pasteRows]);
+
+  // ============================================================
+  // 行のドラッグ移動（左端のつまみをつかむ。選択行をつかめば選択行をまとめて、
+  // それ以外はその1行だけ。別シート・左ナビのシート名へも落とせる）
+  // ============================================================
+  const dragRowsRef = useRef(null);            // { uids: string[] } ドラッグ中の行
+  const [dropIndicator, setDropIndicator] = useState(null); // { sheetId, uid, position } | null
+
+  const handleRowDragStart = useCallback((uid) => {
+    if (!canEditNow()) return false;
+    const fromSelection = selectedUidSet.has(uid);
+    const uids = fromSelection ? selectedRows.map(r => r._uid) : [uid];
+    dragRowsRef.current = { uids, fromSelection };
+    return true;
+  }, [selectedUidSet, selectedRows]);
+
+  // ドラッグ中の落とし先の更新（dragover は連続で来るので、変わったときだけ再描画する）
+  const handleRowDragOver = useCallback((target) => {
+    if (!dragRowsRef.current) return;
+    setDropIndicator(cur => (cur && target && cur.sheetId === target.sheetId && cur.uid === target.uid &&
+      cur.position === target.position ? cur : target));
+  }, []);
+
+  const handleRowDragEnd = useCallback(() => {
+    dragRowsRef.current = null;
+    setDropIndicator(null);
+  }, []);
+
+  /**
+   * ドラッグした行を target（{ sheetId, uid, position }。uid が null ならシート末尾）へ移す。
+   * 新たに循環参照が生じる移動は行わず、理由を通知する。
+   */
+  const dropDraggedRows = useCallback((target) => {
+    const drag = dragRowsRef.current;
+    handleRowDragEnd();
+    if (!drag || !target || !canEditNow()) return;
+    const uidSet = new Set(drag.uids);
+    let cycle = false;
+    const entry = editItems('行のドラッグ移動', { focus: { uid: drag.uids[0], col: 'name' } }, (prev, st) => {
+      const anchor = target.uid ? { uid: target.uid, position: target.position } : null;
+      const next = moveRowsTo(prev, uidSet, target.sheetId, anchor, (sid) => newItemRow(sid, 0));
+      if (next === prev) return prev;
+      const before = computeEstimateCalc(st.sheets, prev).cycleUids;
+      const after = computeEstimateCalc(st.sheets, next).cycleUids;
+      if ([...after].some(u => !before.has(u))) {
+        cycle = true;
+        return prev;
+      }
+      return next;
+    });
+    if (cycle) {
+      showToast('循環参照になるため、その位置へは移動できません', 'error');
+      return;
+    }
+    // 選択行を動かした場合は、移動先のシートで選択を保つ（選択はシート単位のため付け替える）
+    if (entry && drag.fromSelection) {
+      setRowSelection({ sheetId: target.sheetId, uids: drag.uids, anchor: drag.uids[0] });
+    }
+  }, [editItems, handleRowDragEnd, showToast]);
+
+  // 左ナビのシート名へ落とす: そのシートの末尾へ
+  const dropDraggedRowsToSheet = useCallback((sheetIndex) => {
+    const sheet = sheets[sheetIndex];
+    if (sheet) dropDraggedRows({ sheetId: sheet.id, uid: null, position: 'after' });
+  }, [sheets, dropDraggedRows]);
+
+  // ドラッグ中、画面の上下端に近づいたら自動スクロール（全画面表示中はその中を、通常は画面全体を）
+  useEffect(() => {
+    const EDGE = 60;
+    const STEP = 18;
+    const onDragOver = (e) => {
+      if (!dragRowsRef.current) return;
+      const dy = e.clientY < EDGE ? -STEP : e.clientY > window.innerHeight - EDGE ? STEP : 0;
+      if (!dy) return;
+      const box = document.querySelector('[data-estimate-fullscreen] [data-estimate-scroll]');
+      if (box) box.scrollBy(0, dy);
+      else window.scrollBy(0, dy);
+    };
+    window.addEventListener('dragover', onDragOver);
+    return () => window.removeEventListener('dragover', onDragOver);
+  }, []);
+
+  // 行選択中のキー操作（入力欄・重ね画面の中では横取りしない）
+  useEffect(() => {
+    if (selSheetId == null || selectedUidSet.size === 0) return undefined;
+    // 紙面（または何もフォーカスしていない状態）でだけ受ける。右パネル・左ナビのボタン等にフォーカスが
+    // あるときに Delete や Ctrl+V で選択行が消えたり行が入ったりしないようにする
+    const usable = (t) => (t === document.body || (t instanceof HTMLElement && !!t.closest('[data-estimate-undo-scope]'))) &&
+      !isEditableEl(t) && !isInOverlay(t) && !document.querySelector('[aria-modal="true"]') && !previewOpen;
+    const onKeyDown = (e) => {
+      if (!usable(e.target) || e.isComposing) return;
+      if (e.key === 'Escape') {
+        // 全画面表示を閉じる Esc より先に、選択の解除だけを行う
+        e.stopPropagation();
+        clearRowSelection();
+        return;
+      }
+      if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); bulkDelete(); return; }
+      if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        e.preventDefault();
+        bulkMove(e.key === 'ArrowUp' ? 'up' : 'down');
+      }
+    };
+    // ページ上の文字を選んでいるときは通常のコピーに任せる
+    const hasTextSelection = () => (window.getSelection?.().toString() || '') !== '';
+    const onCopy = (e) => {
+      if (!usable(document.activeElement) || hasTextSelection()) return;
+      e.preventDefault();
+      bulkCopy(e);
+    };
+    const onCut = (e) => {
+      if (!usable(document.activeElement) || hasTextSelection()) return;
+      e.preventDefault();
+      bulkCut(e);
+    };
+    const onPaste = (e) => {
+      if (!usable(document.activeElement)) return;
+      const clipboard = {
+        html: e.clipboardData?.getData('text/html') ?? '',
+        text: e.clipboardData?.getData('text/plain') ?? '',
+      };
+      if (pasteRows(selSheetId, lastSelectedUid(), clipboard, true)) e.preventDefault();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('copy', onCopy);
+    document.addEventListener('cut', onCut);
+    document.addEventListener('paste', onPaste);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('copy', onCopy);
+      document.removeEventListener('cut', onCut);
+      document.removeEventListener('paste', onPaste);
+    };
+  }, [selSheetId, selectedUidSet, previewOpen, clearRowSelection, bulkDelete, bulkMove, bulkCopy, bulkCut, pasteRows, selectedRows]);
+
+  // 行のコピー以外の通常のコピーをしたら、直前の行コピーの記憶は捨てる
+  // （同じ文字を普通にコピーして貼ったときに行の貼り付けと取り違えないため）
+  useEffect(() => {
+    const forget = (e) => { if (!e.defaultPrevented) lastRowsCopy = null; };
+    window.addEventListener('copy', forget);
+    window.addEventListener('cut', forget);
+    return () => {
+      window.removeEventListener('copy', forget);
+      window.removeEventListener('cut', forget);
+    };
+  }, []);
+
+  // SheetPaper へ渡す選択情報（選択中のシートにだけ渡す）
+  const EMPTY_SET = useMemo(() => new Set(), []);
+  const selectionPropsFor = (sheetId) => {
+    const active = selSheetId === sheetId && selectedUidSet.size > 0;
+    return {
+      selectedUids: active ? selectedUidSet : EMPTY_SET,
+      onSelectRow: (uid, mods) => selectRow(sheetId, uid, mods),
+      onPasteRows: pasteRowsIntoCell,
+      selectionActions: active ? {
+        count: selectedUidSet.size,
+        onDelete: () => bulkDelete(),
+        onDuplicate: bulkDuplicate,
+        onCopy: () => bulkCopy(),
+        onCut: () => bulkCut(),
+        onMove: bulkMove,
+        onClear: clearRowSelection,
+      } : null,
+      // ドラッグ移動
+      onRowDragStart: handleRowDragStart,
+      onRowDragOver: handleRowDragOver,
+      onRowDrop: dropDraggedRows,
+      onRowDragEnd: handleRowDragEnd,
+      dropIndicator: dropIndicator?.sheetId === sheetId ? dropIndicator : null,
+    };
+  };
 
   const handleUnlock = async () => {
     if (!isCreator) return false;
@@ -1248,7 +1609,9 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
         linked_sheet_id: idRemap.get(item.linked_sheet_id) ?? item.linked_sheet_id,
       }));
       // 履歴内の仮シートIDも確定IDへ置き換え、DB上の現存シートを登録しておく
-      history.remapSheetIds(new Map([...idRemap].filter(([from, to]) => from !== to)));
+      const changedSheetIds = new Map([...idRemap].filter(([from, to]) => from !== to));
+      history.remapSheetIds(changedSheetIds);
+      changedSheetIds.forEach((to, from) => sheetIdAliasRef.current.set(from, to));
       history.setKnownSheetIds(saved.sheet_ids);
       setEstimateId(saved.id);
       setHeader(savedHeader);
@@ -1421,6 +1784,8 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
             onDeleteSheet={handleDeleteSheet}
             onAddSheet={handleAddSheet}
             isLocked={inputsLocked}
+            onDropRowsToSheet={dropDraggedRowsToSheet}
+            onRowsDragOverNav={() => handleRowDragOver(null)}
           />
         </div>
 
@@ -1473,6 +1838,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
                   onMoveRow={moveRow}
                   onPasteTsv={pasteTsv}
                   onSetRowLink={setRowLink}
+                  {...selectionPropsFor(sheet.id)}
                 />
               </div>
             ))}
@@ -1645,7 +2011,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
           </div>
 
           {/* シート表示エリア */}
-          <div className="flex-1 min-h-0 overflow-auto py-8">
+          <div className="flex-1 min-h-0 overflow-auto py-8" data-estimate-scroll>
             <div className="flex flex-col items-center px-6">
               <SheetPaper
                 sheet={sheets[fullscreenSheetIndex]}
@@ -1668,6 +2034,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
                 onMoveRow={moveRow}
                 onPasteTsv={pasteTsv}
                 onSetRowLink={setRowLink}
+                {...selectionPropsFor(sheets[fullscreenSheetIndex].id)}
               />
             </div>
           </div>

@@ -20,7 +20,7 @@
 // 持たず、フラット配列内の絶対 index を知らないため）。
 import React, { useRef, useCallback, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, Trash2, Copy, ChevronUp, ChevronDown, Link2, Link2Off, FolderPlus, MessageSquarePlus } from 'lucide-react';
+import { Plus, Trash2, Copy, ChevronUp, ChevronDown, Link2, Link2Off, FolderPlus, MessageSquarePlus, Scissors, X } from 'lucide-react';
 import { ITEM_TYPE } from '../utils/constants';
 import { sumItemAmounts } from '../supabaseEstimates';
 import {
@@ -28,6 +28,7 @@ import {
 } from './paperStyles';
 import { buildSheetRowsShared } from './sheetRowLayout';
 import { formatNumberInput, formatQuantityInput, parseNumberInput } from './numberInputFormat';
+import { ROW_DRAG_TYPE, isRowDragEvent } from './rowBulkOps';
 
 // 空行センチネル（design.md §4: 空行は保持し、category_symbol で識別する）
 const BLANK_SENTINEL = '__blank__';
@@ -450,10 +451,108 @@ const RowToolbar = ({ item, onAddRowAfter, onDuplicateRow, onRemoveRow, onMoveRo
 };
 
 // ============================================================
+// 複数行選択: 行の左端の選択つまみ・選択中の色・選択範囲のそばの操作バー
+// ============================================================
+const SelectionBar = ({ actions }) => {
+  const btn = {
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    width: 22, height: 22, border: 'none', background: 'transparent',
+    cursor: 'pointer', color: '#334155', padding: 0, borderRadius: 4,
+  };
+  const keep = (e) => e.preventDefault(); // 押しても選択つまみのフォーカスを奪わない
+  return (
+    <div
+      role="toolbar"
+      aria-label="選択した行の操作"
+      style={{
+        position: 'absolute', right: 0, bottom: '100%', marginBottom: 2,
+        display: 'flex', alignItems: 'center', gap: 2,
+        background: '#fff', border: '1px solid #93c5fd', borderRadius: 6,
+        padding: '2px 4px', boxShadow: '0 2px 6px rgba(0,0,0,0.18)',
+        fontSize: 11, color: '#1d4ed8', zIndex: 7, whiteSpace: 'nowrap',
+      }}
+    >
+      <span style={{ fontWeight: 'bold', padding: '0 4px' }}>{actions.count}行選択中</span>
+      <button type="button" style={btn} onMouseDown={keep} onClick={() => actions.onMove('up')}
+        title="選択した行を上へ（Alt+↑）" aria-label="選択した行を上へ移動"><ChevronUp size={14} /></button>
+      <button type="button" style={btn} onMouseDown={keep} onClick={() => actions.onMove('down')}
+        title="選択した行を下へ（Alt+↓）" aria-label="選択した行を下へ移動"><ChevronDown size={14} /></button>
+      <button type="button" style={btn} onMouseDown={keep} onClick={actions.onDuplicate}
+        title="選択した行を複製" aria-label="選択した行を複製"><Plus size={14} /></button>
+      <button type="button" style={btn} onMouseDown={keep} onClick={actions.onCopy}
+        title="コピー（Ctrl+C）。Ctrl+V で選択行の下に貼り付け" aria-label="選択した行をコピー"><Copy size={14} /></button>
+      <button type="button" style={btn} onMouseDown={keep} onClick={actions.onCut}
+        title="切り取り（Ctrl+X）" aria-label="選択した行を切り取り"><Scissors size={14} /></button>
+      <button type="button" style={{ ...btn, color: '#dc2626' }} onMouseDown={keep} onClick={actions.onDelete}
+        title="選択した行を削除（Delete）" aria-label="選択した行を削除"><Trash2 size={14} /></button>
+      <button type="button" style={{ ...btn, color: '#64748b' }} onMouseDown={keep} onClick={actions.onClear}
+        title="選択を解除（Esc）" aria-label="選択を解除"><X size={14} /></button>
+    </div>
+  );
+};
+
+// 行の飾り（選択つまみ・選択中の色・先頭の選択行には操作バー）。編集可能な行にだけ付ける
+const rowSelectionDecor = (item, edit, selection, dropLine) => {
+  if (!edit || !edit.onSelectRow) return null;
+  const uid = item._uid;
+  const selected = selection?.uids?.has(uid);
+  const dropHere = dropLine && dropLine.uid === uid ? dropLine.position : null;
+  return (
+    <>
+      <button
+        type="button"
+        className="sheet-row-handle"
+        data-selected={selected ? 'true' : undefined}
+        title="クリックで行を選択（Shift: 範囲／Ctrl: 追加・解除）。ドラッグで移動"
+        aria-label="行を選択"
+        aria-pressed={!!selected}
+        draggable={!!edit.onRowDragStart}
+        onDragStart={(e) => {
+          if (!edit.onRowDragStart?.(uid)) { e.preventDefault(); return; }
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData(ROW_DRAG_TYPE, uid);
+        }}
+        onDragEnd={() => edit.onRowDragEnd?.()}
+        onClick={(e) => {
+          // Shift+クリックでページ上の文字が選択されると Ctrl+C が文字のコピーになるため外す
+          window.getSelection?.()?.removeAllRanges();
+          edit.onSelectRow(uid, { shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey });
+          // キー操作（Delete・Ctrl+C など）を受けられるよう、つまみにフォーカスを置く
+          e.currentTarget.focus();
+        }}
+        style={{
+          position: 'absolute', left: -pt(14), top: 0, bottom: 0, width: pt(10),
+          padding: 0, border: 'none', borderRadius: 2, cursor: 'grab', userSelect: 'none',
+          background: selected ? '#2563eb' : '#cbd5e1',
+          opacity: selected ? 1 : 0, transition: 'opacity 0.1s', zIndex: 4,
+        }}
+      />
+      {selected && (
+        <div aria-hidden="true" style={{
+          position: 'absolute', inset: 0, background: 'rgba(37,99,235,0.12)',
+          pointerEvents: 'none', zIndex: 1,
+        }} />
+      )}
+      {selected && selection.firstUid === uid && selection.actions && (
+        <SelectionBar actions={selection.actions} />
+      )}
+      {/* ドラッグ中の落とし先（行の上端または下端の青線） */}
+      {dropHere && (
+        <div aria-hidden="true" style={{
+          position: 'absolute', left: -pt(14), right: 0, height: 3,
+          ...(dropHere === 'before' ? { top: -2 } : { bottom: -2 }),
+          background: '#2563eb', borderRadius: 2, pointerEvents: 'none', zIndex: 8,
+        }} />
+      )}
+    </>
+  );
+};
+
+// ============================================================
 // 行レンダリング
 // ============================================================
 // edit = 編集ハンドラ束（null なら読み取り専用）
-const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom, cycleUids }, edit) => {
+const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom, cycleUids, selection, dropLine }, edit) => {
   const rowStyle = {
     ...rowBase,
     ...(isSolidBottom || isLastRowOfPage ? { borderBottom: solidBottom } : {}),
@@ -461,6 +560,9 @@ const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom, cycleUids }, e
 
   const editable = !!edit;
   // 編集可能行（item/category/comment）にホバーツールバーを載せる
+  const decor = editable && row.item ? rowSelectionDecor(row.item, edit, selection, dropLine) : null;
+  // ドラッグの落とし先判定に使う行の識別子（編集可能な行のみ）
+  const rowUidAttr = editable && row.item ? { 'data-row-uid': row.item._uid } : {};
   const toolbar = editable && row.item ? (
     <RowToolbar
       item={row.item}
@@ -479,9 +581,10 @@ const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom, cycleUids }, e
       const { item, catTotal } = row;
       const uid = item._uid;
       return (
-        <div key={rowKey} className={editable ? 'sheet-edit-row' : undefined}
+        <div key={rowKey} className={editable ? 'sheet-edit-row' : undefined} {...rowUidAttr}
           style={{ ...rowStyle, background: COLORS.categoryBg }}>
           {toolbar}
+          {decor}
           <div style={{ ...CELLS.no, borderRight: 'none' }}>
             {editable ? (
               <input
@@ -523,8 +626,9 @@ const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom, cycleUids }, e
       const { item } = row;
       const uid = item._uid;
       return (
-        <div key={rowKey} className={editable ? 'sheet-edit-row' : undefined} style={rowStyle}>
+        <div key={rowKey} className={editable ? 'sheet-edit-row' : undefined} {...rowUidAttr} style={rowStyle}>
           {toolbar}
+          {decor}
           <div style={CELLS.no} />
           <div style={{ ...CELLS.name, flex: 1, borderRight: 'none' }}>
             {editable ? (
@@ -572,8 +676,9 @@ const renderRow = (row, rowKey, { isLastRowOfPage, isSolidBottom, cycleUids }, e
       const lockPrice = isLink1 || isLink2;
       const lockNote = isLink1;
       return (
-        <div key={rowKey} className="sheet-edit-row" style={linkRowStyle} title={isCycle ? '循環参照のためリンクを無効化しています' : undefined}>
+        <div key={rowKey} className="sheet-edit-row" {...rowUidAttr} style={linkRowStyle} title={isCycle ? '循環参照のためリンクを無効化しています' : undefined}>
           {toolbar}
+          {decor}
           <div style={CELLS.no}>{itemNo ?? ''}</div>
           <div style={CELLS.name}>
             {lockName
@@ -732,6 +837,17 @@ const SheetPaper = ({
   onMoveRow,
   onPasteTsv,
   onSetRowLink,      // Phase 5: 行にリンク①②を張る／外す
+  // ── 複数行選択（任意） ──
+  selectedUids,      // このシートで選択中の行 _uid の Set
+  onSelectRow,       // (uid, { shift, ctrl }) => void  行の左端クリック
+  onPasteRows,       // (uid, { html, text }) => boolean  アプリでコピーした行ならその行の下へ挿入して true
+  selectionActions,  // 操作バーのハンドラ { count, onDelete, onDuplicate, onCopy, onCut, onMove, onClear } | null
+  // ── 行のドラッグ移動（任意） ──
+  onRowDragStart,    // (uid) => boolean  ドラッグを始めてよければ true
+  onRowDragOver,     // ({ sheetId, uid, position }) => void  落とし先の更新（uid null はシート末尾）
+  onRowDrop,         // ({ sheetId, uid, position }) => void
+  onRowDragEnd,      // () => void
+  dropIndicator,     // このシート上の落とし先 { sheetId, uid, position } | null
 }) => {
   const isTopSheet = sheetIndex === 0;
   const rows = buildSheetRows(items, header, isTopSheet, totals, sheetTotal, showTotalRow);
@@ -845,10 +961,16 @@ const SheetPaper = ({
   const handleCellPaste = useCallback((e, uid) => {
     if (!editable) return;
     const text = e.clipboardData?.getData('text/plain') ?? '';
+    // この画面でコピーした行（工種行・コメント行・リンクを含む）なら、その行の下に行ごと挿入する
+    const html = e.clipboardData?.getData('text/html') ?? '';
+    if (onPasteRows && onPasteRows(uid, { html, text })) {
+      e.preventDefault();
+      return;
+    }
     if (!text.includes('\t') && !text.includes('\n')) return;
     e.preventDefault();
     onPasteTsv(uid, text);
-  }, [editable, onPasteTsv]);
+  }, [editable, onPasteTsv, onPasteRows]);
 
   const edit = editable ? {
     onUpdateItem,
@@ -859,9 +981,50 @@ const SheetPaper = ({
     onKeyDown: handleKeyDown,
     onCellPaste: handleCellPaste,
     onSetRowLink,
+    onSelectRow,
+    onRowDragStart,
+    onRowDragEnd,
     currentSheetId: sheet.id,
     linkTargets,
   } : null;
+
+  // 選択中の行（先頭の選択行に操作バーを出す）
+  const selection = editable && selectedUids && selectedUids.size > 0 ? {
+    uids: selectedUids,
+    firstUid: items.find(it => selectedUids.has(it._uid))?._uid ?? null,
+    actions: selectionActions,
+  } : null;
+
+  // ドラッグの落とし先: 行の上半分ならその行の前、下半分なら後ろ。行以外（空き行・合計欄など）はシート末尾
+  const dropTargetFromEvent = (e) => {
+    const rowEl = e.target instanceof Element ? e.target.closest('[data-row-uid]') : null;
+    if (rowEl && sheetRef.current?.contains(rowEl)) {
+      const rect = rowEl.getBoundingClientRect();
+      return {
+        sheetId: sheet.id,
+        uid: rowEl.getAttribute('data-row-uid'),
+        position: e.clientY < rect.top + rect.height / 2 ? 'before' : 'after',
+      };
+    }
+    return { sheetId: sheet.id, uid: null, position: 'after' };
+  };
+  const canDrop = (e) => editable && typeof onRowDrop === 'function' && isRowDragEvent(e);
+  const handleSheetDragOver = (e) => {
+    if (!canDrop(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    onRowDragOver?.(dropTargetFromEvent(e));
+  };
+  const handleSheetDrop = (e) => {
+    if (!canDrop(e)) return;
+    e.preventDefault();
+    onRowDrop(dropTargetFromEvent(e));
+  };
+  // 青線を出す位置（シート末尾は最後の行の下）
+  const lastItemUid = items.length ? items[items.length - 1]._uid : null;
+  const dropLine = dropIndicator
+    ? (dropIndicator.uid ? dropIndicator : { uid: lastItemUid, position: 'after' })
+    : null;
 
   // 19行ずつページに分割
   const pages = [];
@@ -873,11 +1036,15 @@ const SheetPaper = ({
     <div
       ref={sheetRef}
       id={`paper-sheet-${sheetIndex}`}
+      onDragOver={handleSheetDragOver}
+      onDrop={handleSheetDrop}
       style={{ display: 'flex', flexDirection: 'column', gap: pt(18), alignItems: 'center' }}
     >
       {/* 行ツールバーは通常非表示、アクティブ（フォーカス中）の行のみ表示するためのスタイル */}
       <style>{`
         #paper-sheet-${sheetIndex} .sheet-edit-row:focus-within .sheet-row-toolbar { opacity: 1 !important; pointer-events: auto !important; }
+        #paper-sheet-${sheetIndex} .sheet-edit-row:hover .sheet-row-handle { opacity: 1 !important; }
+        #paper-sheet-${sheetIndex} .sheet-row-handle:focus-visible { opacity: 1 !important; outline: 2px solid #1d4ed8; }
       `}</style>
       {pages.map((pageRows, pageIdx) => (
         <div
@@ -914,10 +1081,13 @@ const SheetPaper = ({
 
           <HeaderRow />
 
-          {pageRows.map((row, rowIdx) => renderRow(row, rowIdx, {
+          {/* 明細行は _uid を key にする（行の移動後もフォーカスや入力中の値が同じ行に付いて動くように） */}
+          {pageRows.map((row, rowIdx) => renderRow(row, row.item?._uid ? `${row.kind}:${row.item._uid}` : `pos-${rowIdx}`, {
             isLastRowOfPage: rowIdx === ROWS_PER_PAGE - 1,
             isSolidBottom: false,
             cycleUids,
+            selection,
+            dropLine,
           }, edit))}
 
           {/* 末尾ページに［＋行を追加］［＋グループ行を追加］［＋コメント行を追加］（編集時のみ） */}
