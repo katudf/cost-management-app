@@ -18,8 +18,11 @@ const SCHEMA_VERSION = 2;
 // 退避データの有効期限（これより古い退避は復元候補にしない）
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7日
 
-// 見積IDから localStorage キーを生成（新規作成時は 'new'）
-const draftKey = (estimateId) => `${KEY_PREFIX}${estimateId ?? 'new'}`;
+// 見積IDから localStorage キーを生成（新規作成時は 'new'）。
+// slot='pending' は「復元するか未判断の前回分」の置き場（帯の表示中に新しい入力の退避で上書きしないため）
+export const DRAFT_SLOT_PENDING = 'pending';
+const draftKey = (estimateId, slot = null) =>
+  `${KEY_PREFIX}${estimateId ?? 'new'}${slot ? `:${slot}` : ''}`;
 
 // 入力内容を退避する。失敗（QuotaExceeded・localStorage無効等）は握りつぶす
 // —— 退避はベストエフォートであり、失敗してDB保存フローを妨げてはならない。
@@ -40,9 +43,9 @@ export const saveEstimateDraft = (estimateId, { header, sheets, items }) => {
 
 // 退避データを読み込む。無い／壊れている／古い／スキーマ不一致なら null。
 // 返り値: { header, sheets, items, savedAt } | null
-export const loadEstimateDraft = (estimateId) => {
+export const loadEstimateDraft = (estimateId, { slot = null } = {}) => {
   try {
-    const raw = localStorage.getItem(draftKey(estimateId));
+    const raw = localStorage.getItem(draftKey(estimateId, slot));
     if (!raw) return null;
 
     const parsed = JSON.parse(raw);
@@ -50,7 +53,7 @@ export const loadEstimateDraft = (estimateId) => {
     if (typeof parsed.savedAt !== 'number') return null;
     if (Date.now() - parsed.savedAt > MAX_AGE_MS) {
       // 期限切れは掃除しておく
-      clearEstimateDraft(estimateId);
+      clearEstimateDraft(estimateId, { slot });
       return null;
     }
     if (!parsed.header || !Array.isArray(parsed.sheets) || !Array.isArray(parsed.items)) return null;
@@ -62,12 +65,58 @@ export const loadEstimateDraft = (estimateId) => {
 };
 
 // 退避データを破棄する（DB保存成功時・破棄離脱時に呼ぶ）
-export const clearEstimateDraft = (estimateId) => {
+export const clearEstimateDraft = (estimateId, { slot = null } = {}) => {
   try {
+    localStorage.removeItem(draftKey(estimateId, slot));
+  } catch {
+    // 無視
+  }
+};
+
+// 通常の退避を「未判断の前回分」の置き場へ移す（退避した時刻はそのまま）。
+// 既に前回分があれば上書きしない（古い方＝利用者がまだ判断していない方を残す）
+export const moveDraftToPending = (estimateId) => {
+  try {
+    const raw = localStorage.getItem(draftKey(estimateId));
+    if (raw == null) return;
+    if (localStorage.getItem(draftKey(estimateId, DRAFT_SLOT_PENDING)) == null) {
+      localStorage.setItem(draftKey(estimateId, DRAFT_SLOT_PENDING), raw);
+    }
     localStorage.removeItem(draftKey(estimateId));
   } catch {
     // 無視
   }
+};
+
+// キーの並び順・undefined の有無に左右されない比較用の正規化
+const normalizeForCompare = (v) => {
+  if (Array.isArray(v)) return v.map(normalizeForCompare);
+  if (v && typeof v === 'object') {
+    const out = {};
+    Object.keys(v).sort().forEach((k) => {
+      if (v[k] !== undefined) out[k] = normalizeForCompare(v[k]);
+    });
+    return out;
+  }
+  return v;
+};
+
+/**
+ * 退避データの中身が、読み込んだ保存済みの内容と同じか（復元を提案する意味が無いか）。
+ *   - 鑑は保存済みの内容にある項目だけを比べ、ignoreHeaderFields（ステータス・承認の記録など）は比べない
+ *     （ステータス操作で鑑にDBの行がまるごと混ざっていても、編集した項目が無ければ同じとみなす）
+ *   - 明細は画面の中だけで使う行の識別子（_uid）を比べない
+ */
+export const isDraftSameAsContent = (draft, content, { ignoreHeaderFields = [] } = {}) => {
+  if (!draft || !content) return false;
+  const keys = Object.keys(content.header || {}).filter(k => !ignoreHeaderFields.includes(k));
+  const pick = (h) => Object.fromEntries(keys.map(k => [k, h?.[k]]));
+  const norm = ({ header, sheets, items }) => JSON.stringify(normalizeForCompare({
+    header: pick(header),
+    sheets: sheets || [],
+    items: (items || []).map(({ _uid, ...rest }) => rest), // eslint-disable-line no-unused-vars
+  }));
+  return norm(draft) === norm(content);
 };
 
 // 退避時刻を「◯分前」等の相対表記にして復元プロンプトに表示する

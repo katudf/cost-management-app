@@ -49,6 +49,9 @@ import {
   loadEstimateDraft,
   clearEstimateDraft,
   formatDraftAge,
+  isDraftSameAsContent,
+  moveDraftToPending,
+  DRAFT_SLOT_PENDING,
   saveLastSavedSnapshot,
   loadLastSavedSnapshot,
 } from './estimateDraftV2';
@@ -272,10 +275,19 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
   // （setHeader/setSheets/setItems による初期値セットが header/sheets/items の変化として
   // カウントされるため）ので、その最初の1回分だけスキップするためのフラグ。
   const skipNextDirtyCheck = useRef(false);
+  // サーバーで確定した値を反映した直後の鑑（この鑑への変化だけなら「未保存の変更」にしない）
+  const serverHeaderRef = useRef(null);
+  // 前回の変更判定で見たシート・明細（鑑だけが変わったのかを見分ける）
+  const lastTrackedRef = useRef({ sheets: null, items: null });
+  // 開いたときの保存済みの更新日時（退避データの方が古いかの判定用）
+  const savedUpdatedAtRef = useRef(null);
+  // 前回分を判断した後に提案する、もう1つの退避（前回の画面で帯を出したまま編集した分）があるか
+  const leftoverDraftRef = useRef(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
 
   // 自動退避（localStorage）からの復元プロンプト
   const [pendingDraft, setPendingDraft] = useState(null); // { header, sheets, items, savedAt } | null
+  const [showDraftRestoreConfirm, setShowDraftRestoreConfirm] = useState(false); // 編集後に帯の［復元する］を押したときの確認
   // この端末への自動退避が最後に行われた日時（UIインジケーター表示用。サーバー保存とは別物）
   const [lastDraftSavedAt, setLastDraftSavedAt] = useState(null);
   // 保存後に誤って明細を上書き・削除した場合の救済用「直前の保存内容に戻す」確認モーダル
@@ -403,6 +415,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
   // ============================================================
   useEffect(() => {
     const init = async () => {
+      let savedContent = null; // 読み込んだ保存済みの内容（退避データとの比較用。新規は null）
       try {
         setLoading(true);
         const [custData, workerData, staffData, settingsData] = await Promise.all([
@@ -442,7 +455,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
         } else {
           const est = await fetchEstimateById(documentId);
           const parts = est.estimate_number.split('-');
-          setHeader({
+          const loadedHeader = {
             estimate_number_date: parts[0] || '',
             estimate_number_seq:  parts[1] || '',
             estimate_number_branch: parts[2] || '001',
@@ -473,11 +486,13 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
             returned_reason: est.returned_reason || '',
             approver_staff_id: est.approver_staff_id || null,
             project_id:      est.project_id || null,
-          });
+          };
+          setHeader(loadedHeader);
           // fetchEstimateById がシート未生成時は仮トップシートを合成、
           // sheet_id NULL 明細はトップシートへ帰属済み
           history.setKnownSheetIds((est.sheets || []).map(s => s.id));
-          setSheets((est.sheets || []).map(s => ({ id: s.id, title: s.title ?? null })));
+          const loadedSheets = (est.sheets || []).map(s => ({ id: s.id, title: s.title ?? null }));
+          setSheets(loadedSheets);
           // DBで '__comment__' としてエンコードされたコメント行を復元。
           // 併せて全行にクライアント側安定キー _uid を付与する（セル編集の対象特定用）。
           const loadedItems = (est.items || []).map(item => {
@@ -488,14 +503,32 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
           });
           setItems(loadedItems);
           setOriginalStatus(est.status || ESTIMATE_STATUS.DRAFT);
+          savedContent = { header: loadedHeader, sheets: loadedSheets, items: loadedItems };
+          savedUpdatedAtRef.current = est.updated_at ?? null;
         }
 
-        // 前回の未保存入力が退避されていれば復元を提案する。
+        // 前回の未保存入力が退避されていれば、紙面の上の帯で復元を提案する。
+        //   - 中身が保存済みの内容と同じ退避（ステータス操作だけ等）は、提案せずに黙って捨てる
+        //   - 提案する分は「未判断の前回分」の置き場へ移し、帯の表示中の新しい入力の退避で上書きしない
+        //   - 未判断の前回分と通常の退避が両方あれば（帯を出したまま編集して閉じた）、前回分から順に提案する
         history.clear();
-        const draft = loadEstimateDraft(documentId);
-        if (draft) {
-          setPendingDraft(draft);
+        const sameAsSaved = (d) => !!d && !!savedContent &&
+          isDraftSameAsContent(d, savedContent, { ignoreHeaderFields: SERVER_MANAGED_HEADER_FIELDS });
+        let pending = loadEstimateDraft(documentId, { slot: DRAFT_SLOT_PENDING });
+        if (sameAsSaved(pending)) {
+          clearEstimateDraft(documentId, { slot: DRAFT_SLOT_PENDING });
+          pending = null;
         }
+        const latest = loadEstimateDraft(documentId);
+        if (sameAsSaved(latest)) {
+          clearEstimateDraft(documentId);
+        } else if (latest && !pending) {
+          moveDraftToPending(documentId);
+          pending = latest;
+        } else if (latest) {
+          leftoverDraftRef.current = true;
+        }
+        if (pending) setPendingDraft(pending);
       } catch (e) {
         setError('データの読み込みに失敗しました: ' + e.message);
       } finally {
@@ -510,6 +543,8 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
   }, [documentId]);
 
   useEffect(() => {
+    const prev = lastTrackedRef.current;
+    lastTrackedRef.current = { sheets, items };
     if (!isInitialized.current) return;
     if (skipNextDirtyCheck.current) {
       skipNextDirtyCheck.current = false;
@@ -518,16 +553,18 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
     // ロック中（下書き以外）は編集操作自体が行えないため、
     // ステータスバッジ操作等による header の再セットを「未保存の変更」として扱わない。
     if (isLocked) return;
+    // サーバーで確定した鑑の値（ステータス・承認の記録等）を反映しただけなら未保存の変更ではない。
+    // 同じ描画で利用者が鑑・シート・明細を変えていれば、鑑かシート・明細の参照が変わるので未保存になる
+    if (header === serverHeaderRef.current && sheets === prev.sheets && items === prev.items) return;
     isDirty.current = true;
   }, [header, sheets, items, isLocked]);
 
   // 入力内容を localStorage へ自動退避（debounce 1.5秒）。
   // ・初期化前は退避しない（読み込み直後のDB値で上書きしない）
-  // ・復元プロンプト表示中は退避しない（ユーザー判断前に退避を上書きしない）
+  // ・復元の帯の表示中も新しい入力は退避する（前回分は pendingDraft として画面を開いている間だけ保持）
   // ・ロック中（下書き以外）は編集不可のため退避不要
   useEffect(() => {
     if (!isInitialized.current) return;
-    if (pendingDraft) return;
     if (isLocked || saving) return;
     if (!isDirty.current) return;
 
@@ -536,7 +573,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
       setLastDraftSavedAt(Date.now());
     }, 1500);
     return () => clearTimeout(timer);
-  }, [header, sheets, items, estimateId, isLocked, saving, pendingDraft]);
+  }, [header, sheets, items, estimateId, isLocked, saving]);
 
   useEffect(() => {
     const handleBeforeUnload = (e) => {
@@ -575,6 +612,17 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
     }
   }, [showToast, history.edit]);
 
+  // サーバーで確定した鑑の値（ステータス・承認の記録・案件連携）を画面へ反映する。
+  // 利用者の編集ではないので、それまで未保存の変更が無ければ「未保存の変更あり」にしない
+  // （一覧へ戻るときの確認や、入力途中のデータの自動退避が不要に出ないようにする）。
+  const applyServerHeader = useCallback((updater) => {
+    setHeader(h => {
+      const next = updater(h);
+      serverHeaderRef.current = next;
+      return next;
+    });
+  }, []);
+
   // ステータス変更系の操作は、画面遷移で失われないようその場でSupabaseへ反映する
   const persistStatus = useCallback(async (patch) => {
     if (operationInFlight.current || !estimateId) return false;
@@ -582,7 +630,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
     try {
       setSaving(true);
       const saved = await updateEstimate(estimateId, patch);
-      setHeader(h => ({ ...h, ...saved }));
+      applyServerHeader(h => ({ ...h, ...saved }));
       setOriginalStatus(saved.status);
 
       // 「受注」への遷移時はProjectsテーブルへ連携する（handleSave経由の保存を通らない
@@ -597,7 +645,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
           });
           if (linkedProjectId !== header.project_id) {
             await updateEstimate(estimateId, { project_id: linkedProjectId });
-            setHeader(prev => ({ ...prev, project_id: linkedProjectId }));
+            applyServerHeader(prev => ({ ...prev, project_id: linkedProjectId }));
           }
           // 工種へは「実際の作業明細」だけを渡す。リンク解決済みの値を使い、
           // 別シート合計・カテゴリ合計を参照するリンク行（総括表の行）は除く。
@@ -625,7 +673,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
       operationInFlight.current = false;
       setSaving(false);
     }
-  }, [estimateId, onStatusChanged, header.project_id, header.title, header.customer_id, originalStatus, showToast, items, sheets]);
+  }, [estimateId, onStatusChanged, header.project_id, header.title, header.customer_id, originalStatus, showToast, items, sheets, applyServerHeader]);
 
   // 承認・差し戻し（SECURITY DEFINER RPC経由。証跡カラムはDB側で記録される）
   const handleApprove = useCallback(async () => {
@@ -634,7 +682,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
     try {
       setSaving(true);
       const trail = await approveEstimate(estimateId);
-      setHeader(h => ({ ...h, ...trail }));
+      applyServerHeader(h => ({ ...h, ...trail }));
       setOriginalStatus(trail.status);
       onStatusChanged?.();
       return true;
@@ -654,7 +702,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
     try {
       setSaving(true);
       const trail = await returnEstimate(estimateId, reason);
-      setHeader(h => ({ ...h, ...trail }));
+      applyServerHeader(h => ({ ...h, ...trail }));
       setOriginalStatus(trail.status);
       onStatusChanged?.();
       return true;
@@ -1892,6 +1940,11 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
       skipNextDirtyCheck.current = true;
       clearEstimateDraft(estimateId);
       clearEstimateDraft(saved.id);
+      // 保存した内容が最新なので、前回の未保存入力の復元は提案しない
+      clearEstimateDraft(estimateId, { slot: DRAFT_SLOT_PENDING });
+      clearEstimateDraft(saved.id, { slot: DRAFT_SLOT_PENDING });
+      leftoverDraftRef.current = false;
+      setPendingDraft(null);
       saveLastSavedSnapshot(saved.id, { header: savedHeader, sheets: savedSheets, items: savedItems });
       showToast(approverStaffId != null ? '最新の内容を保存して承認を依頼しました' : '見積を保存しました', 'success');
       if (approverStaffId != null) onStatusChanged?.();
@@ -1932,12 +1985,32 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
       isDirty.current = true;
       history.clear();
     }
-    setPendingDraft(null);
+    finishPendingDraft();
   };
 
-  const handleDiscardDraft = () => {
-    clearEstimateDraft(estimateId);
-    setPendingDraft(null);
+  // 前回分の判断が済んだ: 置き場から消し、もう1つの退避（前回の画面で帯を出したまま編集した分）が
+  // 残っていて、この画面でまだ何も変えていなければ、続けてそれを提案する
+  const finishPendingDraft = () => {
+    clearEstimateDraft(estimateId, { slot: DRAFT_SLOT_PENDING });
+    let next = null;
+    if (leftoverDraftRef.current && !isDirty.current) {
+      next = loadEstimateDraft(estimateId);
+      if (next) moveDraftToPending(estimateId);
+    }
+    leftoverDraftRef.current = false;
+    setPendingDraft(next);
+  };
+
+  const handleDiscardDraft = () => finishPendingDraft();
+
+  // 前回分が、開いたときの保存済みの内容より前に退避されたものか（別の端末等でその後に保存された）
+  const pendingIsOlderThanSaved = !!pendingDraft && !!savedUpdatedAtRef.current &&
+    new Date(savedUpdatedAtRef.current).getTime() > pendingDraft.savedAt;
+
+  // 帯の［復元する］: 編集を始めていたり、保存済みの内容の方が新しかったりすれば、確かめてから復元する
+  const requestRestoreDraft = () => {
+    if (isDirty.current || pendingIsOlderThanSaved) setShowDraftRestoreConfirm(true);
+    else handleRestoreDraft();
   };
 
   // 保存後に誤って明細を上書き・削除してしまった場合の救済:
@@ -2062,6 +2135,44 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
         {/* 中央: 紙面スタック（PC専用・横スクロール可） */}
         <div className="flex-1 min-w-0 overflow-x-auto bg-slate-200 py-8" data-estimate-undo-scope>
           <div className="flex flex-col items-center gap-8 px-6">
+            {/* 前回の未保存の入力（自動退避）が残っていたときの帯。編集は止めない */}
+            {pendingDraft && !isLocked && (
+              <div
+                role="status"
+                className="sticky top-0 z-20 w-full max-w-3xl flex flex-wrap items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm text-amber-900 shadow-sm"
+              >
+                <AlertCircle size={16} className="shrink-0 text-amber-600" />
+                <span className="flex-1 min-w-[12rem]">
+                  この端末に未保存の入力が残っています
+                  {(() => {
+                    const age = formatDraftAge(pendingDraft.savedAt);
+                    if (!age) return '。';
+                    return age === 'たった今' ? '（たった今 自動退避）。' : `（${age}に自動退避）。`;
+                  })()}
+                  {pendingIsOlderThanSaved && (
+                    <span className="block text-xs font-bold text-red-700">
+                      保存済みの内容の方が新しい日時です。復元すると、その後に保存された変更を上書きします。
+                    </span>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  onClick={requestRestoreDraft}
+                  disabled={saving}
+                  className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-700 disabled:opacity-50"
+                >
+                  復元する
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDiscardDraft}
+                  disabled={saving}
+                  className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-bold text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                >
+                  破棄
+                </button>
+              </div>
+            )}
             {/* 鑑（表紙） */}
             <CoverPaper
               header={header}
@@ -2329,26 +2440,33 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
       <ConfirmModal
         isOpen={showLeaveConfirm}
         onClose={() => setShowLeaveConfirm(false)}
-        onConfirm={() => { setShowLeaveConfirm(false); isDirty.current = false; onBack(); }}
+        onConfirm={() => {
+          setShowLeaveConfirm(false);
+          isDirty.current = false;
+          // 破棄を選んだので、自動退避した入力途中のデータも消す（次に開いたとき復元を聞かない）
+          clearEstimateDraft(estimateId);
+          onBack();
+        }}
         title="変更を破棄しますか？"
         message="保存されていない変更があります。一覧に戻ると変更内容が失われます。"
         confirmText="破棄して戻る"
         cancelText="編集を続ける"
       />
 
-      {/* 自動退避データの復元プロンプト */}
+      {/* 帯の［復元する］を編集の後に押したときの確認 */}
       <ConfirmModal
-        isOpen={!!pendingDraft}
-        onClose={handleDiscardDraft}
-        onConfirm={handleRestoreDraft}
-        title="入力途中のデータがあります"
-        message={
-          pendingDraft
-            ? `${formatDraftAge(pendingDraft.savedAt)}に自動退避された未保存の入力内容が見つかりました。復元しますか？（破棄すると保存済みの内容で編集を続けます）`
-            : ''
-        }
+        isOpen={showDraftRestoreConfirm && !!pendingDraft}
+        onClose={() => setShowDraftRestoreConfirm(false)}
+        onConfirm={() => { setShowDraftRestoreConfirm(false); handleRestoreDraft(); }}
+        title="前回の入力を復元しますか？"
+        message={[
+          pendingIsOlderThanSaved
+            ? 'この入力は、保存済みの内容より前に退避されたものです。復元して保存すると、その後に保存された変更を上書きします。'
+            : '',
+          isDirty.current ? 'この画面を開いてから行った変更は失われ、前回の未保存の入力に置き換わります。' : '',
+        ].filter(Boolean).join('\n')}
         confirmText="復元する"
-        cancelText="破棄する"
+        cancelText="キャンセル"
         variant="primary"
       />
 
