@@ -57,6 +57,8 @@ import PageNav from './PageNav';
 import CoverPaper from './CoverPaper';
 import SheetPaper, { calcSheetPageCount } from './SheetPaper';
 import SettingsPanel from './SettingsPanel';
+import { useEditHistory } from './useEditHistory';
+import { SERVER_MANAGED_HEADER_FIELDS } from './editHistory';
 import { computeEstimateCalc, wouldCreateCycle, computeAutoAmount, encodeSheetItemsForOutput } from './estimateCalc';
 
 // 今日の日付を YYMMDD 形式で返す
@@ -146,6 +148,12 @@ const nextCategorySymbol = (items) => {
 };
 
 const MAX_ROWS = 300;
+
+// 文字を打ち込む入力欄か（同じ欄への連続入力を1回分にまとめる判定に使う。select・日付・チェックは対象外）
+const TYPING_INPUT_TYPES = new Set(['', 'text', 'search', 'number', 'tel', 'email', 'url']);
+const isTypingTarget = (el) =>
+  !!el && (el.tagName === 'TEXTAREA' ||
+    (el.tagName === 'INPUT' && TYPING_INPUT_TYPES.has((el.getAttribute('type') || '').toLowerCase())));
 
 // 新規見積の支払条件の初期値（既存見積の保存値の復元には使わない。null/欠損時のみ補完）
 const DEFAULT_PAYMENT_TERMS = '従来通り';
@@ -238,6 +246,113 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
   // 保存後に誤って明細を上書き・削除した場合の救済用「直前の保存内容に戻す」確認モーダル
   const [showRestoreLastSaved, setShowRestoreLastSaved] = useState(false);
 
+  // ============================================================
+  // 元に戻す／やり直し（鑑・シート・明細をまとめて履歴化）
+  // 各編集ハンドラは history.edit(操作名, {key, focus}, producer) で状態を変える。
+  // producer は現在の { header, sheets, items } から変更後の部分状態を返す（変化なしは null）。
+  // ============================================================
+  const history = useEditHistory(
+    { header, sheets, items },
+    { setHeader, setSheets, setItems },
+    newSheetTempId,
+  );
+  // 通知のボタンなど、後から呼ばれる処理が「その時点の」ロック状態を見るための ref
+  const inputsLockedRef = useRef(inputsLocked);
+  inputsLockedRef.current = inputsLocked;
+  const canEditNow = () => !inputsLockedRef.current && !operationInFlight.current;
+
+  // 戻した箇所のセルへカーソルを移す（描画反映後に実行）
+  const focusHistoryTarget = useCallback((entry) => {
+    requestAnimationFrame(() => {
+      const f = entry?.focus;
+      if (!f?.uid) return;
+      // 全画面表示中は背面の紙面にも同じセルがあるため、全画面側を優先して探す
+      const root = document.querySelector('[data-estimate-fullscreen]') || document;
+      const esc = (s) => (window.CSS?.escape ? window.CSS.escape(s) : s);
+      const el = root.querySelector(`[data-uid="${esc(f.uid)}"][data-col="${esc(f.col || 'name')}"]`)
+        || root.querySelector(`[data-uid="${esc(f.uid)}"]`);
+      if (!el) return;
+      // フォーカス中の数値セルは編集用の下書き値を持つため、一度外して最新値で表示し直す
+      const active = document.activeElement;
+      if (active && active !== document.body) active.blur();
+      el.focus();
+      el.scrollIntoView({ block: 'nearest' });
+    });
+  }, []);
+
+  const handleUndo = useCallback(() => {
+    if (!canEditNow()) return;
+    const entry = history.undo();
+    if (entry) focusHistoryTarget(entry);
+  }, [history.undo, focusHistoryTarget]);
+
+  const handleRedo = useCallback(() => {
+    if (!canEditNow()) return;
+    const entry = history.redo();
+    if (entry) focusHistoryTarget(entry);
+  }, [history.redo, focusHistoryTarget]);
+
+  // 大きい操作（行・シート削除、総括表生成、貼り付け、取込）の後に「元に戻す」付きの通知を出す。
+  // entry は history.edit の戻り値（変化がなかった操作では null になり、通知も出ない）。
+  const notifyWithUndo = useCallback((entry, message) => {
+    if (!entry) return;
+    showToast(message, 'success', {
+      action: {
+        label: '元に戻す',
+        onClick: () => {
+          if (!canEditNow()) {
+            showToast('編集できない状態のため元に戻せません', 'info');
+            return;
+          }
+          const undone = history.undoIfTop(entry.id);
+          if (undone) focusHistoryTarget(undone);
+          else showToast('この後に別の操作をしているため、右パネルの「元に戻す」から順に戻してください', 'info');
+        },
+      },
+    });
+  }, [showToast, history.undoIfTop, focusHistoryTarget]);
+
+  // 明細だけを変える操作用の薄いラッパー。fn は現在の明細から次の明細を返す（同じ配列なら変化なし）
+  const editItems = useCallback((label, opts, fn) =>
+    history.edit(label, opts, (st) => {
+      const next = fn(st.items, st);
+      return !next || next === st.items ? null : { items: next };
+    }), [history.edit]);
+
+  // Ctrl+Z（元に戻す）/ Ctrl+Y・Ctrl+Shift+Z（やり直し）。
+  // 紙面（data-estimate-undo-scope 内）の入力欄ではブラウザ標準の入力Undoを止めてアプリの履歴を使う。
+  // それ以外の入力欄はブラウザ標準のまま。モーダル表示中は見積本体を戻さない。
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      if (e.isComposing || e.keyCode === 229) return;
+      const k = e.key.toLowerCase();
+      const isUndo = k === 'z' && !e.shiftKey;
+      const isRedo = k === 'y' || (k === 'z' && e.shiftKey);
+      if (!isUndo && !isRedo) return;
+      if (previewOpen || inputsLocked) return;
+      const t = e.target instanceof HTMLElement ? e.target : document.body;
+      // モーダル（role=dialog / 全面固定表示の重ね画面）の中、またはモーダルが開いている間は対象外。
+      // 全画面シート表示は data-estimate-undo-scope 付きの固定表示なので対象に含める。
+      if (document.querySelector('[aria-modal="true"]')) return;
+      const fixedLayer = t.closest('.fixed');
+      if (fixedLayer && !fixedLayer.hasAttribute('data-estimate-undo-scope')) return;
+      const editable = t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName);
+      if (editable && !t.closest('[data-estimate-undo-scope]')) return;
+      e.preventDefault();
+      if (isUndo) handleUndo(); else handleRedo();
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [previewOpen, inputsLocked, handleUndo, handleRedo]);
+
+  // 別の入力欄へ移ったら、同じセルへの連続入力のまとめを打ち切る
+  useEffect(() => {
+    const onFocusIn = () => history.breakCoalesce();
+    document.addEventListener('focusin', onFocusIn);
+    return () => document.removeEventListener('focusin', onFocusIn);
+  }, [history.breakCoalesce]);
+
   // 見積番号を文字列に結合
   const estimateNumber = [
     header.estimate_number_date,
@@ -280,6 +395,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
           setOriginalStatus(ESTIMATE_STATUS.DRAFT);
           // 新規はトップシート1枚を仮ID付きで用意し、初期明細を帰属させる
           const topSheetId = newSheetTempId();
+          history.setKnownSheetIds([]);
           setSheets([{ id: topSheetId, title: null }]);
           setItems([
             { ...newCategoryRow(topSheetId, 0), category_symbol: 'A', name: '' },
@@ -322,6 +438,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
           });
           // fetchEstimateById がシート未生成時は仮トップシートを合成、
           // sheet_id NULL 明細はトップシートへ帰属済み
+          history.setKnownSheetIds((est.sheets || []).map(s => s.id));
           setSheets((est.sheets || []).map(s => ({ id: s.id, title: s.title ?? null })));
           // DBで '__comment__' としてエンコードされたコメント行を復元。
           // 併せて全行にクライアント側安定キー _uid を付与する（セル編集の対象特定用）。
@@ -336,6 +453,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
         }
 
         // 前回の未保存入力が退避されていれば復元を提案する。
+        history.clear();
         const draft = loadEstimateDraft(documentId);
         if (draft) {
           setPendingDraft(draft);
@@ -397,8 +515,11 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
   // ============================================================
   const handleHeaderChange = useCallback((field, value) => {
     if (inputsLocked || operationInFlight.current) return;
-    setHeader(h => ({ ...h, [field]: value }));
-  }, [inputsLocked]);
+    // 文字を打ち込む欄は同じ欄への連続入力を1回分にまとめる（選択欄・切替は毎回1回分）
+    const key = isTypingTarget(document.activeElement) ? `header:${field}` : null;
+    history.edit('鑑の入力', { key }, ({ header: h }) =>
+      (h[field] === value ? null : { header: { ...h, [field]: value } }));
+  }, [inputsLocked, history.edit]);
 
   // 顧客ドロップダウンからの新規顧客登録（登録後は自動選択する）
   const handleCreateCustomer = useCallback(async (name) => {
@@ -407,14 +528,14 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
     try {
       const created = await createCustomer(trimmed);
       setCustomers(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name, 'ja')));
-      setHeader(h => ({ ...h, customer_id: created.id }));
+      history.edit('顧客の選択', {}, ({ header: h }) => ({ header: { ...h, customer_id: created.id } }));
       showToast('新規顧客を登録しました', 'success');
       return created;
     } catch (e) {
       showToast('顧客の登録に失敗しました: ' + e.message, 'error');
       return null;
     }
-  }, [showToast]);
+  }, [showToast, history.edit]);
 
   // ステータス変更系の操作は、画面遷移で失われないようその場でSupabaseへ反映する
   const persistStatus = useCallback(async (patch) => {
@@ -523,32 +644,35 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
   // ============================================================
   const handleAddSheet = useCallback(() => {
     if (operationInFlight.current) return;
-    setSheets(prev => {
-      const nextIndex = prev.length + 1;
+    history.edit('シートの追加', {}, ({ sheets: prev, items: prevItems }) => {
       const id = newSheetTempId();
-      const newSheet = { id, title: `内訳明細 ${nextIndex - 1}` };
       // 新シートには空のカテゴリ＋明細行を1組用意する
-      setItems(items => ([
-        ...items,
-        { ...newCategoryRow(id, items.length), category_symbol: '', name: '' },
-        { ...newItemRow(id, items.length + 1) },
-      ]));
-      return [...prev, newSheet];
+      return {
+        sheets: [...prev, { id, title: `内訳明細 ${prev.length}` }],
+        items: [
+          ...prevItems,
+          { ...newCategoryRow(id, prevItems.length), category_symbol: '', name: '' },
+          { ...newItemRow(id, prevItems.length + 1) },
+        ],
+      };
     });
-  }, []);
+  }, [history.edit]);
 
   const handleDeleteSheet = useCallback((sheetIndex) => {
     if (operationInFlight.current) return;
-    setSheets(prev => {
+    const entry = history.edit('シートの削除', {}, ({ sheets: prev, items: prevItems }) => {
       const target = prev[sheetIndex];
-      if (!target) return prev;
+      if (!target) return null;
       // トップシート（index 0）は「総括表」の場合のみ削除可（PageNav側でも制御）
-      if (sheetIndex === 0 && target.title !== SUMMARY_TITLE) return prev;
+      if (sheetIndex === 0 && target.title !== SUMMARY_TITLE) return null;
       // 該当シートに属する明細も併せて除去する
-      setItems(items => items.filter(it => it.sheet_id !== target.id));
-      return prev.filter((_, i) => i !== sheetIndex);
+      return {
+        sheets: prev.filter((_, i) => i !== sheetIndex),
+        items: prevItems.filter(it => it.sheet_id !== target.id),
+      };
     });
-  }, []);
+    notifyWithUndo(entry, 'シートを削除しました');
+  }, [history.edit, notifyWithUndo]);
 
   // ============================================================
   // 過去見積からの取込（トップシートの末尾へ追記）
@@ -557,7 +681,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
     if (operationInFlight.current) return;
     const topSheetId = sheets[0]?.id;
     if (!topSheetId) return;
-    setItems(prev => {
+    const entry = editItems('明細の取込', {}, (prev) => {
       // トップシート内の明細を、その他シートの明細と分離して処理する
       const topItems = prev.filter(it => it.sheet_id === topSheetId);
       const otherItems = prev.filter(it => it.sheet_id !== topSheetId);
@@ -589,8 +713,8 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
       const rebuiltTop = [...topItems, ...imported].map((r, i) => ({ ...r, sort_order: i }));
       return [...rebuiltTop, ...otherItems];
     });
-    showToast('過去見積から明細を取込みました', 'success');
-  }, [sheets, showToast]);
+    notifyWithUndo(entry, '過去見積から明細を取込みました');
+  }, [sheets, editItems, notifyWithUndo]);
 
   // ============================================================
   // 総括表自動生成（design.md §4/§5・②水沢中 P2形式）
@@ -604,48 +728,47 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
   const handleGenerateSummary = useCallback(() => {
     if (operationInFlight.current) return;
     if (isLocked) return;
-    setSheets(prevSheets => {
+    const entry = history.edit('総括表の生成', {}, ({ sheets: prevSheets, items: prevItems }) => {
       // 既存の総括表シートは一旦除外し、明細シートだけを対象にする
       const summaryIds = new Set(
         prevSheets.filter(s => s.title === SUMMARY_TITLE).map(s => s.id)
       );
       const detailSheets = prevSheets.filter(s => !summaryIds.has(s.id));
-      if (detailSheets.length === 0) return prevSheets;
+      if (detailSheets.length === 0) return null;
+
+      // 総括表以外（＝明細）の行だけ残す。旧総括表の行は破棄する。
+      const detailItems = prevItems.filter(it => !summaryIds.has(it.sheet_id));
+
+      // 明細シートに現れるカテゴリを表示順に収集（空カテゴリも1行として立てる）
+      const cats = [];
+      for (const s of detailSheets) {
+        detailItems
+          .filter(it => it.sheet_id === s.id && it.item_type === ITEM_TYPE.CATEGORY)
+          .forEach(cat => cats.push(cat));
+      }
+      if (cats.length === 0) return null; // カテゴリが無ければ生成しない
 
       const summaryId = newSheetTempId();
-
-      setItems(prevItems => {
-        // 総括表以外（＝明細）の行だけ残す。旧総括表の行は破棄する。
-        const detailItems = prevItems.filter(it => !summaryIds.has(it.sheet_id));
-
-        // 明細シートに現れるカテゴリを表示順に収集（空カテゴリも1行として立てる）
-        const cats = [];
-        for (const s of detailSheets) {
-          detailItems
-            .filter(it => it.sheet_id === s.id && it.item_type === ITEM_TYPE.CATEGORY)
-            .forEach(cat => cats.push(cat));
-        }
-        if (cats.length === 0) return prevItems; // カテゴリが無ければ生成しない
-
-        // 総括表の②リンク行: 各カテゴリ小計を数量1.0式・単価・名称で引く
-        let order = 0;
-        const summaryRows = cats.map(cat => ({
-          ...newItemRow(summaryId, order++),
-          name: cat.name || '',
-          quantity: 1,
-          unit: '式',
-          // リンク行の実値（単価・金額・名称）は computeEstimateCalc が上書きする
-          linked_category_item_id: cat._uid,
-        }));
-
-        return [...summaryRows, ...detailItems];
-      });
+      // 総括表の②リンク行: 各カテゴリ小計を数量1.0式・単価・名称で引く
+      let order = 0;
+      const summaryRows = cats.map(cat => ({
+        ...newItemRow(summaryId, order++),
+        name: cat.name || '',
+        quantity: 1,
+        unit: '式',
+        // リンク行の実値（単価・金額・名称）は computeEstimateCalc が上書きする
+        linked_category_item_id: cat._uid,
+      }));
 
       // 総括表を先頭（トップシート）に据える
-      return [{ id: summaryId, title: SUMMARY_TITLE }, ...detailSheets];
+      return {
+        sheets: [{ id: summaryId, title: SUMMARY_TITLE }, ...detailSheets],
+        items: [...summaryRows, ...detailItems],
+      };
     });
-    showToast('総括表を生成しました', 'success');
-  }, [isLocked, showToast]);
+    if (entry) notifyWithUndo(entry, '総括表を生成しました');
+    else showToast('総括表にまとめる工種（カテゴリ）行がありません', 'info');
+  }, [isLocked, showToast, history.edit, notifyWithUndo]);
 
   // ============================================================
   // 明細セル編集・行操作（SheetPaper から _uid で対象行を指定）
@@ -669,15 +792,14 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
   // セル値の更新（1フィールド）
   const updateItem = useCallback((uid, field, value) => {
     if (operationInFlight.current) return;
-    setItems(prev => prev.map(it =>
-      it._uid === uid ? withAutoAmount(it, field, value) : it
-    ));
-  }, [withAutoAmount]);
+    editItems('セルの入力', { key: `cell:${uid}:${field}`, focus: { uid, col: field } }, (prev) =>
+      prev.map(it => (it._uid === uid ? withAutoAmount(it, field, value) : it)));
+  }, [withAutoAmount, editItems]);
 
   // 指定行の直後に新しい明細行を挿入して返す（同一シート内）
   const addRowAfter = useCallback((uid, kind = ITEM_TYPE.ITEM) => {
     if (operationInFlight.current) return;
-    setItems(prev => {
+    editItems('行の追加', { focus: { uid, col: 'name' } }, (prev) => {
       const idx = prev.findIndex(it => it._uid === uid);
       if (idx < 0) return prev;
       const anchor = prev[idx];
@@ -691,12 +813,12 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
       const next = [...prev.slice(0, idx + 1), row, ...prev.slice(idx + 1)];
       return renumberSheet(next, sheetId);
     });
-  }, [renumberSheet]);
+  }, [renumberSheet, editItems]);
 
   // 指定シート末尾へ新規行を追加
   const addRowToSheet = useCallback((sheetId, kind = ITEM_TYPE.ITEM) => {
     if (operationInFlight.current) return;
-    setItems(prev => {
+    editItems('行の追加', {}, (prev) => {
       const factory =
         kind === ITEM_TYPE.CATEGORY ? newCategoryRow
         : kind === ITEM_TYPE.COMMENT ? newCommentRow
@@ -710,12 +832,12 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
       const next = [...prev.slice(0, lastOfSheet + 1), row, ...prev.slice(lastOfSheet + 1)];
       return renumberSheet(next, sheetId);
     });
-  }, [renumberSheet]);
+  }, [renumberSheet, editItems]);
 
   // 行削除（シート内の最後の1行は削除しない＝空シート化を防ぐ）
   const removeRow = useCallback((uid) => {
     if (operationInFlight.current) return;
-    setItems(prev => {
+    const entry = editItems('行の削除', { focus: { uid, col: 'name' } }, (prev) => {
       const target = prev.find(it => it._uid === uid);
       if (!target) return prev;
       const sheetId = target.sheet_id;
@@ -724,12 +846,13 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
       const next = prev.filter(it => it._uid !== uid);
       return renumberSheet(next, sheetId);
     });
-  }, [renumberSheet]);
+    notifyWithUndo(entry, '行を削除しました');
+  }, [renumberSheet, editItems, notifyWithUndo]);
 
   // 行の複製（直後に同内容の行を挿入。_uid/_tempId/id は新規採番）
   const duplicateRow = useCallback((uid) => {
     if (operationInFlight.current) return;
-    setItems(prev => {
+    editItems('行の複製', { focus: { uid, col: 'name' } }, (prev) => {
       const idx = prev.findIndex(it => it._uid === uid);
       if (idx < 0) return prev;
       const src = prev[idx];
@@ -742,12 +865,12 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
       const next = [...prev.slice(0, idx + 1), copy, ...prev.slice(idx + 1)];
       return renumberSheet(next, src.sheet_id);
     });
-  }, [renumberSheet]);
+  }, [renumberSheet, editItems]);
 
   // 行の上下移動（同一シート内でのみ入れ替え）
   const moveRow = useCallback((uid, dir) => {
     if (operationInFlight.current) return;
-    setItems(prev => {
+    editItems('行の移動', { focus: { uid, col: 'name' } }, (prev) => {
       const idx = prev.findIndex(it => it._uid === uid);
       if (idx < 0) return prev;
       const sheetId = prev[idx].sheet_id;
@@ -760,7 +883,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
       [next[idx], next[j]] = [next[j], next[idx]];
       return renumberSheet(next, sheetId);
     });
-  }, [renumberSheet]);
+  }, [renumberSheet, editItems]);
 
   // TSV貼り付け（Excelからの複数セル貼り付け）。基準行 uid から、行×列で
   // name/spec/quantity/unit/unit_price/note を流し込み、行が足りなければ追加する。
@@ -774,7 +897,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
       .map(line => line.split('\t'));
     if (rows.length === 0) return;
 
-    setItems(prev => {
+    const entry = editItems('貼り付け', { focus: { uid, col: 'name' } }, (prev) => {
       const anchorIdx = prev.findIndex(it => it._uid === uid);
       if (anchorIdx < 0) return prev;
       const sheetId = prev[anchorIdx].sheet_id;
@@ -811,7 +934,8 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
       }
       return renumberSheet(result, sheetId);
     });
-  }, [renumberSheet]);
+    notifyWithUndo(entry, '貼り付けました');
+  }, [renumberSheet, editItems, notifyWithUndo]);
 
   // 行にリンクを張る／外す（design.md §4）。
   //   kind='sheet'    : ①別シート合計リンク（targetRef = シートid）
@@ -820,7 +944,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
   // リンク作成前に wouldCreateCycle で到達可能性を検査し、循環になる場合は拒否する。
   const setRowLink = useCallback((uid, kind, targetRef) => {
     if (operationInFlight.current) return;
-    setItems(prev => {
+    editItems(kind ? 'リンクの設定' : 'リンクの解除', { focus: { uid, col: 'name' } }, (prev) => {
       const row = prev.find(it => it._uid === uid);
       if (!row) return prev;
       if (kind && targetRef != null && wouldCreateCycle(sheets, prev, row, kind, targetRef)) {
@@ -839,7 +963,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
         return { ...it, linked_sheet_id: null, linked_category_item_id: null };
       });
     });
-  }, [sheets, showToast]);
+  }, [sheets, showToast, editItems]);
 
   // ============================================================
   // 計算・リンクエンジン（Phase 5: design.md §4/§5）
@@ -944,7 +1068,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
         Number(header.estimate_number_branch) || 1
       );
       const branchPart = newBranch.split('-')[2];
-      setHeader(h => ({ ...h, estimate_number_branch: branchPart }));
+      history.edit('枝番の再採番', {}, ({ header: h }) => ({ header: { ...h, estimate_number_branch: branchPart } }));
     } catch (e) {
       showToast('再採番に失敗しました: ' + e.message, 'error');
     }
@@ -1123,6 +1247,9 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
         ...item, sheet_id: idRemap.get(item.sheet_id) ?? item.sheet_id,
         linked_sheet_id: idRemap.get(item.linked_sheet_id) ?? item.linked_sheet_id,
       }));
+      // 履歴内の仮シートIDも確定IDへ置き換え、DB上の現存シートを登録しておく
+      history.remapSheetIds(new Map([...idRemap].filter(([from, to]) => from !== to)));
+      history.setKnownSheetIds(saved.sheet_ids);
       setEstimateId(saved.id);
       setHeader(savedHeader);
       setSheets(savedSheets);
@@ -1161,19 +1288,16 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
       // ステータスの変更はデータの変更とは別に管理する。
       // 退避データはステータスバッジ操作より前の古いステータスを含んでいる場合があるため、
       // 復元時はステータス関連フィールドを現在の値のまま維持し、退避データで上書きしない。
-      setHeader(h => ({
-        ...pendingDraft.header,
-        status: h.status,
-        approved_by: h.approved_by,
-        approved_at: h.approved_at,
-        returned_reason: h.returned_reason,
-        approver_staff_id: h.approver_staff_id,
-        project_id: h.project_id,
-      }));
+      setHeader(h => {
+        const restored = { ...pendingDraft.header };
+        SERVER_MANAGED_HEADER_FIELDS.forEach(f => { restored[f] = h[f]; });
+        return restored;
+      });
       setSheets(pendingDraft.sheets);
       // 旧スキーマの退避データには _uid が無い場合があるため補完する
       setItems((pendingDraft.items || []).map(it => it._uid ? it : { ...it, _uid: newUid() }));
       isDirty.current = true;
+      history.clear();
     }
     setPendingDraft(null);
   };
@@ -1190,9 +1314,12 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
     if (operationInFlight.current || isLocked) return;
     const snapshot = loadLastSavedSnapshot(estimateId);
     if (snapshot) {
-      setHeader(snapshot.header);
-      setSheets(snapshot.sheets);
-      setItems((snapshot.items || []).map(it => it._uid ? it : { ...it, _uid: newUid() }));
+      const entry = history.edit('直前の保存内容に戻す', {}, () => ({
+        header: snapshot.header,
+        sheets: snapshot.sheets,
+        items: (snapshot.items || []).map(it => it._uid ? it : { ...it, _uid: newUid() }),
+      }));
+      notifyWithUndo(entry, '直前の保存内容に戻しました');
       isDirty.current = true;
     }
     setShowRestoreLastSaved(false);
@@ -1298,7 +1425,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
         </div>
 
         {/* 中央: 紙面スタック（PC専用・横スクロール可） */}
-        <div className="flex-1 min-w-0 overflow-x-auto bg-slate-200 py-8">
+        <div className="flex-1 min-w-0 overflow-x-auto bg-slate-200 py-8" data-estimate-undo-scope>
           <div className="flex flex-col items-center gap-8 px-6">
             {/* 鑑（表紙） */}
             <CoverPaper
@@ -1388,6 +1515,10 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
             onGenerateSummary={handleGenerateSummary}
             currentEstimateId={estimateId}
             onOpenPreview={handleOpenPreview}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            undoLabel={history.undoLabel}
+            redoLabel={history.redoLabel}
           />
         </div>
       </div>
@@ -1486,7 +1617,7 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
 
       {/* ===== 明細シート全画面表示オーバーレイ（両サイドの制約を受けずに1シートのみ表示） ===== */}
       {fullscreenSheetIndex !== null && sheets[fullscreenSheetIndex] && (
-        <div className="fixed inset-0 z-[9999] flex flex-col bg-slate-200">
+        <div className="fixed inset-0 z-[9999] flex flex-col bg-slate-200" data-estimate-undo-scope data-estimate-fullscreen>
 
           {/* ミニヘッダー */}
           <div className="bg-white border-b border-slate-200 px-4 py-2.5 flex items-center gap-4 shrink-0 flex-wrap">

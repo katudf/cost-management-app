@@ -6,9 +6,10 @@ const ToastContext = createContext(null);
 export const ToastProvider = ({ children }) => {
     const [toasts, setToasts] = useState([]);
 
-    const showToast = useCallback((message, type = 'info') => {
-        const id = Date.now();
-        setToasts(prev => [...prev, { id, message, type }]);
+    // options.action: { label, onClick } を渡すと通知内にボタンを出す（例: 「元に戻す」）
+    const showToast = useCallback((message, type = 'info', options = {}) => {
+        const id = `${Date.now()}_${Math.random()}`;
+        setToasts(prev => [...prev, { id, message, type, action: options.action || null }]);
     }, []);
 
     const removeToast = useCallback((id) => {
@@ -63,6 +64,19 @@ const ToastItem = ({ toast, onRemove }) => {
             <Icon className={`mt-0.5 shrink-0 ${iconColor}`} size={18} />
             <div className="flex-1 text-sm font-medium pr-2">
                 {toast.message}
+                {toast.action && (
+                    <button
+                        type="button"
+                        onClick={() => {
+                            toast.action.onClick();
+                            setIsVisible(false);
+                            setTimeout(() => onRemove(toast.id), 300);
+                        }}
+                        className="block mt-1.5 text-xs font-bold underline underline-offset-2 hover:opacity-70 transition"
+                    >
+                        {toast.action.label}
+                    </button>
+                )}
             </div>
             <button 
                 onClick={() => {

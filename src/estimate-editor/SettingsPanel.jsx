@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Save, Unlock, ChevronDown, ChevronUp, Lock, UserCheck, Send, Trophy, XCircle, RefreshCw, Download, LayoutList } from 'lucide-react';
+import { Save, Undo2, Redo2, Unlock, ChevronDown, ChevronUp, Lock, UserCheck, Send, Trophy, XCircle, RefreshCw, Download, LayoutList } from 'lucide-react';
 import { ESTIMATE_STATUS, ESTIMATE_STATUS_LABEL, isAdminRole } from '../utils/constants';
 import { formatCurrency } from '../supabaseEstimates';
 import EstimateApprovalModal from '../components/estimate/EstimateApprovalModal';
@@ -58,6 +58,8 @@ const STATUS_BADGES = [
  *   - onGenerateSummary: () => void  総括表シートの自動生成（各カテゴリ小計を②リンクで引く）
  *   - currentEstimateId: number|null  取込モーダルで自分自身を除外するため
  *   - onOpenPreview: () => void
+ *   - onUndo / onRedo: () => void  元に戻す／やり直し
+ *   - undoLabel / redoLabel: string|null  次に戻す／やり直す操作名（null なら操作不可）
  */
 const SettingsPanel = ({
   totals,
@@ -81,6 +83,10 @@ const SettingsPanel = ({
   onGenerateSummary,
   currentEstimateId = null,
   onOpenPreview,
+  onUndo,
+  onRedo,
+  undoLabel = null,
+  redoLabel = null,
 }) => {
   const [pdfExpanded, setPdfExpanded] = useState(true);
   const [approvalModalMode, setApprovalModalMode] = useState(null); // 'approved' | 'returned' | null
@@ -317,6 +323,32 @@ const SettingsPanel = ({
 
         {/* 保存ボタン */}
         <div className="space-y-2 pt-1">
+          {!isLocked && (onUndo || onRedo) && (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onUndo}
+                disabled={saving || !undoLabel}
+                title={undoLabel ? `元に戻す: ${undoLabel}（Ctrl+Z）` : '元に戻せる操作はありません'}
+                aria-label={undoLabel ? `元に戻す: ${undoLabel}` : '元に戻す'}
+                className="flex-1 flex items-center justify-center gap-1.5 border border-slate-300 text-slate-600 hover:border-slate-400 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:border-slate-300 px-2 py-1.5 rounded-lg text-xs font-medium transition"
+              >
+                <Undo2 size={14} />
+                元に戻す
+              </button>
+              <button
+                type="button"
+                onClick={onRedo}
+                disabled={saving || !redoLabel}
+                title={redoLabel ? `やり直す: ${redoLabel}（Ctrl+Y）` : 'やり直せる操作はありません'}
+                aria-label={redoLabel ? `やり直す: ${redoLabel}` : 'やり直す'}
+                className="flex-1 flex items-center justify-center gap-1.5 border border-slate-300 text-slate-600 hover:border-slate-400 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:border-slate-300 px-2 py-1.5 rounded-lg text-xs font-medium transition"
+              >
+                <Redo2 size={14} />
+                やり直す
+              </button>
+            </div>
+          )}
           {isLocked && isCreator && (
             <button
               onClick={onUnlock}
