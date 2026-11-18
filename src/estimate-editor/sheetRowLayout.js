@@ -10,6 +10,26 @@
 import { ITEM_TYPE, ITEM_SENTINEL } from '../utils/constants';
 import { sumItemAmounts } from '../supabaseEstimates';
 
+/**
+ * 工種小計リンク行（リンク②）の No. に出す記号を返す関数を作る。
+ * allItems は全シートの明細（参照先の工種行が別シートにあるため）。参照は id・_tempId・_uid のどれでもよい。
+ * 参照先が見つからない・記号が空なら null（その行は連番で数える）。
+ */
+export const buildLinkSymbolLabeler = (allItems) => {
+  const symbolByRef = new Map();
+  (allItems || []).forEach((it) => {
+    if (it.item_type !== ITEM_TYPE.CATEGORY) return;
+    const symbol = String(it.category_symbol ?? '').trim();
+    [it.id, it._tempId, it._uid].forEach((ref) => {
+      if (ref != null) symbolByRef.set(String(ref), symbol);
+    });
+  });
+  return (item) => {
+    if (item.linked_category_item_id == null) return null;
+    return symbolByRef.get(String(item.linked_category_item_id)) || null;
+  };
+};
+
 export const buildSheetRowsShared = (
   items,
   header,
@@ -18,7 +38,8 @@ export const buildSheetRowsShared = (
   sheetTotal,
   showTotalRow,
   isBlankRowFn,
-  rowsPerPage
+  rowsPerPage,
+  noLabelOf = null // (item) => string|null  No. に連番の代わりに出す文字（工種小計リンク行の工種記号）
 ) => {
   // Saved comments use the legacy item type plus a sentinel symbol.
   items = items.map(item => item.item_type === ITEM_TYPE.ITEM && item.category_symbol === ITEM_SENTINEL.COMMENT
@@ -63,6 +84,9 @@ export const buildSheetRowsShared = (
       rows.push({ kind: 'comment', item });
     } else if (item.item_type === ITEM_TYPE.SUBTOTAL) {
       rows.push({ kind: 'subtotal', item });
+    } else if (noLabelOf && noLabelOf(item)) {
+      // 工種小計リンク行は参照先の工種記号を No. に出し、連番は消費しない
+      rows.push({ kind: 'item', item, itemNo: noLabelOf(item) });
     } else if (isBlankRowFn(item)) {
       rows.push({ kind: 'item', item, itemNo: null });
     } else {

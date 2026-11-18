@@ -81,6 +81,7 @@ import {
 import { computeEstimateCalc, wouldCreateCycle, computeAutoAmount, encodeSheetItemsForOutput } from './estimateCalc';
 import { resolveRange, rangeCellKeys, clearRange, pasteIntoRange, rangeToTsv, stepRangeRow, writableColsOf } from './cellRangeOps';
 import { adjustPrices, countAdjustableRows } from './priceAdjustOps';
+import { buildLinkSymbolLabeler } from './sheetRowLayout';
 
 // 今日の日付を YYMMDD 形式で返す
 const todayPrefix = () => {
@@ -1058,6 +1059,8 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
     [sheets, items]
   );
   const { resolvedItems, sheetTotals, catTotals, cycleUids } = calc;
+  // 工種小計リンク行（総括表の行など）の No. に出す、参照先の工種記号（全シートの工種行から引く）
+  const linkSymbolOf = useMemo(() => buildLinkSymbolLabeler(items), [items]);
 
   // ============================================================
   // 合計計算（トップシートの明細を対象にする。鑑・トップシート表示用）
@@ -2219,6 +2222,8 @@ const EstimateEditor = ({ estimateId: documentId, onBack, onSaved, onStatusChang
                   onMoveRow={moveRow}
                   onPasteTsv={pasteTsv}
                   onSetRowLink={setRowLink}
+                noLabelOf={linkSymbolOf}
+                  noLabelOf={linkSymbolOf}
                   {...selectionPropsFor(sheet.id)}
                   {...cellRangePropsFor(sheet.id)}
                 />

@@ -82,8 +82,9 @@ const isNavigable = (type) =>
 // フッター行が必ず最終ページ末尾に収まるようにする。
 // 返り値は行記述子 {kind, item?, itemNo?, catTotal?, label?, amount?} の配列で、
 // 長さは必ず ROWS_PER_PAGE の倍数になる。
-export const buildSheetRows = (items, header, isTopSheet, totals, sheetTotal, showTotalRow = true) =>
-  buildSheetRowsShared(items, header, isTopSheet, totals, sheetTotal, showTotalRow, isBlankRow, ROWS_PER_PAGE);
+// noLabelOf: 工種小計リンク行の No. に出す工種記号（buildLinkSymbolLabeler）。行数は変わらないのでページ数計算では省略可
+export const buildSheetRows = (items, header, isTopSheet, totals, sheetTotal, showTotalRow = true, noLabelOf = null) =>
+  buildSheetRowsShared(items, header, isTopSheet, totals, sheetTotal, showTotalRow, isBlankRow, ROWS_PER_PAGE, noLabelOf);
 
 // シートが占めるページ数（EstimateEditor が通しページ番号を計算するのに使う）
 export const calcSheetPageCount = (items, header, isTopSheet, totals, sheetTotal, showTotalRow = true) =>
@@ -1071,6 +1072,8 @@ const SheetPaper = ({
   // ── 品名の入力補完（任意） ──
   onSearchItemSuggestions, // (query) => Promise<候補[]>  過去の見積明細からの候補
   onPickItemSuggestion,    // (uid, 候補) => void  品名・仕様・単位・単価を反映
+  // ── No. の表示（任意） ──
+  noLabelOf,         // (item) => string|null  工種小計リンク行の No. に出す工種記号
   // ── セルの範囲選択（任意） ──
   cellRangeKeys,     // このシートで範囲に入っているセル `${uid}:${col}` の Set
   onCellRangeSet,    // (anchor|null, focus) => void  範囲の両端（anchor null は今の範囲のアンカーのまま）
@@ -1080,7 +1083,7 @@ const SheetPaper = ({
   onCellRangePaste,  // (text) => boolean | null  範囲への貼り付け
 }) => {
   const isTopSheet = sheetIndex === 0;
-  const rows = buildSheetRows(items, header, isTopSheet, totals, sheetTotal, showTotalRow);
+  const rows = buildSheetRows(items, header, isTopSheet, totals, sheetTotal, showTotalRow, noLabelOf);
   const estimateNumber = `${header.estimate_number_date}-${header.estimate_number_seq}-${header.estimate_number_branch}`;
 
   const editable = !isLocked && typeof onUpdateItem === 'function';

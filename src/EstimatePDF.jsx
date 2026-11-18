@@ -10,7 +10,7 @@ import {
 } from '@react-pdf/renderer';
 import { calcTopSheetTotals } from './supabaseEstimates';
 import { fmt, fmtDate, calcFontSize, fitSingleLineFontSize, ROWS_PER_PAGE } from './estimate-editor/paperStyles';
-import { buildSheetRowsShared } from './estimate-editor/sheetRowLayout';
+import { buildSheetRowsShared, buildLinkSymbolLabeler } from './estimate-editor/sheetRowLayout';
 
 // ============================================================
 // フォント登録
@@ -553,8 +553,8 @@ const isBlankRowPDF = (item) =>
   (item.quantity == null || item.quantity === '') &&
   (item.unit_price == null || item.unit_price === '');
 
-const buildSheetRowsPDF = (items, header, isTopSheet, totals, sheetTotal, showTotalRow = true) =>
-  buildSheetRowsShared(items, header, isTopSheet, totals, sheetTotal, showTotalRow, isBlankRowPDF, ROWS_PER_PAGE);
+const buildSheetRowsPDF = (items, header, isTopSheet, totals, sheetTotal, showTotalRow = true, noLabelOf = null) =>
+  buildSheetRowsShared(items, header, isTopSheet, totals, sheetTotal, showTotalRow, isBlankRowPDF, ROWS_PER_PAGE, noLabelOf);
 
 // ============================================================
 // 明細行1件の描画（行記述子 → @react-pdf View）
@@ -679,8 +679,8 @@ const renderPdfRow = (row, idx, pageBottomBorderStyle, shouldBreak) => {
 //   - トップシート: 末尾＝税抜合計（＋NET）。消費税・税込合計は鑑側。
 //   - サブシート : 末尾＝合　計（リンク解決済みシート合計 sheetTotal）。
 // ページ番号は鑑を No.1 とする通し番号（レンダラーが返すドキュメント全体の番号）。
-const DetailPage = ({ sheet, items, isTopSheet, totals, sheetTotal, showTotalRow, settings }) => {
-  const rows = buildSheetRowsPDF(items, sheet.header, isTopSheet, totals, sheetTotal, showTotalRow);
+const DetailPage = ({ sheet, items, isTopSheet, totals, sheetTotal, showTotalRow, settings, noLabelOf }) => {
+  const rows = buildSheetRowsPDF(items, sheet.header, isTopSheet, totals, sheetTotal, showTotalRow, noLabelOf);
   const sheetTitle = sheet.title || '見積内訳明細書';
   const estimateNumber = sheet.header.estimate_number;
 
@@ -756,6 +756,9 @@ const EstimateDocument = ({ estimate, settings }) => {
   const shouldShowTotalRow = (sheet, idx) =>
     idx === 0 || linkedSheetIds.has(sheet.id) || idx === sheets.length - 1;
 
+  // 工種小計リンク行（総括表の行など）の No. は参照先の工種記号（工種行は別シートにあるので全シートから引く）
+  const linkSymbolOf = buildLinkSymbolLabeler(sheets.flatMap(sheet => sheet.items || []));
+
   return (
     <Document>
       <CoverPage estimate={estimate} settings={settings} totals={totals} />
@@ -769,6 +772,7 @@ const EstimateDocument = ({ estimate, settings }) => {
           sheetTotal={sheet.sheetTotal}
           showTotalRow={shouldShowTotalRow(sheet, idx)}
           settings={settings}
+          noLabelOf={linkSymbolOf}
         />
       ))}
     </Document>

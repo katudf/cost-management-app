@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildSheetRowsShared } from './sheetRowLayout';
+import { buildSheetRowsShared, buildLinkSymbolLabeler } from './sheetRowLayout';
 import { ITEM_TYPE } from '../utils/constants';
 
 // SheetPaper.jsx の buildSheetRows と EstimatePDF.jsx の buildSheetRowsPDF に
@@ -156,5 +156,34 @@ describe('buildSheetRowsShared', () => {
     expect(sentinelRows[0].itemNo).toBe(1);
     // loose判定: quantity===''なので空扱い → itemNoはnull
     expect(looseRows[0].itemNo).toBeNull();
+  });
+});
+
+describe('工種小計リンク行の No.', () => {
+  const all = [
+    { _uid: 'ca', id: 101, item_type: ITEM_TYPE.CATEGORY, category_symbol: 'A', name: '仮設工事' },
+    { _uid: 'cb', item_type: ITEM_TYPE.CATEGORY, category_symbol: ' B ', name: '塗装工事' },
+    { _uid: 'cc', item_type: ITEM_TYPE.CATEGORY, category_symbol: '', name: '記号なし' },
+  ];
+  const labelOf = buildLinkSymbolLabeler(all);
+
+  it('参照先の工種記号を返し、記号が空・参照先なし・リンクなしは null', () => {
+    expect(labelOf({ linked_category_item_id: 101 })).toBe('A');   // 保存済みの id で参照
+    expect(labelOf({ linked_category_item_id: 'cb' })).toBe('B');  // 保存前の _uid で参照
+    expect(labelOf({ linked_category_item_id: 'cc' })).toBeNull();
+    expect(labelOf({ linked_category_item_id: 999 })).toBeNull();
+    expect(labelOf({ name: '普通の行' })).toBeNull();
+  });
+
+  it('記号を出した行は連番を使わず、記号の無い行だけ 1, 2… と数える', () => {
+    const sheet = [
+      { _uid: 'r1', item_type: ITEM_TYPE.ITEM, name: '仮設工事', linked_category_item_id: 101, amount: 100 },
+      { _uid: 'r2', item_type: ITEM_TYPE.ITEM, name: '諸経費', amount: 50 },
+      { _uid: 'r3', item_type: ITEM_TYPE.ITEM, name: '塗装工事', linked_category_item_id: 'cb', amount: 200 },
+      { _uid: 'r4', item_type: ITEM_TYPE.ITEM, name: '記号なし', linked_category_item_id: 'cc', amount: 10 },
+    ];
+    const rows = buildSheetRowsShared(sheet, {}, false, {}, 360, false, () => false, 19, labelOf)
+      .filter(r => r.kind === 'item');
+    expect(rows.map(r => r.itemNo)).toEqual(['A', 1, 'B', 2]);
   });
 });
