@@ -23,6 +23,7 @@ import {
   calcTopSheetTotals,
 } from './supabaseEstimates';
 import { downloadEstimatePDF } from './EstimatePDF';
+import { buildPdfEstimateFromSaved } from './estimate-editor/savedEstimatePdfData';
 import { useToast } from './components/Toast';
 import { ESTIMATE_STATUS, ESTIMATE_STATUS_LABEL } from './utils/constants';
 import CustomerResolveModal from './components/estimate/CustomerResolveModal';
@@ -274,7 +275,8 @@ const EstimateList = ({ onEdit }) => {
       console.log('[PDF] システム設定取得完了:', settings?.company_name);
 
       console.log('[PDF] PDF生成開始...');
-      await downloadEstimatePDF(full, settings);
+      // エディタのPDFプレビューと同じ形（シートごとの明細・リンク解決済みの値）に整えてから出力する
+      await downloadEstimatePDF(buildPdfEstimateFromSaved(full), settings);
       console.log('[PDF] PDF生成完了');
     } catch (e) {
       console.error('[PDF] エラー:', e);
