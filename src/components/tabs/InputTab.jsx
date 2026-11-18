@@ -1,11 +1,13 @@
 import React, { useState, useMemo } from 'react';
-import { Edit3, Plus, Trash2, Filter, Grid, List as ListIcon, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
+import { Edit3, Plus, Trash2, Filter, Grid, List as ListIcon, ChevronLeft, ChevronRight, AlertTriangle, Download } from 'lucide-react';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmProvider';
 import { WORKER_TYPE } from '../../utils/constants';
 import { useCompanyHolidays } from '../../hooks/useCompanyHolidays';
 import { isActualHoliday } from '../../utils/holidayUtils';
 import SubcontractContractsPanel from './SubcontractContractsPanel';
+import ActualsExportDialog from './ActualsExportDialog';
+import { downloadActualsMatrixPDF } from '../../ActualsMatrixPDF';
 
 const InputTab = ({
     activeProject,
@@ -43,6 +45,7 @@ const InputTab = ({
     });
     const [filterDate, setFilterDate] = useState('');
     const [filterWorker, setFilterWorker] = useState('');
+    const [showExportDialog, setShowExportDialog] = useState(false);
 
     // --- マトリックス表示用の計算 ---
     const matrixData = useMemo(() => {
@@ -129,6 +132,23 @@ const InputTab = ({
         });
     }, [activeProject.records, filterDate, filterWorker]);
 
+    // 人工表（Excel / PDF）の出力。表示中の月ではなく、ダイアログで選んだ期間を出す
+    const buildExportParams = ({ startMonth, endMonth }) => ({
+        records: activeProject.records,
+        orderedNames: matrixData.displayWorkerNames,
+        holidays: companyHolidays,
+        startMonth,
+        endMonth,
+        projectName: activeProject.short_name || activeProject.name || '',
+        exportedAt: new Date().toLocaleDateString('sv-SE'),
+    });
+    const handleExportExcel = async (range) => {
+        const { exportActualsMatrixToExcel } = await import('../../utils/actualsMatrixExport');
+        exportActualsMatrixToExcel(buildExportParams(range));
+    };
+    // PDF は新規タブを開くため、クリック直後に window.open を呼ぶ必要がある（動的 import を挟むとポップアップが止められうる）。静的 import にしている
+    const handleExportPdf = (range) => downloadActualsMatrixPDF(buildExportParams(range));
+
     // 月移動
     const shiftMonth = (dir) => {
         const [y, m] = currentMonth.split('-').map(Number);
@@ -162,6 +182,13 @@ const InputTab = ({
                         <Plus size={16} /> 日報1件追加
                     </button>
                 ) : (
+                    <div className="flex items-center gap-2">
+                    <button
+                        onClick={() => setShowExportDialog(true)}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-600 shadow-sm hover:bg-slate-50 transition"
+                    >
+                        <Download size={14} /> 出力
+                    </button>
                     <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg p-1 shadow-sm">
                         <button onClick={() => shiftMonth(-1)} className="p-1.5 hover:bg-slate-50 rounded text-slate-500"><ChevronLeft size={18} /></button>
                         <span className="text-sm font-black px-2 text-slate-700">{currentMonth.replace('-', '年')}月</span>
@@ -171,8 +198,18 @@ const InputTab = ({
                              setCurrentMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
                         }} className="text-[10px] font-bold text-blue-600 px-2 border-l border-slate-100 ml-1">今月</button>
                     </div>
+                    </div>
                 )}
             </div>
+
+            {showExportDialog && viewMode === 'matrix' && (
+                <ActualsExportDialog
+                    initialMonth={currentMonth}
+                    onClose={() => setShowExportDialog(false)}
+                    onExportExcel={handleExportExcel}
+                    onExportPdf={handleExportPdf}
+                />
+            )}
 
             {/* 作業員画面の送信は開始・終了時刻から時間を計算し直すため、ここでの時間数の修正は上書きされる（作業員の送信を正とする運用） */}
             <div className="flex items-start gap-2 mb-4 p-3 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 text-xs">

@@ -243,7 +243,7 @@ const FIT_TO_PAGE = '<pageSetUpPr fitToPage="1"/>';
  * sheetPr が無ければシート要素の先頭に作る（sheetPr は先頭に置く決まり）。
  * 既にあれば中身を残したまま足す（pageSetUpPr は sheetPr の子要素の最後に置く決まり）。
  */
-const addFitToPage = (xml) => {
+export const addFitToPage = (xml) => {
     // 子要素なしの <sheetPr .../>
     const selfClosing = xml.match(/<sheetPr\b([^>]*?)\/>/);
     if (selfClosing) {
