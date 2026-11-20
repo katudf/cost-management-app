@@ -3,7 +3,10 @@ import * as xlsx from 'xlsx-js-style';
 import { addFitToPage } from './assignmentChartExport';
 import { buildActualsMatrixReport, formatPeriodLabel } from './actualsMatrixReport';
 
-export const NINKU_NOTE = '7.5時間＝1人工（人工は小数第1位に丸めて表示）';
+// 単位は人工。画面のマトリックス（時間）と取り違えないよう見出しにも単位を書く
+export const NINKU_NOTE = '単位は人工（7.5時間＝1人工）。小数第1位に丸めて表示。月合計・累計・合計は丸める前の値で足してから丸めるため、表示値の足し算と0.1ほど合わないことがあります';
+export const MONTH_TOTAL_LABEL = '月合計\n(人工)';
+export const CUMULATIVE_LABEL = '累計\n(人工)';
 
 const BORDER = {
     top: { style: 'thin', color: { rgb: '94A3B8' } },
@@ -43,8 +46,8 @@ export const buildActualsMatrixSheet = (month, { projectName, periodLabel, expor
     data.push([
         '作業員名',
         ...dates.map(d => `${d.day}\n(${d.dowLabel})`),
-        '月合計',
-        '累計',
+        MONTH_TOTAL_LABEL,
+        CUMULATIVE_LABEL,
     ]);
 
     const bodyStart = data.length;

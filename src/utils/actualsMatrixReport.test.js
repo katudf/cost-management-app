@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as xlsx from 'xlsx-js-style';
 import { buildActualsMatrixReport, listMonths, formatPeriodLabel, OTHER_ROW_LABEL } from './actualsMatrixReport';
-import { buildActualsMatrixWorkbook, actualsMatrixFileName } from './actualsMatrixExport';
+import { buildActualsMatrixWorkbook, actualsMatrixFileName, MONTH_TOTAL_LABEL, CUMULATIVE_LABEL, NINKU_NOTE } from './actualsMatrixExport';
 
 const rec = (worker, date, hours) => ({ worker, date, hours });
 
@@ -70,6 +70,13 @@ describe('buildActualsMatrixReport', () => {
         expect(m[0].rows[0].cells.slice(0, 3)).toEqual([0.3, 0.3, 0.3]);
         expect(m[0].rows[0].monthTotal).toBe(1);
     });
+
+    it('合計行（縦方向）も丸める前に足す: 同じ日に2人×0.33人工は0.7', () => {
+        const recs = [rec('X', '2026-03-02', 2.5), rec('Y', '2026-03-02', 2.5)];
+        const { months: m } = buildActualsMatrixReport({ records: recs, startMonth: '2026-03', endMonth: '2026-03' });
+        expect(m[0].rows.map(r => r.cells[1])).toEqual([0.3, 0.3]);
+        expect(m[0].total.cells[1]).toBe(0.7);
+    });
 });
 
 describe('Excel出力', () => {
@@ -85,6 +92,11 @@ describe('Excel出力', () => {
         const total = rows.find(r => r[0] === '合計');
         expect(total.at(-2)).toBe(1);  // 月合計
         expect(total.at(-1)).toBe(2);  // 累計
+        // 画面（時間）と取り違えないよう、見出しと注記に単位（人工）が入る
+        const header = rows.find(r => r[0] === '作業員名');
+        expect(header.slice(-2)).toEqual([MONTH_TOTAL_LABEL, CUMULATIVE_LABEL]);
+        expect(MONTH_TOTAL_LABEL).toContain('人工');
+        expect(rows[2][0]).toContain(NINKU_NOTE);
         const zip = xlsx.CFB.read(bytes, { type: 'array' });
         const xml = new TextDecoder().decode(new Uint8Array(zip.FileIndex[zip.FullPaths.findIndex(p => p.endsWith('sheet2.xml'))].content));
         expect(xml).toContain('paperSize="9"');

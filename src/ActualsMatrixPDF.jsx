@@ -4,7 +4,7 @@
 import React from 'react';
 import { Document, Page, Text, View, StyleSheet, Font, pdf } from '@react-pdf/renderer';
 import { buildActualsMatrixReport, formatPeriodLabel, formatNinku } from './utils/actualsMatrixReport';
-import { NINKU_NOTE, actualsMatrixFileName } from './utils/actualsMatrixExport';
+import { NINKU_NOTE, MONTH_TOTAL_LABEL, CUMULATIVE_LABEL, actualsMatrixFileName } from './utils/actualsMatrixExport';
 
 const fontBase = typeof window !== 'undefined' ? `${window.location.origin}/fonts` : '/fonts';
 
@@ -113,8 +113,8 @@ const MonthPages = ({ month, projectName, periodLabel, exportedAt }) => {
                 <Text style={{ color: headColor(d), fontSize: 6 }}>{d.dowLabel}</Text>
               </View>
             ))}
-            <View style={S.sum}><Text>月合計</Text></View>
-            <View style={S.sum}><Text>累計</Text></View>
+            <View style={S.sum}><Text>{MONTH_TOTAL_LABEL}</Text></View>
+            <View style={S.sum}><Text>{CUMULATIVE_LABEL}</Text></View>
           </View>
 
           {chunk.map(renderItem)}
