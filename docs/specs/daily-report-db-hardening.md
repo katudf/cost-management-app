@@ -3,7 +3,9 @@
 - 作成日: 2026-11-20
 - 状態: §1.1 の論点は 2026-11-20 にユーザーが推奨案で決定済み。
   M1（DB-3）は実装済み（2026-11-20。`supabase/migrations/20261120000000_close_shared_worker_account.sql`、画面は `StaffLoginDialog.jsx` / `StaffSettings.jsx`、
-  テストは `scripts/test-daily-report-hardening-db.py`）。**本番は未反映**（§7.1 の確認の後に入れる）。M2 以降は未実装
+  テストは `scripts/test-daily-report-hardening-db.py`）。
+  M2 も実装済み（2026-11-20。`supabase/migrations/20261120010000_daily_report_rpc_v2.sql`。実装で変えた点は §5.1）。
+  **どちらも本番は未反映**（§7.1 の確認の後に入れる）。画面（F1）・M3・M4 は未実装
 - 対象: `docs/specs/worker-daily-report-refactor.md` §9 の DB-1〜DB-7・DB-9（DB-8・DB-10・DB-11 は対象外。§10）
 - 根拠: リポジトリのマイグレーション（2026-11-20 時点の最新 `20261117000000`）と画面のコード（コミット `f789415`）。
   本番の RLS・関数がマイグレーションどおりかは、§7.1 のクエリで本番を見てから実装に入る
@@ -816,6 +818,16 @@ DROP POLICY IF EXISTS "projects_select_worker_viewer" ON public."Projects";
 引数は `p_payload jsonb` のままなので、関数の識別子は変わらない（`CREATE OR REPLACE` でよい。`REVOKE` / `GRANT` も今と同じ）。
 旧画面の payload（`expected_versions` / `break_durations` / `expected_progress` が無い）は、4〜6 の絞り込み以外は今と同じに動く。
 
+### 5.1 実装で §4 の SQL 案から変えた点（2026-11-20、M2）
+
+正はマイグレーション `20261120010000_daily_report_rpc_v2.sql`。
+
+- 作業員を決められないとき: 担当者（代理入力で作業員名が空）は `22023`「保存内容が不正」、それ以外は `42501`「権限がありません」に分けた。
+- 進捗の楽観ロック（`expected_progress`）は職長のときだけ確かめる。職長でない作業員が進捗を送ったときは、競合（`PT409`）ではなく従来どおり `42501`「職長のみ」になる。
+- 休憩設定の検査は、配列かどうかを先に別の `IF` で確かめ、要素の数値の変換は `CASE` で囲んだ（`OR` の評価順に頼ると、配列でない値や文字列の要素で、検査の前に型のエラーになりうるため）。
+- 承認の RPC は、申請の行を `FOR UPDATE` で読んでから、職長の判定・承認待ちかどうか・見た値の比較の順に確かめる。5 引数版は `CREATE OR REPLACE` にして、マイグレーションを流し直せるようにした。
+- 競合の一覧（`DETAIL`）は id の順に並べる。
+
 ---
 
 ## 6. 本番に入れる順序と巻き戻し
@@ -826,7 +838,7 @@ PWA のキャッシュで古い画面が残るので、どの段階でも「1 �
 |---|---|---|---|---|---|
 | 0 | 本番の現状の確認 | — | §7.1 のクエリがマイグレーションと一致すること。一致しなければ設計を見直す | — | — |
 | M1 | DB-3: role の CHECK と `_effective_worker` | `20261120000000_close_shared_worker_account.sql`（実装済み） | `office_staff` に role = `worker` の行が 0 件 | 変わらない（共有アカウントはもう無い） | §4.1 |
-| M2 | 互換のある追加: `TaskRecords.updated_at` とトリガー、§3 の部品、`get_task_record_presence`、`projects_directory`、`save_daily_report` の差し替え（§5）、`approve_*` の引数追加（§4.6） | `2026xxxx010000_daily_report_rpc_v2.sql` | M1 が入っていること | 別の日・別の現場の行を書き換える送信が `22023` で止まる（F0-2・F0-3 の被害が止まる） | 関数を `20261107020000` 版に戻す。追加したビュー・関数・列は残してよい |
+| M2 | 互換のある追加: `TaskRecords.updated_at` とトリガー、§3 の部品、`get_task_record_presence`、`projects_directory`、`save_daily_report` の差し替え（§5）、`approve_*` の引数追加（§4.6） | `20261120010000_daily_report_rpc_v2.sql`（実装済み） | M1 が入っていること | 別の日・別の現場の行を書き換える送信が `22023` で止まる（F0-2・F0-3 の被害が止まる） | 関数を `20261107020000` 版に戻す。追加したビュー・関数・列は残してよい |
 | F1 | 画面: 版・休憩・見た値を送る、presence RPC とビューを使う、予備の直接書き込みを「RPC が無いときだけ」にする、`SHARED_ROLES` の修正 | — | M2 が本番にあること（§7.2）。ただし F1 は M2 が無くても動くように作る | — | 前の画面に戻す（M2 は旧画面でも動く） |
 | 待つ | 旧画面が残っていないかを見る（目安 2 週間、Q2） | — | §7.3 のクエリで旧画面からの保存が 0 件になったこと。作業員に画面の再読み込みを頼む | — | — |
 | M3 | RLS を絞る: DB-1（§4.2）、DB-2（§4.3）、DB-9（§4.8）。休憩設定の本人の行への書き込みは仮に残す | `2026xxxx020000_daily_report_rls_tighten.sql` | F1 が出ていること | 配置表の「実績あり」が出なくなる（旧画面は全員分の `TaskRecords` を直接読むため）。`Projects` の基表が 0 件になるので、**現場一覧が空になる**（§6.1） | 元のポリシーを作り直す（§4.2・4.3・4.8） |
@@ -1011,8 +1023,10 @@ SELECT b.worker_name, b.date, b.updated_at
 ### 8.1 DB（ローカルの PostgreSQL）
 
 `scripts/test-worker-login-db.py` と `tests/db/worker-login-fixture.sql` と同じ作りで、`scripts/test-daily-report-hardening-db.py` と `tests/db/daily-report-hardening-fixture.sql` を足す
-（M1 の分は実装済み。フィクスチャは `test-worker-login-db.py` と同じものを使っている。M2 以降で列やトリガーが要るようになったら `daily-report-hardening-fixture.sql` を足す。
-実行: `python scripts/test-daily-report-hardening-db.py --port 55432`。2026-11-20 に 22 件すべて通過）
+（M1・M2 の分は実装済み。フィクスチャは `test-worker-login-db.py` と同じものに、`20260930000000`（休憩設定のテーブル）と
+`tests/db/daily-report-hardening-fixture.sql`（`Projects` の列と RLS、作業項目、作業手当の申請）を足している。
+`_upsert_task_record` などの内部関数は `worker-login-fixture.sql` の代用品のまま。
+実行: `python scripts/test-daily-report-hardening-db.py --port 55432`。2026-11-20 に 65 件すべて通過。下の表の 1〜17・22〜25 にあたる。18〜21 は M3 で足す）
 （別ポートのローカルクラスタに新しい DB を作り、`SET ROLE authenticated` と `request.jwt.claim.sub` でログインを切り替える）。
 
 | # | 確かめること | 期待 |
