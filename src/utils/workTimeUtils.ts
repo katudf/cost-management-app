@@ -28,6 +28,18 @@ export const toMinutes = (timeStr: string | null | undefined): number | null => 
     return h * 60 + m;
 };
 
+/**
+ * 時刻だけの開始・終了から「日をまたぐか」を推定する（終了が開始より前なら翌日）。
+ * 開始と終了が同じとき・どちらかが無いときは日をまたがない（DB の早出計算と同じ扱い）。
+ * 文字列の大小ではなく分で比べるので、"8:00" と "17:00" のようにゼロ埋めの無い値でも正しく判定する。
+ */
+export const inferOvernight = (startTime: string | null | undefined, endTime: string | null | undefined): boolean => {
+    const start = toMinutes(startTime);
+    const end = toMinutes(endTime);
+    if (start === null || end === null) return false;
+    return end < start;
+};
+
 export interface BreakRange {
     s: number;
     e: number;
@@ -135,6 +147,8 @@ export const getStandardBreakDurations = (dateStr: string | null | undefined): n
  * （2026年11月: 冬季 → 夏季）には、旧規則の季節の標準値がそのまま保存されている。
  * それを新しい季節の休憩時刻に当てると、夏季の終業 17:30 に冬季の短い休憩が混ざるので、
  * 「旧規則の季節の標準値と同じ値」は新しい季節の標準値に読み替える。
+ * 読み替えるのは規則が切り替わった月（規則の from の年月）だけ。翌年以降の同じ月の値は、
+ * 作業員が選んだ休憩（夏季でも 10時・15時に 15 分を選べる）なのでそのまま使う。
  * 配列でない・休憩の数が合わない値も標準値にする。
  */
 export const resolveSavedBreakDurations = (
@@ -147,9 +161,11 @@ export const resolveSavedBreakDurations = (
     if (durations.some(value => !Number.isFinite(value))) return standard;
     const parts = dateStr ? parseDateParts(dateStr) : null;
     if (parts) {
-        const ruleIndex = SEASON_RULES.indexOf(findSeasonRule(parts.ymd));
+        const currentRule = findSeasonRule(parts.ymd);
+        const ruleIndex = SEASON_RULES.indexOf(currentRule);
         const previousRule = SEASON_RULES[ruleIndex + 1];
-        if (previousRule) {
+        const isSwitchMonth = !!currentRule.from && currentRule.from.slice(0, 7) === parts.ymd.slice(0, 7);
+        if (previousRule && isSwitchMonth) {
             const previousSeason = seasonOf(previousRule, parts.month);
             if (previousSeason !== getSeasonConfig(dateStr)) {
                 const previousStandard = previousSeason.breaks.map(brk => brk.e - brk.s);

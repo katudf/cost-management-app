@@ -44,6 +44,26 @@ function getCache(key) {
 }
 
 /**
+ * 保存・削除が成功した直後に、日報のキャッシュを最新の内容で書き直す。
+ * `fetchWithCache` は空配列を保存しない（未認証時の空の結果を配り続けないため）ので、
+ * 記録を全部消した日でも古い行がキャッシュに残り、オフラインで開き直すと消した行が
+ * 既存の行として出て、送信で復活していた。ここでは操作が成功した後なので空配列も書く。
+ * キーの形は `fetchWithCache` と同じ（`cost-app-cache-<key>`）。
+ */
+export function writeCache(key, data) {
+    setCache(key, data);
+}
+
+/** キャッシュを1件消す（最新の内容が分からないときに、古い内容を残さないため）。 */
+export function removeCache(key) {
+    try {
+        localStorage.removeItem(CACHE_PREFIX + key);
+    } catch (e) {
+        console.error('offlineCache: failed to remove cache', key, e);
+    }
+}
+
+/**
  * マスタデータのキャッシュをすべて消す。ログアウト時に呼ぶ
  * （共有端末で、ログアウト後も作業員名簿・現場一覧などが端末に残らないようにする）。
  */

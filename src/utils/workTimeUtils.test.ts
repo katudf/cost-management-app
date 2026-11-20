@@ -9,7 +9,24 @@ import {
   splitRecordOvertime,
   getStandardBreakDurations,
   resolveSavedBreakDurations,
+  inferOvernight,
 } from './workTimeUtils';
+
+describe('inferOvernight', () => {
+  it('終了が開始より前なら日をまたぐ', () => {
+    expect(inferOvernight('22:00', '06:00')).toBe(true);
+    expect(inferOvernight('08:00:00', '07:59:00')).toBe(true);
+  });
+  it('通常の時間帯・開始と終了が同じ・片方が無いときは日をまたがない', () => {
+    expect(inferOvernight('08:00', '17:00')).toBe(false);
+    expect(inferOvernight('08:00', '08:00')).toBe(false);
+    expect(inferOvernight('08:00', '')).toBe(false);
+    expect(inferOvernight(null, '06:00')).toBe(false);
+  });
+  it('ゼロ埋めの無い時刻でも分で比べる', () => {
+    expect(inferOvernight('8:00', '17:00')).toBe(false);
+  });
+});
 
 describe('workTimeUtils', () => {
   describe('getSeasonConfig', () => {
@@ -81,6 +98,14 @@ describe('workTimeUtils', () => {
       expect(resolveSavedBreakDurations([15, 60, 15], '2026-12-05')).toEqual([15, 60, 15]);
       expect(resolveSavedBreakDurations([15, 60, 15], '2026-08-05')).toEqual([15, 60, 15]);
       expect(resolveSavedBreakDurations([15, 60, 15], '2025-11-05')).toEqual([15, 60, 15]);
+    });
+
+    it('読み替えは規則が切り替わった2026年11月だけで、翌年以降の11月は作業員が選んだ値としてそのまま使うこと', () => {
+      expect(resolveSavedBreakDurations([15, 60, 15], '2026-11-01')).toEqual([30, 60, 30]);
+      expect(resolveSavedBreakDurations([15, 60, 15], '2026-11-30')).toEqual([30, 60, 30]);
+      expect(resolveSavedBreakDurations([15, 60, 15], '2027-11-05')).toEqual([15, 60, 15]);
+      expect(resolveSavedBreakDurations([15, 60, 15], '2028-11-20')).toEqual([15, 60, 15]);
+      expect(resolveSavedBreakDurations([15, 60, 15], '2026-10-31')).toEqual([15, 60, 15]);
     });
 
     it('読み替えた休憩で、11月の 08:00-17:30 は残業なしの 7.5h になること', () => {

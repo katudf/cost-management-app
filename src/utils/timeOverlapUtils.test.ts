@@ -81,6 +81,39 @@ describe('buildOtherProjectIntervals', () => {
         ];
         expect(buildOtherProjectIntervals(records, 1, PROJECTS)).toHaveLength(0);
     });
+
+    it('他現場の夜勤（終了が開始より前）は翌日として時間帯にする', () => {
+        const records = [{ project_id: 2, start_time: '22:00:00', end_time: '02:00:00' }];
+        const [interval] = buildOtherProjectIntervals(records, 1, PROJECTS);
+        expect(interval.start).toBe(22 * 60);
+        expect(interval.end).toBe(26 * 60);
+    });
+
+    it('開始と終了が同じ他現場のレコードは時間帯にしない', () => {
+        const records = [{ project_id: 2, start_time: '08:00', end_time: '08:00' }];
+        expect(buildOtherProjectIntervals(records, 1, PROJECTS)).toHaveLength(0);
+    });
+});
+
+describe('他現場の夜勤との重複', () => {
+    const tasksAt = (start: string, end: string, isOvernight: boolean) => [{
+        id: 10, name: '塗装', time_slots: [{ slot_id: 's1', start_time: start, end_time: end, is_overnight: isOvernight }],
+    }];
+    const nightShift = [{ project_id: 2, start_time: '22:00', end_time: '02:00' }];
+
+    it('他現場 22:00〜翌02:00 と 23:00〜翌01:00 は重複として警告する', () => {
+        const warnings = calculateTimeOverlapWarnings({
+            tasks: tasksAt('23:00', '01:00', true), dailyRecords: nightShift, projects: PROJECTS, selectedProjectId: 1,
+        });
+        expect(warnings).toHaveLength(1);
+    });
+
+    it('他現場 22:00〜翌02:00 と 03:00〜05:00 は重ならない', () => {
+        const warnings = calculateTimeOverlapWarnings({
+            tasks: tasksAt('03:00', '05:00', false), dailyRecords: nightShift, projects: PROJECTS, selectedProjectId: 1,
+        });
+        expect(warnings).toHaveLength(0);
+    });
 });
 
 describe('buildCurrentProjectIntervals', () => {

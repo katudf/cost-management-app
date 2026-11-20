@@ -11,7 +11,7 @@
  * まったくテストされていなかったため、純粋関数として切り出した。
  */
 
-import { toMinutes } from './workTimeUtils';
+import { toMinutes, inferOvernight } from './workTimeUtils';
 
 // 時刻→分の変換は workTimeUtils が持ち主。ここでは再輸出だけする
 // （既存の import 元を壊さないため）。
@@ -77,11 +77,10 @@ export interface ProjectLike {
 /**
  * 他現場（選択中でないプロジェクト）の日報を時間帯に変換する。
  *
- * 既知の制約: 他現場のレコードには日跨ぎフラグ（is_overnight）が無い。
- * そのため 22:00〜翌06:00 のような他現場の夜勤は start > end のまま時間帯になり、
- * `findOverlaps` の `a.start < b.end && b.start < a.end` がどちらも偽になって
- * 重複が検出されない（誤検知ではなく見落とし側に倒れる）。
- * 元の実装もこの制約を持っていたので、切り出しでは挙動を変えずそのまま残した。
+ * 他現場のレコードには日跨ぎフラグ（is_overnight）が無いので、時間の集計と同じく
+ * 「終了が開始より前なら翌日」と推定する（`inferOvernight`）。推定しないと 22:00〜翌02:00 の
+ * 夜勤が逆向きの時間帯になり、重なっていても警告が出ないまま時間が二重に数えられていた。
+ * 開始と終了が同じレコードは時間が 0 なので時間帯にしない。
  */
 export const buildOtherProjectIntervals = (
     dailyRecords: DailyRecordLike[],
@@ -93,8 +92,9 @@ export const buildOtherProjectIntervals = (
         .filter(r => String(r.project_id) !== String(selectedProjectId))
         .forEach(r => {
             const start = toMinutes(r.start_time);
-            const end = toMinutes(r.end_time);
-            if (start === null || end === null) return;
+            let end = toMinutes(r.end_time);
+            if (start === null || end === null || start === end) return;
+            if (inferOvernight(r.start_time, r.end_time)) end += MINUTES_PER_DAY;
             const proj = (projects || []).find(p => p.id === Number(r.project_id));
             const label = proj?.name || '別現場';
             intervals.push({
