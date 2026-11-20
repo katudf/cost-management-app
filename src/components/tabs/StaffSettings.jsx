@@ -30,7 +30,8 @@ const StaffSettings = () => {
 
     // 管理者の任命・解任はシステム管理者だけ（決定 #11）。業務管理者には「管理者」を選ばせない。
     const baseRoleOptions = isSystemAdmin ? STAFF_ROLE_LIST : STAFF_ROLE_LIST.filter(role => role !== STAFF_ROLE.ADMIN);
-    // 廃止した「作業員」の行を編集するときは、知らないうちに別の区分へ変わらないよう、今の区分も選択肢に残す
+    // 選択肢に無い区分の行を編集するときは、知らないうちに別の区分へ変わらないよう、今の区分も選択肢に残す
+    // （担当者の「作業員」区分は DB で作れなくした。20261120000000_close_shared_worker_account）
     const roleOptions = form.id && form.role && !baseRoleOptions.includes(form.role)
         ? [...baseRoleOptions, form.role]
         : baseRoleOptions;
@@ -181,7 +182,7 @@ const StaffSettings = () => {
                                 >
                                     {(isRoleLocked || form.role === STAFF_ROLE.SYSTEM_ADMIN ? [form.role] : roleOptions).map(role => (
                                         <option key={role} value={role}>
-                                            {STAFF_ROLE_LABEL[role] || role}{role === STAFF_ROLE.WORKER ? '（廃止・作業日報では使えません）' : ''}
+                                            {STAFF_ROLE_LABEL[role] || role}
                                         </option>
                                     ))}
                                 </select>

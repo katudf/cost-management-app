@@ -22,7 +22,8 @@ const MODE_CONFIG = {
     changeId: { title: 'ログインIDの変更', needsId: true, needsPassword: false, submitLabel: '変更する' },
 };
 
-const SHARED_ROLES = [STAFF_ROLE.WORKER, STAFF_ROLE.VIEWER];
+// 共有アカウントとして使う区分（作業員の共有アカウントは廃止し、DB でも作れなくした。20261120000000_close_shared_worker_account）
+const SHARED_ROLES = [STAFF_ROLE.VIEWER];
 
 const StaffLoginDialog = ({ mode, staff, onClose, onSubmit, initialLoginId = '' }) => {
     const { showToast } = useToast();
