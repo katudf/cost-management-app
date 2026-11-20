@@ -21,6 +21,7 @@
 | [`login-id.md`](specs/login-id.md) | 独自ログインIDへの切り替え設計（フェーズ1公開済み） |
 | [`worker-login.md`](specs/worker-login.md) | 作業員の個人ログイン（共有アカウント＋名前選択の廃止）設計（フェーズA実装済み・本番未反映） |
 | [`subcontractors.md`](specs/subcontractors.md) | 下請け会社の正式管理（会社マスタ・常用/請負契約・原価・配置表）設計（設計合意済み・未実装） |
+| [`worker-daily-report-refactor.md`](specs/worker-daily-report-refactor.md) | 作業員日報画面（WorkerApp.jsx）のリファクタリング設計と、先に直す不具合・UI改善候補・DB側の課題（フェーズ0.5の不具合修正済み・分割は未着手） |
 | [`database.md`](specs/database.md) | テーブル定義（DDL）。最終的な正は `supabase/migrations/` |
 
 ## manuals/
