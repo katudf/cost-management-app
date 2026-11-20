@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useToast } from '../components/Toast';
 import { fetchWithCache } from '../utils/offlineCache';
 import { fetchCompanyHolidaysResult } from './useCompanyHolidays';
+import { fetchTaskRecordPresenceResult } from './useDailyReport';
 import { toDateStr, addDays, getMonday, buildDateColumns } from '../utils/dateUtils';
 import { buildAssignmentLookup, buildBarIndexMap, projectColor } from '../utils/scheduleDisplay';
 
@@ -53,8 +54,10 @@ export function useWorkerAssignments({ workers, projects, loggedInWorker }) {
                         supabase.from('Assignments').select('*').gte('date', startStr).lte('date', endStr)
                     ),
                     fetchWithCache('worker-chart-holidays', fetchCompanyHolidaysResult),
+                    // 作業員は他の人の日報を直接読めないので、時間を含まない「出た現場」だけを DB 関数で取る
+                    // （キャッシュの形は従来と同じ project_id / worker_name / date）
                     fetchMaybeCached(isDefaultPeriod, 'worker-chart-actuals', () =>
-                        supabase.from('TaskRecords').select('id, project_id, worker_name, date').gte('date', startStr).lte('date', actualEnd)
+                        fetchTaskRecordPresenceResult(startStr, actualEnd)
                     ),
                 ]);
                 if (cancelled) return;

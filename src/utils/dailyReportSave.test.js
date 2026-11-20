@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { newClientUuid, isNetworkSaveError, describeSaveError } from './dailyReportSave';
+import {
+    newClientUuid, isNetworkSaveError, describeSaveError, isConflictError, buildExpectedVersions, buildProgressPayload,
+} from './dailyReportSave';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -48,5 +50,50 @@ describe('describeSaveError（保存以外の操作）', () => {
     it('fallback が無ければ action から既定の文言を作る', () => {
         expect(describeSaveError(new Error('x'), { action: '承認' }))
             .toBe('承認に失敗しました。電波の良いところで再度お試しください。');
+    });
+});
+
+describe('楽観ロック（docs/specs/daily-report-db-hardening.md §4.5・4.6）', () => {
+    const conflict = { code: 'PT409', message: '他の人が先にこの日報か進捗を直しました。読み込み直してから、もう一度入力してください。' };
+
+    it('競合は理由をそのまま見せ、電波の案内にしない', () => {
+        const text = describeSaveError(conflict);
+        expect(text).toContain('他の人が先に');
+        expect(text).not.toContain('電波');
+        expect(describeSaveError({ code: 'PT409', message: '申請の内容が変わりました。' }, { action: '承認' }))
+            .toBe('承認できませんでした: 申請の内容が変わりました。');
+    });
+
+    it('isConflictError は PT409 だけを競合とみなす', () => {
+        expect(isConflictError(conflict)).toBe(true);
+        expect(isConflictError({ code: '22023' })).toBe(false);
+        expect(isConflictError(null)).toBe(false);
+    });
+
+    it('buildExpectedVersions は版の分かる行だけを入れ、id を文字列のキーにする', () => {
+        const versions = new Map([['10', '2026-11-20T01:00:00.123456+00:00'], ['11', '2026-11-20T02:00:00+00:00']]);
+        expect(buildExpectedVersions([10, '11', 12], versions)).toEqual({
+            10: '2026-11-20T01:00:00.123456+00:00',
+            11: '2026-11-20T02:00:00+00:00',
+        });
+        expect(buildExpectedVersions([], versions)).toEqual({});
+    });
+
+    it('buildProgressPayload は変えた作業項目だけを、読み込んだときの値と一緒に送る', () => {
+        const tasks = [
+            { id: 1, progress_percentage: 50, saved_progress: 30 },  // 変えた
+            { id: 2, progress_percentage: 30, saved_progress: 30 },  // 変えていない
+            { id: 3, progress_percentage: 0, saved_progress: null }, // DB が NULL で画面は 0（変えていない）
+            { id: 4, progress_percentage: 10, saved_progress: null }, // DB が NULL から変えた
+        ];
+        expect(buildProgressPayload(tasks)).toEqual([
+            { id: 1, progress_percentage: 50, expected_progress: 30 },
+            { id: 4, progress_percentage: 10, expected_progress: null },
+        ]);
+    });
+
+    it('読み込んだときの値を持たない作業項目（古い下書きなど）は、比べずに送る', () => {
+        expect(buildProgressPayload([{ id: 5, progress_percentage: 40 }]))
+            .toEqual([{ id: 5, progress_percentage: 40 }]);
     });
 });

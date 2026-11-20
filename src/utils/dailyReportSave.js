@@ -43,8 +43,46 @@ export function describeSaveError(error, { action = '保存', fallback } = {}) {
             return `${action}できませんでした: ${error.message}（現場の職長が変わった場合は、画面を読み込み直してください）`;
         case '22023':
         case 'P0002':
+        // 他の人が先に直していた（楽観ロックの競合。DB が HTTP 409 で返す独自のコード）
+        case 'PT409':
             return `${action}できませんでした: ${error.message}`;
         default:
             return fallback ?? `${action}に失敗しました。電波の良いところで再度お試しください。`;
     }
+}
+
+/** 他の人が先に直していた（save_daily_report / approve_* の楽観ロックの競合）か。 */
+export function isConflictError(error) {
+    return error?.code === 'PT409';
+}
+
+/**
+ * save_daily_report に送る expected_versions（{ "<record_id>": "<画面が読んだ updated_at>" }）を作る。
+ * 版が分からない行（DB の更新前に読んだ行など）は入れない（その行は比べずに保存される）。
+ * @param {Iterable<number|string>} recordIds  削除・更新する行の id
+ * @param {Map<string, string>} versions        id（文字列）→ 読み込んだときの updated_at
+ * @returns {Record<string, string>}
+ */
+export function buildExpectedVersions(recordIds, versions) {
+    const expected = {};
+    for (const id of recordIds) {
+        const key = String(id);
+        const version = versions.get(key);
+        if (version) expected[key] = version;
+    }
+    return expected;
+}
+
+/**
+ * 職長が送る進捗。読み込んだときから変えた作業項目だけを、読み込んだときの値（expected_progress）と一緒に送る。
+ * 全項目を送ると、画面を開いた後に管理者が直した進捗を古い値で上書きしてしまうため。
+ * 読み込んだときの値を持たない作業項目（古い下書きから復元したものなど）は、比べずに送る。
+ * @param {{ id: number, progress_percentage?: number|null, saved_progress?: number|null }[]} tasks
+ */
+export function buildProgressPayload(tasks) {
+    return tasks
+        .filter(t => !('saved_progress' in t) || (t.progress_percentage || 0) !== (t.saved_progress || 0))
+        .map(t => ('saved_progress' in t
+            ? { id: t.id, progress_percentage: t.progress_percentage, expected_progress: t.saved_progress ?? null }
+            : { id: t.id, progress_percentage: t.progress_percentage }));
 }

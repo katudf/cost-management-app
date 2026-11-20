@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { isMissingRpcError } from '../utils/supabaseErrors';
 
 /**
  * 残業承認（OvertimeApprovals）に関する操作を集約するモジュール。
@@ -32,16 +33,28 @@ export async function fetchPendingApprovals(projectIds) {
 /**
  * 残業申請を承認する（DB 関数 approve_overtime）。
  * worker ロールは承認テーブルに直接書けないため、職長かどうかを DB 側で確認する RPC を使う。
+ *
+ * 職長が一覧で見た申請（時間と更新日時）を渡すと、その後に作業員が時間を直していたとき承認せずに
+ * 競合のエラー（code 'PT409'）になる（docs/specs/daily-report-db-hardening.md §4.6 DB-6）。
+ * 見た値を受け取る DB 関数が無い（マイグレーション 20261120010000 の適用前）ときは、見た値を渡さずに呼び直す。
  * @param {number} id                 - OvertimeApprovals.id
  * @param {string} approverName       - 承認者（職長）名
  * @param {number} [approverWorkerId] - 承認者の作業員 ID（職長判定用）
+ * @param {{ requested_hours?: number|null, updated_at?: string|null }} [seen] - 一覧で見た申請
  */
-export async function approveOvertime(id, approverName, approverWorkerId) {
-    const { error } = await supabase.rpc('approve_overtime', {
+export async function approveOvertime(id, approverName, approverWorkerId, seen) {
+    const base = {
         p_id: id,
         p_approver_name: approverName,
         p_approver_worker_id: approverWorkerId ?? null,
-    });
+    };
+    const expected = {};
+    if (seen?.requested_hours != null) expected.p_expected_hours = Number(seen.requested_hours);
+    if (seen?.updated_at) expected.p_expected_updated_at = seen.updated_at;
+    let { error } = await supabase.rpc('approve_overtime', { ...base, ...expected });
+    if (isMissingRpcError(error) && Object.keys(expected).length > 0) {
+        ({ error } = await supabase.rpc('approve_overtime', base));
+    }
     if (error) throw error;
 }
 

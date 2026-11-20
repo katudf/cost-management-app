@@ -5,7 +5,8 @@
   M1（DB-3）は実装済み（2026-11-20。`supabase/migrations/20261120000000_close_shared_worker_account.sql`、画面は `StaffLoginDialog.jsx` / `StaffSettings.jsx`、
   テストは `scripts/test-daily-report-hardening-db.py`）。
   M2 も実装済み（2026-11-20。`supabase/migrations/20261120010000_daily_report_rpc_v2.sql`。実装で変えた点は §5.1）。
-  **どちらも本番は未反映**（§7.1 の確認の後に入れる）。画面（F1）・M3・M4 は未実装
+  画面（F1）も実装済み（2026-11-20。実装で変えた点は §6.3）。
+  **M1・M2 は本番に未反映**（§7.1 の確認の後に入れる）。F1 は M2 が無い DB でも従来どおり動く。M3・M4・F2 は未実装
 - 対象: `docs/specs/worker-daily-report-refactor.md` §9 の DB-1〜DB-7・DB-9（DB-8・DB-10・DB-11 は対象外。§10）
 - 根拠: リポジトリのマイグレーション（2026-11-20 時点の最新 `20261117000000`）と画面のコード（コミット `f789415`）。
   本番の RLS・関数がマイグレーションどおりかは、§7.1 のクエリで本番を見てから実装に入る
@@ -839,7 +840,7 @@ PWA のキャッシュで古い画面が残るので、どの段階でも「1 �
 | 0 | 本番の現状の確認 | — | §7.1 のクエリがマイグレーションと一致すること。一致しなければ設計を見直す | — | — |
 | M1 | DB-3: role の CHECK と `_effective_worker` | `20261120000000_close_shared_worker_account.sql`（実装済み） | `office_staff` に role = `worker` の行が 0 件 | 変わらない（共有アカウントはもう無い） | §4.1 |
 | M2 | 互換のある追加: `TaskRecords.updated_at` とトリガー、§3 の部品、`get_task_record_presence`、`projects_directory`、`save_daily_report` の差し替え（§5）、`approve_*` の引数追加（§4.6） | `20261120010000_daily_report_rpc_v2.sql`（実装済み） | M1 が入っていること | 別の日・別の現場の行を書き換える送信が `22023` で止まる（F0-2・F0-3 の被害が止まる） | 関数を `20261107020000` 版に戻す。追加したビュー・関数・列は残してよい |
-| F1 | 画面: 版・休憩・見た値を送る、presence RPC とビューを使う、予備の直接書き込みを「RPC が無いときだけ」にする、`SHARED_ROLES` の修正 | — | M2 が本番にあること（§7.2）。ただし F1 は M2 が無くても動くように作る | — | 前の画面に戻す（M2 は旧画面でも動く） |
+| F1 | 画面: 版・休憩・見た値を送る、presence RPC とビューを使う、予備の直接書き込みを「RPC が無いときだけ」にする、`SHARED_ROLES` の修正（M1 で実施済み） | 実装済み（§6.3） | M2 が本番にあること（§7.2）。ただし F1 は M2 が無くても動くように作る | — | 前の画面に戻す（M2 は旧画面でも動く） |
 | 待つ | 旧画面が残っていないかを見る（目安 2 週間、Q2） | — | §7.3 のクエリで旧画面からの保存が 0 件になったこと。作業員に画面の再読み込みを頼む | — | — |
 | M3 | RLS を絞る: DB-1（§4.2）、DB-2（§4.3）、DB-9（§4.8）。休憩設定の本人の行への書き込みは仮に残す | `2026xxxx020000_daily_report_rls_tighten.sql` | F1 が出ていること | 配置表の「実績あり」が出なくなる（旧画面は全員分の `TaskRecords` を直接読むため）。`Projects` の基表が 0 件になるので、**現場一覧が空になる**（§6.1） | 元のポリシーを作り直す（§4.2・4.3・4.8） |
 | M4 | 必須化: 作業員からの `save_daily_report` に `expected_versions` と `break_durations` を、`approve_*` に見た値を必須にする。休憩設定の仮ポリシーを消す | `2026xxxx030000_daily_report_enforce.sql` | M3 から 1 週間、問い合わせが無いこと | 旧画面からの保存・承認が止まる | 関数を M2 版に戻し、仮ポリシーを作り直す |
@@ -857,6 +858,31 @@ DB-9 のポリシーの削除だけを M4 に回す案もあったが、金額�
 - `CREATE POLICY` の前に `DROP POLICY IF EXISTS`、関数の識別子が変わるものは `DROP FUNCTION IF EXISTS` してから `CREATE`。
 - 関数を変えたら最後に `NOTIFY pgrst, 'reload schema';`。
 - 本番への適用は Supabase の SQL エディタか `supabase db push`（今までの運用に合わせる）。適用の前後で §7 のクエリを流し、結果を `docs/handoff/` か PR に残す。
+
+
+### 6.3 F1 の実装（2026-11-20）と §4 から変えた点
+
+変えたファイル: `src/WorkerApp.jsx`、`src/hooks/useDailyReport.js`・`useWorkerAssignments.js`・`useScheduleViewData.js`、
+`src/lib/overtimeApprovals.js`・`workAllowanceApprovals.js`、`src/utils/dailyReportSave.js`（＋テスト）、`src/utils/supabaseErrors.js`（新規、＋テスト）。
+
+- **版の持ち方**: §4.5 では「下書きの slot に `updated_at` を持たせる」としたが、`WorkerApp.jsx` の `recordVersionsRef`（id → 版）に持つことにした。
+  現場の読み込み（この現場の行）・その日の全現場の実績の読み込み（他の現場の行。未登録の行だけ）・保存の戻り値（`versions`）で更新し、
+  送信では `buildExpectedVersions` で削除・更新する行の版だけを送る。削除した行の版も残るので、`deleted_record_ids` に版を足さずに済む。
+  下書き（localStorage）の形は変えていない。下書きを復元して送るときは、その現場・日付を読み込んだときの版と比べる
+  （下書きを作った時点の版ではないので、読み込みより前の他の人の修正は検知できない。今と同じ）。
+- **競合のとき**: §4.5 では「その現場・日付を読み直す」としたが、自動では読み直さない。入力中の内容を残したまま
+  「日付か現場を選び直すと最新の内容を読み込みます」と知らせる（`cb583c7` の「キャッシュの行が消えていた」ときと同じ案内）。
+  自動で読み直すと、作業員が入力した内容が画面から消えるため。
+- **進捗**: 読み込んだときの値を作業項目の `saved_progress` に持ち、変えた作業項目だけを `expected_progress` と一緒に送る（`buildProgressPayload`）。
+  `saved_progress` を持たない作業項目（古い下書きから復元したもの）は、比べずに送る。
+- **承認**: 一覧で取った申請（`requested_hours` / `task_names` / `updated_at`）をそのまま渡す。競合のときは従来どおり一覧を取り直す。
+- **現場一覧のキャッシュ**: キーを `projects` から `projects-directory` に変え、起動時に古いキー（金額の列を含む）を消す。
+- **DB が古いとき**: ビューが無ければ `Projects`、`get_task_record_presence` や新しい引数の `approve_*` が無ければ従来の呼び方に戻す
+  （`src/utils/supabaseErrors.js` の `isMissingRelationError` / `isMissingRpcError`）。`save_daily_report` は新しいキーを無視するだけなので、
+  `break_saved` が返らなければ休憩設定を従来どおり別のリクエストで保存する。
+- **消したもの**: `deleteProjectDayRecords` の `TaskRecords` 直接削除の予備（本番には 20261105020000 から `delete_worker_project_day` がある。§7.1 で確かめる）。
+- **やっていないこと**: `src/types/supabase.ts` の作り直し（本番の DB から生成するため、M2 を本番に入れた後に行う）。
+  ブラウザでの動作確認（作業員画面は本番の Supabase へのログインが要る）。§8.2 の手動確認は、M2 を入れた環境で行う。
 
 ---
 

@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { fetchAllPages } from '../lib/fetchAllPages';
+import { isMissingRpcError, isMissingRelationError } from '../utils/supabaseErrors';
 
 /**
  * 作業員アプリ（WorkerApp）の日報データアクセスを一箇所に集約するモジュール。
@@ -31,9 +32,30 @@ export const fetchWorkersDirectoryResult = () =>
         .select('*')
         .order('display_order', { ascending: true, nullsFirst: false });
 
-/** 全工事案件。 */
-export const fetchProjectsResult = () =>
-    supabase.from('Projects').select('*').order('created_at', { ascending: true });
+/**
+ * 全工事案件。金額・顧客・PDF の列を含まない名簿ビュー projects_directory から読む
+ * （docs/specs/daily-report-db-hardening.md §4.8 DB-9。作業員は Projects の基表を読めなくなる）。
+ * ビューが無い DB（マイグレーション 20261120010000 の適用前）では、従来どおり基表から読む。
+ */
+export const fetchProjectsResult = async () => {
+    const result = await supabase.from('projects_directory').select('*').order('created_at', { ascending: true });
+    if (!isMissingRelationError(result.error)) return result;
+    return supabase.from('Projects').select('*').order('created_at', { ascending: true });
+};
+
+/**
+ * 配置表用: 期間内に日報がある（現場・作業員名・日付）の組。時間・メモは含まない（DB 関数 get_task_record_presence）。
+ * 作業員は他の人の日報を直接読めなくなるため（§4.3 DB-2）。関数が無い DB では、従来どおり TaskRecords から読む。
+ * 期間全体が未来なら（終わりが始まりより前）空を返す。
+ * @param {string} startStr 'YYYY-MM-DD'
+ * @param {string} endStr   'YYYY-MM-DD'（62 日まで）
+ */
+export const fetchTaskRecordPresenceResult = async (startStr, endStr) => {
+    if (endStr < startStr) return { data: [], error: null };
+    const result = await supabase.rpc('get_task_record_presence', { p_start: startStr, p_end: endStr });
+    if (!isMissingRpcError(result.error)) return result;
+    return supabase.from('TaskRecords').select('project_id, worker_name, date').gte('date', startStr).lte('date', endStr);
+};
 
 /** 指定作業員・指定日の全日報レコード（現場を問わない）。 */
 export const fetchWorkerDailyRecordsResult = (workerName, date) =>
@@ -137,7 +159,11 @@ export async function fetchWorkerDailyRecords(workerName, date) {
     return data || [];
 }
 
-/** 作業員・日付単位の休憩設定を保存する。 */
+/**
+ * 作業員・日付単位の休憩設定を保存する。
+ * 休憩設定は save_daily_report が日報と同じトランザクションで保存する（payload の break_durations）。
+ * これは DB 関数が休憩設定を保存しなかったとき（マイグレーション 20261120010000 の適用前）の予備。
+ */
 export async function saveWorkerDailyBreakSettings(workerName, date, breakDurations) {
     const { data, error } = await supabase.from('WorkerDailyBreakSettings').upsert({
         worker_name: workerName,
@@ -152,14 +178,6 @@ export async function saveWorkerDailyBreakSettings(workerName, date, breakDurati
 // ============================================================
 // 書き込み系
 // ============================================================
-
-/**
- * DB 関数がまだ無い（マイグレーション 20261105020000 の適用前）ときのエラーか。
- * PostgREST は、名前・引数の組が合う関数が無いと PGRST202 を返す。
- * 画面（PWA）が DB より先に新しくなっても動くよう、適用前は旧方式で処理するために使う。
- * 本番への適用が済んだら、この判定と旧方式の処理は消してよい。
- */
-const isMissingRpcError = (error) => error?.code === 'PGRST202';
 
 /** add_project_task を呼ぶ。新しい DB では作業員名も渡して職長を判定し、適用前の DB には旧引数で呼び直す。 */
 async function callAddProjectTask({ projectId, name, order, workerId, workerName }) {
@@ -200,6 +218,8 @@ export async function insertDefaultProjectTask({ projectId, name, workerId, work
 /**
  * 指定作業員・指定日・指定現場の日報レコードをすべて削除する（DB 関数 delete_worker_project_day）。
  * 同じ現場・日付の残業／作業手当の承認申請も同じトランザクションで削除する。
+ * （DB 関数が無いときに TaskRecords を直接消す旧方式は削除した。作業員は TaskRecords に直接書けなくなるため。
+ *   docs/specs/daily-report-db-hardening.md §4.2 DB-1）
  */
 export async function deleteProjectDayRecords({ projectId, workerName, date }) {
     const { error } = await supabase.rpc('delete_worker_project_day', {
@@ -207,16 +227,7 @@ export async function deleteProjectDayRecords({ projectId, workerName, date }) {
         p_worker_name: workerName,
         p_date: date,
     });
-    if (!isMissingRpcError(error)) {
-        if (error) throw error;
-        return;
-    }
-    // DB 関数の適用前は旧方式（日報だけを削除。承認申請は残る）
-    const { error: fallbackError } = await supabase.from('TaskRecords').delete()
-        .eq('worker_name', workerName)
-        .eq('date', date)
-        .eq('project_id', projectId);
-    if (fallbackError) throw fallbackError;
+    if (error) throw error;
 }
 
 /**
@@ -227,12 +238,21 @@ export async function deleteProjectDayRecords({ projectId, workerName, date }) {
  * 応答だけが届かなかった場合の再送でも、時刻付きの日報は同じ時間枠の行が更新されるだけで
  * 二重登録にはならない（TaskRecords の一意索引 task_records_worker_slot_key）。
  *
- * 作業員名・作業員 ID は画面で選んだ作業員（共有アカウントのため申告値）。
- * DB 側は「その作業員の日報だけ」を削除・更新し、進捗・協力業者は職長のみ受け付ける。
+ * 作業員名・作業員 ID は、作業員のログインでは DB 側でログイン中の本人に置き換えられる（担当者の代理入力では送った値）。
+ * DB 側は「その作業員・この現場・この日の日報だけ」を削除・更新し（休憩の再計算は同じ日の他の現場も可）、
+ * 進捗・協力業者は職長のみ受け付ける。
+ *
+ * payload の expected_versions（{ "<record_id>": "<読み込んだときの updated_at>" }）と progress[].expected_progress を送ると、
+ * 画面を開いた後に他の人が直していたとき、何も保存せずに競合のエラー（code 'PT409'）になる。
+ * break_durations を送ると、休憩設定も同じトランザクションで保存する。
+ * （docs/specs/daily-report-db-hardening.md §4.4〜4.7。マイグレーション 20261120010000 の適用前の DB は、これらのキーを無視する）
  *
  * @param {object} payload save_daily_report の p_payload（キーは DB 関数のコメント参照）
- * @returns {Promise<{ insertedIds: number[], remapped: { old_id: number, new_id: number }[] }>}
- *   insertedIds は payload.inserts と同じ順。remapped は「更新対象が消えていたので追加し直した」行。
+ * @returns {Promise<{ insertedIds: number[], remapped: { old_id: number, new_id: number }[],
+ *   approvalSyncFailed: boolean, breakSaved: boolean, versions: Record<string, string>|null }>}
+ *   insertedIds は payload.inserts と同じ順。remapped は「更新対象が消えていたので追加し直した」行（版を送らなかったときだけ起きる）。
+ *   breakSaved は休憩設定を保存したか（false なら DB が古いので、呼び出し側で saveWorkerDailyBreakSettings を呼ぶ）。
+ *   versions は保存後のこの作業員・この日の全行の版（DB が古ければ null）。
  */
 export async function saveDailyReport(payload) {
     const { data, error } = await supabase.rpc('save_daily_report', { p_payload: payload });
@@ -242,5 +262,7 @@ export async function saveDailyReport(payload) {
         remapped: data?.remapped || [],
         // 承認申請の同期だけ失敗した（日報は保存済み）
         approvalSyncFailed: data?.approval_sync_failed === true,
+        breakSaved: data?.break_saved === true,
+        versions: data?.versions && typeof data.versions === 'object' ? data.versions : null,
     };
 }

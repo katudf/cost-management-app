@@ -39,7 +39,7 @@ import { fetchPendingApprovals, approveOvertime, fetchDayOvertimeApproval } from
 import { fetchUnacknowledgedApprovals, acknowledgeApprovals } from './lib/approvalNotices';
 import { fetchPendingWorkAllowanceApprovals, approveWorkAllowance } from './lib/workAllowanceApprovals';
 import { fetchWithCache, writeCache, removeCache, getDraftQueue, upsertDraft, removeDraft, clearDraftQueue, removeWorkerDrafts } from './utils/offlineCache';
-import { newClientUuid, isNetworkSaveError, describeSaveError } from './utils/dailyReportSave';
+import { newClientUuid, isNetworkSaveError, describeSaveError, isConflictError, buildExpectedVersions, buildProgressPayload } from './utils/dailyReportSave';
 import { draftKeyOf, isSameDraftTarget, upsertIntoQueue, selectNotifiableDrafts, selectWorkerDrafts, isWorkerDraft } from './utils/draftQueueUtils';
 import { fetchSystemSettings, DEFAULT_HOURLY_WAGE } from './hooks/useSystemSettings';
 import { summarizeTaskCosts } from './utils/projectUtils';
@@ -171,6 +171,17 @@ const WorkerApp = () => {
     const [isSyncingQueue, setIsSyncingQueue] = useState(false);
     // 下書き復元の世代番号。読み込み開始後に復元された場合は、その読み込み結果で入力内容を上書きしない。
     const restoreSeqRef = useRef(0);
+    // 日報の行の版（id → 読み込んだときの updated_at）。送信で expected_versions として送り、
+    // 画面を開いた後に管理者などが直していたら DB が競合（PT409）で止める（docs/specs/daily-report-db-hardening.md §4.5）。
+    // 送信の直前にサーバーから取り直した値では比べる意味が無いので、読み込み・保存の時点の値を覚えておく。
+    const recordVersionsRef = useRef(new Map());
+    const rememberRecordVersions = useCallback((rows, { overwrite = true } = {}) => {
+        (rows || []).forEach(r => {
+            if (!r?.id || !r.updated_at) return;
+            const key = String(r.id);
+            if (overwrite || !recordVersionsRef.current.has(key)) recordVersionsRef.current.set(key, r.updated_at);
+        });
+    }, []);
     // 自動保存の世代。上げると、それまでに予約された自動保存は書き込まずに終わる（削除直後に古い入力で下書きが戻るのを防ぐ）
     const autosaveEpochRef = useRef(0);
     // 復元で現場・日付が切り替わった場合、切替後の読み込みで復元内容を上書きしないための目印。
@@ -249,7 +260,10 @@ const WorkerApp = () => {
                     }
                 }
 
-                const { data: pData } = await fetchWithCache('projects', fetchProjectsResult);
+                // 現場一覧は金額の列を含まない名簿ビューから読む。以前のキャッシュ（キー 'projects'）は
+                // 金額の列を含むので、端末から消す（docs/specs/daily-report-db-hardening.md §4.8）
+                removeCache('projects');
+                const { data: pData } = await fetchWithCache('projects-directory', fetchProjectsResult);
                 if (pData) setProjects(pData);
 
                 // system_settings へのアクセスは useSystemSettings.js に集約している。
@@ -302,6 +316,8 @@ const WorkerApp = () => {
                 if (!active) return;
                 setWorkerDailyAllRecords(data || []);
                 setWorkerDailyRecordsKey(`${loggedInWorker.id}|${selectedDate}`);
+                // 休憩の再計算で書き換える他の現場の行の版（この現場の行は、現場の読み込みで覚えた値を優先する）
+                rememberRecordVersions(data, { overwrite: false });
             } catch (e) {
                 console.error(e);
                 if (active) showToast('この日の他の現場の入力を読み込めませんでした。本日合計と時間の重複の確認に含まれていません。', 'warning');
@@ -427,6 +443,9 @@ const WorkerApp = () => {
                     () => fetchSubcontractorRecordsResult(selectedProjectId, targetDate)
                 );
 
+                // 読み込んだ行の版を覚える（キャッシュから読んだ行は古い版になり、送信で競合として止まる）
+                if (active) rememberRecordVersions(rData);
+
                 const mappedTasks = (tData || []).map(t => {
                     // 複数レコード対応: filter で全レコード取得
                     const todayRecords = (rData || []).filter(r => r.project_task_id === t.id);
@@ -455,6 +474,8 @@ const WorkerApp = () => {
                         name: t.name || '',
                         target_hours: t.target_hours || 0,
                         progress_percentage: t.progress_percentage || 0,
+                        // 読み込んだときの進捗。変えた作業項目だけを、この値と一緒に送る（buildProgressPayload）
+                        saved_progress: t.progress_percentage ?? null,
                         time_slots,
                         deleted_record_ids: [],
                         today_note: todayRecords.length > 0 ? (todayRecords[0].note || '') : '',
@@ -585,7 +606,8 @@ const WorkerApp = () => {
     const handleApproveOvertime = async (id) => {
         setApprovingId(id);
         try {
-            await approveOvertime(id, loggedInWorker.name, loggedInWorker.id);
+            // 一覧で見た時間・更新日時を渡し、その後に作業員が直していたら承認しない
+            await approveOvertime(id, loggedInWorker.name, loggedInWorker.id, pendingApprovals.find(a => a.id === id));
             await loadPendingApprovals();
             loadApprovalNotices();
             showToast('残業を承認しました。', 'success');
@@ -620,7 +642,8 @@ const WorkerApp = () => {
     const handleApproveWorkAllowance = async (id) => {
         setApprovingAllowanceId(id);
         try {
-            await approveWorkAllowance(id, loggedInWorker.name, loggedInWorker.id);
+            // 一覧で見た作業・更新日時を渡し、その後に作業員が直していたら承認しない
+            await approveWorkAllowance(id, loggedInWorker.name, loggedInWorker.id, pendingAllowanceApprovals.find(a => a.id === id));
             await loadPendingAllowanceApprovals();
             loadApprovalNotices();
             showToast('作業手当を承認しました。', 'success');
@@ -1074,6 +1097,7 @@ const WorkerApp = () => {
             });
             setTasks(prev => [...prev, {
                 id: ins.id, name: ins.name, target_hours: ins.target_hours, progress_percentage: ins.progress_percentage, order: ins.order,
+                saved_progress: ins.progress_percentage ?? null,
                 time_slots: [{ slot_id: `new-${Date.now()}`, record_id: null, start_time: '', end_time: '', is_overnight: false }],
                 deleted_record_ids: [], today_note: '', work_allowance: false,
             }]);
@@ -1496,8 +1520,14 @@ const WorkerApp = () => {
                 ...[...otherProjectOvertimeTotals].map(([projectId, total]) => ({ project_id: Number(projectId), total: round2(total) })),
             ];
 
-            // 日報・進捗・協力業者・承認申請を1トランザクションで保存する（途中で失敗しても何も保存されない）
-            const { insertedIds, remapped, approvalSyncFailed } = await saveDailyReport({
+            // 読み込んだときの版。他の人が先に直していたら DB が何も保存せずに競合（PT409）で止める
+            const expectedVersions = buildExpectedVersions(
+                [...deleteIds, ...updateOps.map(op => op.id)], recordVersionsRef.current
+            );
+            const progressPayload = isForeman ? buildProgressPayload(tasks) : [];
+
+            // 日報・進捗・協力業者・承認申請・休憩設定を1トランザクションで保存する（途中で失敗しても何も保存されない）
+            const { insertedIds, remapped, approvalSyncFailed, breakSaved, versions } = await saveDailyReport({
                 worker_name: loggedInWorker.name,
                 worker_id: loggedInWorker.id,
                 project_id: Number(selectedProjectId),
@@ -1505,9 +1535,9 @@ const WorkerApp = () => {
                 delete_ids: deleteIds,
                 updates: updateOps,
                 inserts: insertPayloads,
-                progress: isForeman
-                    ? tasks.map(t => ({ id: t.id, progress_percentage: t.progress_percentage }))
-                    : [],
+                expected_versions: expectedVersions,
+                progress: progressPayload,
+                break_durations: effectiveBreakDurations,
                 deleted_subcontractor_ids: isForeman ? deletedSubcontractorIds : [],
                 subcontractor_updates: subcontractorUpdates,
                 subcontractor_inserts: subInsertPayloads,
@@ -1517,6 +1547,10 @@ const WorkerApp = () => {
                     .filter(tc => tc.work_allowance && tc.has_any_input)
                     .map(tc => tc.name),
             });
+
+            // 保存後の版（この日の全現場の行）を覚え、次の送信で使う
+            if (versions) rememberRecordVersions(Object.entries(versions).map(([id, updatedAt]) => ({ id, updated_at: updatedAt })));
+            const sentProgress = new Map(progressPayload.map(p => [p.id, p.progress_percentage]));
 
             // 返り順は inserts と一致するため id を書き戻す（state は直接書き換えず、新しいオブジェクトで更新する）
             const insertedIdByKey = new Map();
@@ -1566,6 +1600,8 @@ const WorkerApp = () => {
                     return {
                         ...t,
                         deleted_record_ids: [],
+                        // 送った進捗が DB の値になった
+                        ...(sentProgress.has(t.id) ? { saved_progress: sentProgress.get(t.id) } : {}),
                         time_slots: t.time_slots.map(s => {
                             const key = slotKey(t.id, s.slot_id);
                             // 送信が通ったので、キャッシュから読んだ行の印は外す
@@ -1600,10 +1636,11 @@ const WorkerApp = () => {
                 }
             }
 
-            // 休憩設定は日報とは別テーブルのため、日報の保存後に保存する。失敗しても日報の保存は成功扱い。
+            // 休憩設定は save_daily_report が日報と同じトランザクションで保存する。
+            // DB が古く保存しなかったとき（breakSaved が false）だけ、別のリクエストで保存する。失敗しても日報の保存は成功扱い。
             let breakSaveFailed = false;
             try {
-                await saveWorkerDailyBreakSettings(loggedInWorker.name, targetDate, effectiveBreakDurations);
+                if (!breakSaved) await saveWorkerDailyBreakSettings(loggedInWorker.name, targetDate, effectiveBreakDurations);
                 writeCache(`worker-break-settings-${loggedInWorker.id}-${targetDate}`, { break_durations: effectiveBreakDurations });
                 if (isStillSubmitTarget()) {
                     setDailyBreakSettings({ workerName: loggedInWorker.name, date: targetDate, durations: effectiveBreakDurations });
@@ -1678,6 +1715,9 @@ const WorkerApp = () => {
                     // 端末に保存すらできていない。画面を閉じると入力が消えるので強く警告する。
                     showToast('通信エラーが発生し、下書きの保存にも失敗しました。この画面を閉じずに電波の良いところで再送信してください。', 'error');
                 }
+            } else if (isConflictError(error)) {
+                // 他の人が先に直していた。入力は残したまま、最新の内容を読み込み直してもらう
+                showToast(`${describeSaveError(error)}（日付か現場を選び直すと、最新の内容を読み込みます）`, 'error');
             } else {
                 showToast(describeSaveError(error), 'error');
             }

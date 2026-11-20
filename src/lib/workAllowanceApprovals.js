@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { isMissingRpcError } from '../utils/supabaseErrors';
 
 /**
  * 作業手当承認（WorkAllowanceApprovals）に関する操作を集約するモジュール。
@@ -60,16 +61,29 @@ export async function fetchPendingWorkAllowanceApprovals(projectIds) {
 /**
  * 作業手当申請を承認する（DB 関数 approve_work_allowance）。
  * worker ロールは承認テーブルに直接書けないため、職長かどうかを DB 側で確認する RPC を使う。
+ *
+ * 職長が一覧で見た申請（対象の作業と更新日時）を渡すと、その後に作業員が直していたとき承認せずに
+ * 競合のエラー（code 'PT409'）になる。作業の時間が変わった保存でも更新日時が進むので検知できる
+ * （docs/specs/daily-report-db-hardening.md §4.6 DB-6）。
+ * 見た値を受け取る DB 関数が無い（マイグレーション 20261120010000 の適用前）ときは、見た値を渡さずに呼び直す。
  * @param {number} id                 - WorkAllowanceApprovals.id
  * @param {string} approverName       - 承認者（職長）名
  * @param {number} [approverWorkerId] - 承認者の作業員 ID（職長判定用）
+ * @param {{ task_names?: string[]|null, updated_at?: string|null }} [seen] - 一覧で見た申請
  */
-export async function approveWorkAllowance(id, approverName, approverWorkerId) {
-    const { error } = await supabase.rpc('approve_work_allowance', {
+export async function approveWorkAllowance(id, approverName, approverWorkerId, seen) {
+    const base = {
         p_id: id,
         p_approver_name: approverName,
         p_approver_worker_id: approverWorkerId ?? null,
-    });
+    };
+    const expected = {};
+    if (Array.isArray(seen?.task_names)) expected.p_expected_task_names = seen.task_names;
+    if (seen?.updated_at) expected.p_expected_updated_at = seen.updated_at;
+    let { error } = await supabase.rpc('approve_work_allowance', { ...base, ...expected });
+    if (isMissingRpcError(error) && Object.keys(expected).length > 0) {
+        ({ error } = await supabase.rpc('approve_work_allowance', base));
+    }
     if (error) throw error;
 }
 

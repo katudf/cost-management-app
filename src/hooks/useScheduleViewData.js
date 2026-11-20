@@ -5,8 +5,21 @@ import { PROJECT_STATUS } from '../utils/constants';
 import { buildBarIndexMap, projectColor } from '../utils/scheduleDisplay';
 import { fetchPublicSchedule } from '../features/scheduleShare/scheduleShareApi';
 import { fetchCompanyHolidays } from './useCompanyHolidays';
+import { isMissingRelationError } from '../utils/supabaseErrors';
 
 const PROJECT_COLUMNS = 'id, name, short_name, startDate, endDate, bar_color, status, display_order, created_at';
+
+/**
+ * 現場を、金額・顧客・PDF の列を含まない名簿ビュー projects_directory から読む
+ * （閲覧者・作業員は Projects の基表を読めなくなる。docs/specs/daily-report-db-hardening.md §4.8 DB-9）。
+ * ビューが無い DB（マイグレーション 20261120010000 の適用前）では、従来どおり基表から読む。
+ * @param {(query: object) => PromiseLike<object>} applyFilters  絞り込みを足す関数
+ */
+async function selectProjects(applyFilters) {
+    const result = await applyFilters(supabase.from('projects_directory').select(PROJECT_COLUMNS));
+    if (!isMissingRelationError(result.error)) return result;
+    return applyFilters(supabase.from('Projects').select(PROJECT_COLUMNS));
+}
 
 /**
  * ログインして閲覧する場合の取得。共有 RPC（get_public_schedule）と同じ範囲の現場を返す:
@@ -17,8 +30,7 @@ async function fetchScheduleForStaff(startStr, endStr) {
     const throwIf = (res) => { if (res.error) throw res.error; return res.data || []; };
     const [aRes, pRes, wRes, hData] = await Promise.all([
         supabase.from('Assignments').select('*').gte('date', startStr).lte('date', endStr),
-        supabase.from('Projects').select(PROJECT_COLUMNS)
-            .in('status', [PROJECT_STATUS.SCHEDULED, PROJECT_STATUS.IN_PROGRESS]),
+        selectProjects(q => q.in('status', [PROJECT_STATUS.SCHEDULED, PROJECT_STATUS.IN_PROGRESS])),
         // viewer/workerロールはWorkers基表を直接読めない（機微カラム遮蔽）ため安全カラムのみのビューを使う
         supabase.from('workers_directory').select('id, name, display_order, show_in_assignment, resignation_date')
             .order('display_order', { ascending: true, nullsFirst: false }),
@@ -32,7 +44,7 @@ async function fetchScheduleForStaff(startStr, endStr) {
     const missingIds = [...new Set(assignments.map(a => a.projectId).filter(id => id != null && !known.has(id)))];
     let referenced = [];
     if (missingIds.length > 0) {
-        referenced = throwIf(await supabase.from('Projects').select(PROJECT_COLUMNS).in('id', missingIds));
+        referenced = throwIf(await selectProjects(q => q.in('id', missingIds)));
     }
 
     const barIndexById = buildBarIndexMap(barCandidates);
