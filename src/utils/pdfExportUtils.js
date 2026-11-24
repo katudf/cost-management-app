@@ -174,11 +174,6 @@ const COMMON_CSS_STYLE = `
         text-align: left;
         padding: 1px 3px;
         border: 2px solid #000;
-        border-top: none;
-        width: 1040px;
-        margin-left: auto;
-        margin-right: auto;
-        box-sizing: border-box;
     }
 
     @media print {
@@ -226,25 +221,39 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
                 const proj = projects.find(p => p.id === pid);
                 projGroups[pid] = {
                     siteName: proj?.siteName || proj?.name || '不明な現場',
-                    items: [],
                     sumHours: 0,
                     sumOvertime: 0,
-                    timeSlots: [],
+                    slots: {},
                 };
             }
             const taskName = r.ProjectTasks?.name || '不明な作業';
             const displayName = r.note ? `${taskName}(${r.note})` : taskName;
-            projGroups[pid].items.push(displayName);
             projGroups[pid].sumHours += Number(r.hours || 0);
             projGroups[pid].sumOvertime += Number(r.overtime_hours || 0);
-            if (r.start_time && r.end_time) {
-                projGroups[pid].timeSlots.push({
-                    start: formatTimeDisplay(r.start_time),
-                    end: formatTimeDisplay(r.end_time),
-                });
+            // 時間帯ごとに作業内容をまとめる（時間未設定は空文字の時間帯）。Excel 出力と同じまとめ方
+            const hasTime = r.start_time && r.end_time;
+            const timeSlot = hasTime
+                ? `${formatTimeDisplay(r.start_time)} 〜 ${formatTimeDisplay(r.end_time)}`
+                : '';
+            if (!projGroups[pid].slots[timeSlot]) {
+                projGroups[pid].slots[timeSlot] = {
+                    timeSlot,
+                    // 時間未設定は最後に回す
+                    sortKey: hasTime ? `${formatTimeDisplay(r.start_time)}-${formatTimeDisplay(r.end_time)}` : '99:99',
+                    items: [],
+                };
             }
+            projGroups[pid].slots[timeSlot].items.push(displayName);
         });
-        dateProjectMap[d] = Object.values(projGroups);
+        // 各現場の時間帯を開始時刻（同じなら終了時刻）の昇順に並べる
+        dateProjectMap[d] = Object.values(projGroups).map(group => ({
+            siteName: group.siteName,
+            sumHours: group.sumHours,
+            sumOvertime: group.sumOvertime,
+            sortedSlots: Object.values(group.slots)
+                .map(s => ({ ...s, items: [...new Set(s.items)] }))
+                .sort((a, b) => a.sortKey.localeCompare(b.sortKey)),
+        }));
     });
 
     // 作業実績のない日の区分（有給 / 休日 など）。作業がある日は null
@@ -286,21 +295,18 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
             const group = (dateProjectMap[d] || [])[g];
             if (group) {
                 nameRow += `<td class="data-cell site-name${sizeClass}" colspan="2">${esc(group.siteName)}</td>`;
-                let timeText = '';
+                // 時間と作業内容は 1 行ずつ同じ時間帯で対応させる
+                const hasAnyTime = group.sortedSlots.some(s => s.timeSlot);
+                const timeLines = hasAnyTime ? group.sortedSlots.map(s => s.timeSlot) : [];
                 let timeStyle = '';
-                if (group.timeSlots.length > 0) {
-                    const slotTexts = group.timeSlots.map(s => `${s.start} 〜 ${s.end}`);
-                    const unique = [...new Set(slotTexts)];
-                    timeText = unique.join('<br/>');
-
-                    if (unique.length >= 3) {
-                        timeStyle = 'font-size: 7.0px; line-height: 1.1;';
-                    } else if (unique.length === 2) {
-                        timeStyle = 'font-size: 9.5px; line-height: 1.1;';
-                    }
+                if (timeLines.length >= 3) {
+                    timeStyle = 'font-size: 7.0px; line-height: 1.1;';
+                } else if (timeLines.length === 2) {
+                    timeStyle = 'font-size: 9.5px; line-height: 1.1;';
                 }
+                const timeText = timeLines.map(t => t || '&nbsp;').join('<br/>');
                 timeRow += `<td class="data-cell time-data${sizeClass}" colspan="2" style="${timeStyle}">${timeText || ': 　〜　:'}</td>`;
-                const uniqueItems = [...new Set(group.items)];
+                const uniqueItems = group.sortedSlots.map(s => s.items.join('、'));
                 if (g === 2 && halfDayLeaveLabels[d]) {
                     const notes = getReportSubstituteNotes(d, { leaveAssignments, halfDayOnly: true });
                     uniqueItems.push(`【${[halfDayLeaveLabels[d], ...notes].join(' ')}】`);
@@ -466,13 +472,17 @@ const createWorkerReportHTMLPart = (workerName, days, recordsData, projects, sub
 
                     <!-- 備考（日計 実働/人工） -->
                     <tr>${dailyTotalRow}</tr>
+
+                    <!-- 注意書き。表の行にして縦罫線を表の外枠とそろえる -->
+                    <tr>
+                        <td class="footnote" colspan="17">
+                            ※作業手当時間欄：対象作業がある場合、作業内容と作業時間を記入しすること。<br/>
+                            　手当対象作業：ブラスト、ブラスト砂回収、吹付け、屋根吹付け（手元は無し）、金属溶射、塗膜剥離（吹付け含む）、サンダーケレン、早出・残業（残業予定時間を事前に報告のこと）<br/>
+                            ※上長承認欄：上長承認が無い場合、支給対象外となる場合があります。
+                        </td>
+                    </tr>
                 </tbody>
             </table>
-            <div class="footnote">
-                ※作業手当時間欄：対象作業がある場合、作業内容と作業時間を記入しすること。<br/>
-                　手当対象作業：ブラスト、ブラスト砂回収、吹付け、屋根吹付け（手元は無し）、金属溶射、塗膜剥離（吹付け含む）、サンダーケレン、早出・残業（残業予定時間を事前に報告のこと）<br/>
-                ※上長承認欄：上長承認が無い場合、支給対象外となる場合があります。
-            </div>
         </div>
     </div>
     `;
